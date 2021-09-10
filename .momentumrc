@@ -1,0 +1,2 @@
+MOMENTUM_RUN_PATH=run/momentum
+MOMENTUM_DATA_PATH=dev/shm/momentum
