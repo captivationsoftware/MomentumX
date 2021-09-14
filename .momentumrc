@@ -1,2 +1,4 @@
 MOMENTUM_RUN_PATH=run/momentum
 MOMENTUM_DATA_PATH=dev/shm/momentum
+MOMENTUM_VAR_PATH=var/lib/momentum
+MOMENTUM_LOG_PATH=var/log/momentum

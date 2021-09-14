@@ -3,4 +3,6 @@ etc/
 tmp/
 run/
 dev/
+var/
 __pycache__/
+*.egg-info

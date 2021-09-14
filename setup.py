@@ -9,6 +9,7 @@ setup(
     packages=['momentum'],
     install_requires=[
       'click',
+      'psutil',
       'pyyaml'
     ],
     entry_points={'console_scripts': [
