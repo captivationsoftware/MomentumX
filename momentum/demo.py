@@ -3,17 +3,24 @@ import json
 # import threading
 import time
 
+def json_output(stream, *function):
+    return momentum.output(stream, *function, serializer=json.dumps)
+
+def json_input(stream, *function):
+    return momentum.input(stream, *function, deserializer=json.loads)
+
+
 @momentum.processor('counter')
 class JsonCounter:
     def __init__(self):
         self.n = 0
 
-    @momentum.output('n', serializer=json.dumps)
+    @json_output('n')
     def producer_method(self, n):
         self.n += 1
         n({ "n": self.n })
         
-    @momentum.input('n', deserializer=json.loads)
+    @json_input('n')
     def consumer_method(self, n):
         print(n())
 

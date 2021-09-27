@@ -121,14 +121,12 @@ def processor(
 
 		def work(handler, invocables):
 			io = invocables[handler]
-			is_producer = len(invocables[handler].outputs) > 0
-			is_consumer = len(invocables[handler].inputs) > 0
 
 			while True:
 				inputs = {}
-				if is_consumer:
-					if consumer_q_by_handler[handler].qsize() > 10:
-						consumer_q_by_handler[handler].empty()
+				if len(invocables[handler].inputs) > 0:
+					# if consumer_q_by_handler[handler].qsize() > 10:
+					# 	consumer_q_by_handler[handler].empty()
 						
 					stream, data = consumer_q_by_handler[handler].get()
 
