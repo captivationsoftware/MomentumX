@@ -15,7 +15,6 @@ CONSUMER_CONTEXT_ATTR = 'consumers'
 
 __all__ = ["processor", "input", "output"]
 
-
 class IO:
 	def __init__(self):
 		self.inputs = {}
@@ -183,9 +182,12 @@ def processor(
 	return composed
 	
 
-def input(stream, deserializer=None, function=None):
+def input(stream, *function, deserializer=None):
+	# grab positional function argument
+	function = next(iter(function), None)
+
 	if function is None:
-		return functools.partial(input, stream, deserializer)
+		return functools.partial(input, stream, deserializer=deserializer)
 
 	@functools.wraps(function)
 	def composed(*args, **kwargs):
@@ -199,10 +201,12 @@ def input(stream, deserializer=None, function=None):
 
 	return composed
 
+def output(stream, *function, serializer=None):
+	# grab positional function argument
+	function = next(iter(function), None)
 
-def output(stream, serializer=None, function=None):
 	if function is None:
-		return functools.partial(output, stream, serializer)
+		return functools.partial(output, stream, serializer=serializer)
 
 	@functools.wraps(function)
 	def composed(*args, **kwargs):

@@ -8,9 +8,7 @@ setup(
     author='Captivation Software, LLC',
     packages=['momentum'],
     install_requires=[
-      'click',
-      'psutil',
-      'pyyaml'
+      'pyzmq',
     ],
     entry_points={'console_scripts': [
         'momentum = momentum:cli',
