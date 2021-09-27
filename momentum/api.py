@@ -24,20 +24,16 @@ class IO:
 def processor(
 	name, 
 	*function,
-	run_path=os.getenv('MOMENTUM_RUN_PATH', '/run/momentum'), 
 	data_path=os.getenv('MOMENTUM_DATA_PATH', '/dev/shm/momentum'), 
 ):
 	# grab positional function argument
 	function = next(iter(function), None)
 
 	if function is None:
-		return functools.partial(processor, name, run_path=run_path, data_path=data_path)
+		return functools.partial(processor, name, data_path=data_path)
 
 	if not os.path.isdir(data_path):
 		pathlib.Path(data_path).mkdir(parents=True, exist_ok=True)
-
-	if not os.path.isdir(run_path):
-		pathlib.Path(run_path).mkdir(parents=True, exist_ok=True)
 
 	unwrapped_function = _unwrap(function)
 
@@ -66,18 +62,18 @@ def processor(
 				consumer_sock = zmq_context.socket(zmq.SUB)
 				for consumer_stream, _, handler in consumer_contexts:
 					consumer_q_by_handler[handler] = queue.Queue()
-					
+
 					consumer_sock.setsockopt(zmq.SUBSCRIBE, consumer_stream.encode('utf8'))
-					consumer_sock.connect(f'ipc://{run_path}/{consumer_stream}.sock')
+					consumer_sock.connect(f'ipc://@{consumer_stream}.sock')
 		
 				def consume():
 					while True:
 						stream = consumer_sock.recv_string()
-						data = consumer_sock.recv_string()
+						data = consumer_sock.recv()
 						for consumer_stream, _, handler in consumer_contexts:
 							if consumer_stream == stream:
 								consumer_q_by_handler[handler].put_nowait((stream, data))
-
+								
 				consumer_thread = threading.Thread(target=consume)
 				threads.append(consumer_thread)
 		except:
@@ -89,16 +85,7 @@ def processor(
 
 			producer_sock = zmq_context.socket(zmq.PUB)
 			for producer_stream, _, _ in producer_contexts:
-				producer_sock.bind(f'ipc://{run_path}/{producer_stream}.sock')
-
-			def produce():
-				while True:
-					stream, data = producer_q.get()
-					producer_sock.send_string(stream, zmq.SNDMORE)
-					producer_sock.send_string(data)
-			
-			producer_thread = threading.Thread(target=produce)
-			threads.append(producer_thread)
+				producer_sock.bind(f'ipc://@{producer_stream}.sock')
 
 			
 		invocables = {}
@@ -111,8 +98,27 @@ def processor(
 			invocables[handler] = invocables.get(handler, IO())
 			invocables[handler].outputs[stream] = transformer
 
-		def emit(stream, serializer, data):
-			producer_q.put_nowait((stream, serializer(data)))
+		def writer(stream, serializer):
+			def write(data):
+				producer_sock.send_string(stream, zmq.SNDMORE)
+				if isinstance(data, (bytes, bytearray, memoryview)):
+					producer_sock.send(data, copy=False)
+				else:
+					if serializer:
+						data = serializer(data)
+
+					producer_sock.send(data.encode())
+				
+			return write
+
+		def reader(deserializer, data):
+			def read():
+				if deserializer:
+					return deserializer(data)
+				else:
+					return data
+			return read
+
 
 		def work(handler, invocables):
 			io = invocables[handler]
@@ -122,17 +128,20 @@ def processor(
 			while True:
 				inputs = {}
 				if is_consumer:
+					if consumer_q_by_handler[handler].qsize() > 10:
+						consumer_q_by_handler[handler].empty()
+						
 					stream, data = consumer_q_by_handler[handler].get()
 
 				for other_stream, deserializer in io.inputs.items():
 					if stream == other_stream and data is not None:
-						inputs[stream] = deserializer(data)
+						inputs[stream] = reader(deserializer, data)
 					else:
 						inputs[other_stream] = None
 
 				outputs = {}
 				for other_stream, serializer in io.outputs.items():
-					outputs[other_stream] = functools.partial(emit, other_stream, serializer) 
+					outputs[other_stream] = writer(other_stream, serializer) 
 				
 				params = {  }
 				if instance and not hasattr(handler, '__self__'):
