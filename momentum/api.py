@@ -15,11 +15,6 @@ CONSUMER_CONTEXT_ATTR = 'consumers'
 
 __all__ = ["processor", "input", "output"]
 
-class IO:
-	def __init__(self):
-		self.inputs = {}
-		self.outputs = {}
-
 def processor(
 	name, 
 	*function,
@@ -86,17 +81,6 @@ def processor(
 			for producer_stream, _, _ in producer_contexts:
 				producer_sock.bind(f'ipc://@{producer_stream}.sock')
 
-			
-		invocables = {}
-
-		for stream, transformer, handler in consumer_contexts:
-			invocables[handler] = invocables.get(handler, IO())
-			invocables[handler].inputs[stream] = transformer
-
-		for stream, transformer, handler in producer_contexts:
-			invocables[handler] = invocables.get(handler, IO())
-			invocables[handler].outputs[stream] = transformer
-
 		def writer(stream, serializer):
 			def write(data):
 				producer_sock.send_string(stream, zmq.SNDMORE)
@@ -119,25 +103,31 @@ def processor(
 			return read
 
 
-		def work(handler, invocables):
-			io = invocables[handler]
+		def work(handler, consumer_contexts, producer_contexts):
+			handler_inputs = []
+			handler_outputs = []
+
+			for stream, transformer, consumer_handler in consumer_contexts:
+				if handler == consumer_handler:
+					handler_inputs.append((stream, transformer))
+
+			for stream, transformer, producer_handler in producer_contexts:
+				if handler == producer_handler:
+					handler_outputs.append((stream, transformer))
 
 			while True:
 				inputs = {}
-				if len(invocables[handler].inputs) > 0:
-					# if consumer_q_by_handler[handler].qsize() > 10:
-					# 	consumer_q_by_handler[handler].empty()
-						
+				if len(handler_inputs) > 0:
 					stream, data = consumer_q_by_handler[handler].get()
 
-				for other_stream, deserializer in io.inputs.items():
+				for other_stream, deserializer in handler_inputs:
 					if stream == other_stream and data is not None:
 						inputs[stream] = reader(deserializer, data)
 					else:
 						inputs[other_stream] = None
 
 				outputs = {}
-				for other_stream, serializer in io.outputs.items():
+				for other_stream, serializer in handler_outputs:
 					outputs[other_stream] = writer(other_stream, serializer) 
 				
 				params = {  }
@@ -146,8 +136,8 @@ def processor(
 				else:
 					handler(**inputs, **outputs)
 		
-		for handler in invocables.keys():
-			worker_thread = threading.Thread(target=work, args=(handler, invocables))
+		for _, _, handler in set(consumer_contexts + producer_contexts):
+			worker_thread = threading.Thread(target=work, args=(handler, consumer_contexts, producer_contexts))
 			threads.append(worker_thread)
 
 		try:
