@@ -1,8 +1,6 @@
 import functools
-import hashlib
 import os
 import pathlib
-import pickle
 import queue
 import threading
 import zmq
@@ -40,6 +38,8 @@ def processor(
 		else:
 			instance = None
 
+		running = True
+
 		context = getattr(unwrapped_function, CONTEXT_ATTR)
 
 		consumer_contexts = context.get(CONSUMER_CONTEXT_ATTR)
@@ -47,31 +47,32 @@ def processor(
 
 		threads = []
 
-		try:
-			zmq_context = zmq.Context()
+		zmq_context = zmq.Context()
 
-			if len(consumer_contexts) > 0:
-				consumer_q_by_handler = {}
-				
-				consumer_sock = zmq_context.socket(zmq.SUB)
-				for consumer_stream, _, handler in consumer_contexts:
-					consumer_q_by_handler[handler] = queue.Queue()
+		if len(consumer_contexts) > 0:
+			consumer_q_by_handler = {}
+			
+			consumer_sock = zmq_context.socket(zmq.SUB)
+			for consumer_stream, _, handler in consumer_contexts:
+				consumer_q_by_handler[handler] = queue.Queue()
 
-					consumer_sock.setsockopt(zmq.SUBSCRIBE, consumer_stream.encode('utf8'))
-					consumer_sock.connect(f'ipc://@{consumer_stream}.sock')
-		
-				def consume():
-					while True:
+				consumer_sock.setsockopt(zmq.SUBSCRIBE, consumer_stream.encode('utf8'))
+				consumer_sock.connect(f'ipc://@{consumer_stream}.sock')
+	
+			def consume(is_running):
+				while is_running():
+					try:
 						stream = consumer_sock.recv_string()
 						data = consumer_sock.recv()
 						for consumer_stream, _, handler in consumer_contexts:
 							if consumer_stream == stream:
 								consumer_q_by_handler[handler].put_nowait((stream, data))
-								
-				consumer_thread = threading.Thread(target=consume)
-				threads.append(consumer_thread)
-		except:
-			pass
+					except zmq.error.ZMQError:
+						break
+
+			consumer_thread = threading.Thread(target=consume, args=(lambda: running, ))
+			threads.append(consumer_thread)
+
 
 		# Start a thread to emit messages from handler(s) on <producer_streams>
 		if len(producer_contexts) > 0:
@@ -103,7 +104,7 @@ def processor(
 			return read
 
 
-		def work(handler, consumer_contexts, producer_contexts):
+		def work(handler, consumer_contexts, producer_contexts, is_running):
 			handler_inputs = []
 			handler_outputs = []
 
@@ -115,7 +116,7 @@ def processor(
 				if handler == producer_handler:
 					handler_outputs.append((stream, transformer))
 
-			while True:
+			while is_running():
 				inputs = {}
 				if len(handler_inputs) > 0:
 					stream, data = consumer_q_by_handler[handler].get()
@@ -130,23 +131,29 @@ def processor(
 				for other_stream, serializer in handler_outputs:
 					outputs[other_stream] = writer(other_stream, serializer) 
 				
-				params = {  }
-				if instance and not hasattr(handler, '__self__'):
-					handler(instance, **inputs, **outputs)
-				else:
-					handler(**inputs, **outputs)
-		
+				try:
+					params = {  }
+					if instance and not hasattr(handler, '__self__'):
+						handler(instance, **inputs, **outputs)
+					else:
+						handler(**inputs, **outputs)
+				except zmq.error.ZMQError:
+					break
+
 		for _, _, handler in set(consumer_contexts + producer_contexts):
-			worker_thread = threading.Thread(target=work, args=(handler, consumer_contexts, producer_contexts))
+			worker_thread = threading.Thread(target=work, args=(handler, consumer_contexts, producer_contexts, lambda: running, ))
 			threads.append(worker_thread)
 
 		try:
 			[ t.start() for t in threads ]
 			[ t.join() for t in threads ]
 		except:
-			#cleanup
-			pass
-
+			running = False
+		finally:
+			# cleanup
+			_attempt(lambda: consumer_sock.close(linger=1))
+			_attempt(lambda: producer_sock.close(linger=1))
+			_attempt(lambda: zmq_context.term())
 
 	context = _get_context(function)
 	context[NAME_CONTEXT_ATTR] = name
@@ -228,3 +235,9 @@ def _unwrap(function):
 	while hasattr(function, '__wrapped__'):
 		function = getattr(function, '__wrapped__')
 	return function
+
+def _attempt(function):
+	try:
+		function()
+	except:
+		pass
