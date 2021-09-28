@@ -1,4 +1,5 @@
 import functools
+import lz4.frame
 import os
 import pathlib
 import queue
@@ -64,10 +65,11 @@ def processor(
 					try:
 						stream = consumer_sock.recv_string()
 						data = consumer_sock.recv()
+
 						for consumer_stream, _, handler in consumer_contexts:
 							if consumer_stream == stream:
 								consumer_q_by_handler[handler].put_nowait((stream, data))
-					except zmq.error.ZMQError:
+					except:
 						break
 
 			consumer_thread = threading.Thread(target=consume, args=(lambda: running, ))
@@ -137,11 +139,11 @@ def processor(
 						handler(instance, **inputs, **outputs)
 					else:
 						handler(**inputs, **outputs)
-				except zmq.error.ZMQError:
+				except:
 					break
 
 		for _, _, handler in set(consumer_contexts + producer_contexts):
-			worker_thread = threading.Thread(target=work, args=(handler, consumer_contexts, producer_contexts, lambda: running, ))
+			worker_thread = threading.Thread(target=work, args=(handler, consumer_contexts, producer_contexts, lambda: running,))
 			threads.append(worker_thread)
 
 		try:
