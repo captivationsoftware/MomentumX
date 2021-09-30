@@ -1,40 +1,106 @@
-#include <assert.h>
-#include <chrono>
 #include <iostream>
-#include <unistd.h>
 #include <errno.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <sys/epoll.h>
+#include <csignal>
+#include <thread>
 
 #include "momentum.h"
 
-using namespace std;
+namespace Momentum {
 
-MomentumContext* context() {
-    MomentumContext* ctx = new MomentumContext();
-    return ctx;
+    static std::vector<MomentumContext *> contexts;
+
+    static void (*previous_sigint_handler)(int) = NULL;
+
+    void signal_handler(int signal) {
+        for (MomentumContext *ctx : contexts) {
+            term(ctx);
+            destroy(ctx);
+        }
+
+        if (previous_sigint_handler) {
+            previous_sigint_handler(signal);
+        }
+    };
+
+    MomentumContext::MomentumContext() {
+        if (!previous_sigint_handler) {
+            previous_sigint_handler = std::signal(SIGINT, signal_handler);
+        }
+
+        contexts.push_back(this);
+
+        _worker = std::thread([&] {
+            int _epollfd = epoll_create1(0);
+            
+            while (!_terminated) {
+                usleep(1);    
+            }
+            
+            close(_epollfd);
+        });
+
+        _worker.detach();
+    }
+
+
+    MomentumContext::~MomentumContext() {
+        term();
+    }
+
+    bool MomentumContext::terminated() {
+        return _terminated;
+    }
+
+    void MomentumContext::term() {
+        _terminated = true;
+    };
+
+    void MomentumContext::subscribe(const char *stream, const void (*handler)(const char *)) {
+        if (!_consumers_by_stream.count(stream)) {
+            _consumers_by_stream[stream] = std::vector<const void (*)(const char *)>();
+        }
+        _consumers_by_stream[stream].push_back(handler);
+    }
+
+    void MomentumContext::send(const char *stream, const char *data) {
+        if (_consumers_by_stream.count(stream) > 0) {
+            for (auto const& handler : _consumers_by_stream[stream]) {
+                handler(data);
+            }
+        }
+    }
+
+    MomentumContext* context() {
+        MomentumContext* ctx = new MomentumContext();
+        return ctx;
+    }
+
+    void term(MomentumContext* ctx) {
+        ctx->term();
+    }
+
+    bool terminated(MomentumContext *ctx) {
+        return ctx->terminated();
+    }
+
+    void destroy(MomentumContext *ctx) {
+        std::cout << "Destroying" << std::endl;
+        delete ctx;
+    }
+
+    void subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *)) {
+        ctx->subscribe(stream, handler);
+    }
+
+    void send(MomentumContext *ctx, const char *stream, const char *data) {
+        ctx->send(stream, data);
+    }
 }
 
-void term(MomentumContext* ctx) {
-    ctx->term();
-}
-
-bool is_terminated(MomentumContext* ctx) {
-    return ctx->is_terminated();
-}
-
-void destroy(MomentumContext* ctx) {
-    delete ctx;
-}
-
-
-
-// int guard(int rc) {
-//     if (rc < 0) {
-//         cout << "[errno " << errno << "] " << strerror(errno) << endl;
-//         exit(1);
-//     } else {
-//         return rc;
-//     }
-// }
 // void producer() {  
 
 //     struct sockaddr_un addr;
@@ -67,7 +133,7 @@ void destroy(MomentumContext* ctx) {
 //         long bytes_received = 0;
 //         long message_count = 0;
 
-//         auto start = std::chrono::steady_clock::now();
+//         auto start = chrono::steady_clock::now();
 
 //         int rc;
 //         while ((rc = recv(consumer_sock, &buffer, sizeof(buffer), 0)) > 0) {
@@ -75,8 +141,8 @@ void destroy(MomentumContext* ctx) {
 //             bytes_received += rc;
 
 //             if (message_count % 1000 == 0) {    
-//                 auto end = std::chrono::steady_clock::now();
-//                 std::chrono::duration<double> elapsed_seconds = end - start;
+//                 auto end = chrono::steady_clock::now();
+//                 chrono::duration<double> elapsed_seconds = end - start;
 //                 cout << "Recvd " << message_count / elapsed_seconds.count() << " msgs/sec" << endl;
 //                 cout << "Recvd " << bytes_received / elapsed_seconds.count() / 1e6 << " MB/sec" << endl;
 //             }

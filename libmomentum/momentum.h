@@ -1,57 +1,42 @@
 #ifndef MOMENTUM_H
 #define MOMENTUM_H
 
-
-#include <thread>
-#include <sys/socket.h>
-#include <sys/un.h>
+#include <vector>
+#include <map>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// static const int PAGE_SIZE = getpagesize();
+namespace Momentum {
 
-class MomentumContext {
+    // static const int PAGE_SIZE = getpagesize();
+    class MomentumContext {
 
-public:
-    MomentumContext();
-    ~MomentumContext();
-    bool is_terminated();
-    void term();
+    public:
+        MomentumContext();
+        ~MomentumContext();
+        bool terminated();
+        void term();
+        void subscribe(const char *stream, const void (*handler)(const char *));
+        void unsubscribe(const char *stream, const void (*handler)(const char *));
+        void send(const char *stream, const char *data);
 
-private:
-    bool terminated;
+    private:
+        std::map<std::string, std::vector<const void (*)(const char *)>> _consumers_by_stream;
+        volatile bool _terminated = false;
+        std::thread _worker;
+    };
 
-};
-
-MomentumContext::MomentumContext() {
-    terminated = false;
-    std::cout << "created momentum context" << std::endl;
+    // public interface
+    MomentumContext *context();
+    void term(MomentumContext *ctx);
+    void destroy(MomentumContext *ctx);
+    bool terminated(MomentumContext *ctx);
+    void subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *));
+    void unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *));
+    void send(MomentumContext *ctx, const char *stream, const char *data);
 }
-
-
-MomentumContext::~MomentumContext() {
-    terminated = true;
-    std::cout << "destroyed momemntum context" << std::endl;
-
-}
-
-bool MomentumContext::is_terminated() {
-    return terminated;
-}
-
-void MomentumContext::term() {
-    terminated = true;
-};
-
-
-
-MomentumContext* context();
-
-void term(MomentumContext* ctx);
-void destroy(MomentumContext* ctx);
-bool is_terminated(MomentumContext* ctx);
 
 #ifdef __cplusplus
 }

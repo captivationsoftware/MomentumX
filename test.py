@@ -1,14 +1,24 @@
 from ctypes import *
 import time
 
+
 momentum = cdll.LoadLibrary("../libmomentum/libmomentum.so")
 
 context = momentum.context()
 
-print(momentum.is_terminated(context))
+@CFUNCTYPE(None, c_char_p)
+def handle_message(message):
+    print("received", message)
 
-momentum.term(context)
+momentum.subscribe(context, b'foo', handle_message)
+momentum.subscribe(context, b'bar', handle_message)
 
-print(momentum.is_terminated(context))
+try:
+    while True:
+        momentum.send(context, b'foo', b'this is some data on foo')
 
-momentum.destroy(context)
+        momentum.send(context, b'bar', b'this is some data on bar')
+        time.sleep(1)
+except KeyboardInterrupt:
+    pass
+
