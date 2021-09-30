@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <errno.h>
 #include <sys/socket.h>
@@ -66,6 +67,19 @@ namespace Momentum {
         _consumers_by_stream[stream].push_back(handler);
     }
 
+    void MomentumContext::unsubscribe(const char *stream, const void (*handler)(const char *)) {
+        if (_consumers_by_stream.count(stream)) {
+            _consumers_by_stream[stream].erase(
+                std::remove(
+                    _consumers_by_stream[stream].begin(), 
+                    _consumers_by_stream[stream].end(), 
+                    handler
+                ), 
+                _consumers_by_stream[stream].end()
+            );
+        }
+    }
+
     void MomentumContext::send(const char *stream, const char *data) {
         if (_consumers_by_stream.count(stream) > 0) {
             for (auto const& handler : _consumers_by_stream[stream]) {
@@ -88,12 +102,15 @@ namespace Momentum {
     }
 
     void destroy(MomentumContext *ctx) {
-        std::cout << "Destroying" << std::endl;
         delete ctx;
     }
 
     void subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *)) {
         ctx->subscribe(stream, handler);
+    }
+
+    void unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *)) {
+        ctx->unsubscribe(stream, handler);
     }
 
     void send(MomentumContext *ctx, const char *stream, const char *data) {

@@ -2,9 +2,10 @@ from ctypes import *
 import time
 
 
-momentum = cdll.LoadLibrary("../libmomentum/libmomentum.so")
+momentum = cdll.LoadLibrary("./libmomentum.so")
 
 context = momentum.context()
+
 
 @CFUNCTYPE(None, c_char_p)
 def handle_message(message):
@@ -19,6 +20,7 @@ try:
 
         momentum.send(context, b'bar', b'this is some data on bar')
         time.sleep(1)
+
 except KeyboardInterrupt:
     pass
 
