@@ -4,14 +4,18 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <sys/epoll.h>
+#include <sys/shm.h>
 #include <csignal>
 #include <thread>
-
+#include <sys/mman.h>
+#include <sys/stat.h>        
+#include <fcntl.h> 
+#include <sstream>  
+#include <string>        
 #include "momentum.h"
 
 namespace Momentum {
-
+    
     static std::vector<MomentumContext *> contexts;
 
     static void (*previous_sigint_handler)(int) = NULL;
@@ -27,7 +31,9 @@ namespace Momentum {
         }
     };
 
-    MomentumContext::MomentumContext() {
+    MomentumContext::MomentumContext(const char *name) {
+        _name = name;
+
         if (!previous_sigint_handler) {
             previous_sigint_handler = std::signal(SIGINT, signal_handler);
         }
@@ -35,13 +41,13 @@ namespace Momentum {
         contexts.push_back(this);
 
         _worker = std::thread([&] {
-            int _epollfd = epoll_create1(0);
+            // int _epollfd = epoll_create1(0);
             
             while (!_terminated) {
                 usleep(1);    
             }
             
-            close(_epollfd);
+            // close(_epollfd);
         });
 
         _worker.detach();
@@ -50,6 +56,14 @@ namespace Momentum {
 
     MomentumContext::~MomentumContext() {
         term();
+
+        // close shared memory
+        for (auto const& tuple : _mmap_by_shm_path) {
+            std::string shm_path = tuple.first;
+            mmap_t mem = tuple.second;
+            shm_unlink(shm_path.c_str());
+            munmap(mem.address, mem.length);
+        }
     }
 
     bool MomentumContext::terminated() {
@@ -80,16 +94,47 @@ namespace Momentum {
         }
     }
 
-    void MomentumContext::send(const char *stream, const char *data) {
-        if (_consumers_by_stream.count(stream) > 0) {
-            for (auto const& handler : _consumers_by_stream[stream]) {
-                handler(data);
+    void MomentumContext::send(const char *stream, const uint8_t *data, size_t length) {
+        char shm_path[sizeof(strlen(stream)) + 1] = "/";
+        strcat(shm_path, stream);
+        
+        size_t mmap_length = (length / PAGE_SIZE + 1) * PAGE_SIZE;
+        
+        mmap_t mem;
+
+        // create the mmap file if not exists
+        if (!_mmap_by_shm_path.count(shm_path)) {
+            int shm_fd;
+            
+            shm_fd = shm_open(shm_path, O_CREAT | O_RDWR, S_IRWXU);
+            if (shm_fd < 0) {
+                std::perror(strerror(errno));
+            } else {
+                ftruncate(shm_fd, mmap_length);
+                mem.length = mmap_length;
+                mem.address = (uint8_t *) mmap(NULL, mmap_length, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+                _mmap_by_shm_path[shm_path] = mem;
+
+                // done with the file descriptor                
+                close(shm_fd);
             }
+        }
+
+        // resize the mmap file if necessary
+        if (_mmap_by_shm_path.count(shm_path)) {
+            mem = _mmap_by_shm_path[shm_path];
+
+            if (mmap_length > mem.length) {
+                mem.address = (uint8_t *) mremap(mem.address, mem.length, mmap_length, 0);
+                mem.length = mmap_length;
+            }
+
+            memcpy(mem.address, data, length);
         }
     }
 
-    MomentumContext* context() {
-        MomentumContext* ctx = new MomentumContext();
+    MomentumContext* context(const char *name) {
+        MomentumContext* ctx = new MomentumContext(name);
         return ctx;
     }
 
@@ -113,11 +158,11 @@ namespace Momentum {
         ctx->unsubscribe(stream, handler);
     }
 
-    void send(MomentumContext *ctx, const char *stream, const char *data) {
-        ctx->send(stream, data);
+    void send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
+        ctx->send(stream, data, length);
     }
-}
 
+}
 // void producer() {  
 
 //     struct sockaddr_un addr;
