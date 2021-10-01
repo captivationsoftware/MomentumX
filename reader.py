@@ -4,13 +4,13 @@ import time
 
 momentum = cdll.LoadLibrary("./libmomentum.so")
 
-context = momentum.context(b'reader')
+context = momentum.Momentum_context(b'reader')
 
 @CFUNCTYPE(None, c_char_p)
 def handle_message(message):
     print("received", message)
 
-momentum.subscribe(context, b'foo', handle_message)
+momentum.Momentum_subscribe(context, b'foo', handle_message)
 
 try:
     while True:

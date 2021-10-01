@@ -11,158 +11,159 @@
 #include <sys/stat.h>        
 #include <fcntl.h> 
 #include <sstream>  
-#include <string>        
 #include "momentum.h"
 
-namespace Momentum {
-    
-    static std::vector<MomentumContext *> contexts;
 
-    static void (*previous_sigint_handler)(int) = NULL;
+static std::vector<MomentumContext *> contexts;
 
-    void signal_handler(int signal) {
-        for (MomentumContext *ctx : contexts) {
-            term(ctx);
-            destroy(ctx);
-        }
+static void (*previous_sigint_handler)(int) = NULL;
 
-        if (previous_sigint_handler) {
-            previous_sigint_handler(signal);
-        }
-    };
-
-    MomentumContext::MomentumContext(const char *name) {
-        _name = name;
-
-        if (!previous_sigint_handler) {
-            previous_sigint_handler = std::signal(SIGINT, signal_handler);
-        }
-
-        contexts.push_back(this);
-
-        _worker = std::thread([&] {
-            // int _epollfd = epoll_create1(0);
-            
-            while (!_terminated) {
-                usleep(1);    
-            }
-            
-            // close(_epollfd);
-        });
-
-        _worker.detach();
+void signal_handler(int signal) {
+    for (MomentumContext *ctx : contexts) {
+        Momentum_term(ctx);
+        Momentum_destroy(ctx);
     }
 
+    if (previous_sigint_handler) {
+        previous_sigint_handler(signal);
+    }
+};
 
-    MomentumContext::~MomentumContext() {
-        term();
+MomentumContext::MomentumContext(std::string name) {
+    _name = name;
 
-        // close shared memory
-        for (auto const& tuple : _mmap_by_shm_path) {
-            std::string shm_path = tuple.first;
-            mmap_t mem = tuple.second;
-            shm_unlink(shm_path.c_str());
-            munmap(mem.address, mem.length);
-        }
+    if (!previous_sigint_handler) {
+        previous_sigint_handler = std::signal(SIGINT, signal_handler);
     }
 
-    bool MomentumContext::terminated() {
-        return _terminated;
-    }
+    contexts.push_back(this);
 
-    void MomentumContext::term() {
-        _terminated = true;
-    };
-
-    void MomentumContext::subscribe(const char *stream, const void (*handler)(const char *)) {
-        if (!_consumers_by_stream.count(stream)) {
-            _consumers_by_stream[stream] = std::vector<const void (*)(const char *)>();
-        }
-        _consumers_by_stream[stream].push_back(handler);
-    }
-
-    void MomentumContext::unsubscribe(const char *stream, const void (*handler)(const char *)) {
-        if (_consumers_by_stream.count(stream)) {
-            _consumers_by_stream[stream].erase(
-                std::remove(
-                    _consumers_by_stream[stream].begin(), 
-                    _consumers_by_stream[stream].end(), 
-                    handler
-                ), 
-                _consumers_by_stream[stream].end()
-            );
-        }
-    }
-
-    void MomentumContext::send(const char *stream, const uint8_t *data, size_t length) {
-        char shm_path[sizeof(strlen(stream)) + 1] = "/";
-        strcat(shm_path, stream);
+    _worker = std::thread([&] {
+        // int _epollfd = epoll_create1(0);
         
-        size_t mmap_length = (length / PAGE_SIZE + 1) * PAGE_SIZE;
+        while (!_terminated) {
+            usleep(1);    
+        }
         
-        mmap_t mem;
+        // close(_epollfd);
+    });
 
-        // create the mmap file if not exists
-        if (!_mmap_by_shm_path.count(shm_path)) {
-            int shm_fd;
-            
-            shm_fd = shm_open(shm_path, O_CREAT | O_RDWR, S_IRWXU);
-            if (shm_fd < 0) {
-                std::perror(strerror(errno));
-            } else {
-                ftruncate(shm_fd, mmap_length);
-                mem.length = mmap_length;
-                mem.address = (uint8_t *) mmap(NULL, mmap_length, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-                _mmap_by_shm_path[shm_path] = mem;
-
-                // done with the file descriptor                
-                close(shm_fd);
-            }
-        }
-
-        // resize the mmap file if necessary
-        if (_mmap_by_shm_path.count(shm_path)) {
-            mem = _mmap_by_shm_path[shm_path];
-
-            if (mmap_length > mem.length) {
-                mem.address = (uint8_t *) mremap(mem.address, mem.length, mmap_length, 0);
-                mem.length = mmap_length;
-            }
-
-            memcpy(mem.address, data, length);
-        }
-    }
-
-    MomentumContext* context(const char *name) {
-        MomentumContext* ctx = new MomentumContext(name);
-        return ctx;
-    }
-
-    void term(MomentumContext* ctx) {
-        ctx->term();
-    }
-
-    bool terminated(MomentumContext *ctx) {
-        return ctx->terminated();
-    }
-
-    void destroy(MomentumContext *ctx) {
-        delete ctx;
-    }
-
-    void subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *)) {
-        ctx->subscribe(stream, handler);
-    }
-
-    void unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(const char *)) {
-        ctx->unsubscribe(stream, handler);
-    }
-
-    void send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
-        ctx->send(stream, data, length);
-    }
-
+    _worker.detach();
 }
+
+
+MomentumContext::~MomentumContext() {
+    term();
+
+    // close shared memory
+    for (auto const& tuple : _mmap_by_shm_path) {
+        std::string shm_path = tuple.first;
+        mmap_t mem = tuple.second;
+        shm_unlink(shm_path.c_str());
+        munmap(mem.address, mem.length);
+    }
+}
+
+bool MomentumContext::terminated() {
+    return _terminated;
+}
+
+void MomentumContext::term() {
+    _terminated = true;
+};
+
+void MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *)) {
+    if (!_consumers_by_stream.count(stream)) {
+        _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *)>();
+    }
+    _consumers_by_stream[stream].push_back(handler);
+}
+
+void MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *)) {
+    if (_consumers_by_stream.count(stream)) {
+        _consumers_by_stream[stream].erase(
+            std::remove(
+                _consumers_by_stream[stream].begin(), 
+                _consumers_by_stream[stream].end(), 
+                handler
+            ), 
+            _consumers_by_stream[stream].end()
+        );
+    }
+}
+
+void MomentumContext::send(std::string stream, const uint8_t *data, size_t length) {
+    std::string shm_path("/" + stream);
+    
+    size_t mmap_length = (length / PAGE_SIZE + 1) * PAGE_SIZE;
+    
+    mmap_t mem;
+
+    // create the mmap file if not exists
+    if (!_mmap_by_shm_path.count(shm_path)) {
+        int shm_fd;
+        
+        shm_fd = shm_open(shm_path.c_str(), O_CREAT | O_RDWR, S_IRWXU);
+        if (shm_fd < 0) {
+            std::perror(strerror(errno));
+        } else {
+            ftruncate(shm_fd, mmap_length);
+            mem.length = mmap_length;
+            mem.address = (uint8_t *) mmap(NULL, mmap_length, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+            _mmap_by_shm_path[shm_path] = mem;
+
+            // done with the file descriptor                
+            close(shm_fd);
+        }
+    }
+
+    // resize the mmap file if necessary
+    if (_mmap_by_shm_path.count(shm_path)) {
+        mem = _mmap_by_shm_path[shm_path];
+
+        if (mmap_length > mem.length) {
+            mem.address = (uint8_t *) mremap(mem.address, mem.length, mmap_length, 0);
+            mem.length = mmap_length;
+        }
+
+        memcpy(mem.address, data, length);
+    }
+}
+
+MomentumContext* Momentum_context(const char *name) {
+    std::string name_str(name);
+
+    MomentumContext* ctx = new MomentumContext(name_str);
+    return ctx;
+}
+
+void Momentum_term(MomentumContext* ctx) {
+    ctx->term();
+}
+
+bool Momentum_terminated(MomentumContext *ctx) {
+    return ctx->terminated();
+}
+
+void Momentum_destroy(MomentumContext *ctx) {
+    delete ctx;
+}
+
+void Momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+    std::string stream_str(stream);
+    ctx->subscribe(stream_str, handler);
+}
+
+void Momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+    std::string stream_str(stream);
+    ctx->unsubscribe(stream_str, handler);
+}
+
+void Momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
+    std::string stream_str(stream);
+    ctx->send(stream_str, data, length);
+}
+
 // void producer() {  
 
 //     struct sockaddr_un addr;
