@@ -9,6 +9,7 @@
 static const size_t PAGE_SIZE = getpagesize();
 
 struct mmap_t {
+    int fd;
     uint8_t *address;
     size_t length;
 };

@@ -13,7 +13,6 @@
 #include <sstream>  
 #include "momentum.h"
 
-
 static std::vector<MomentumContext *> contexts;
 
 static void (*previous_sigint_handler)(int) = NULL;
@@ -28,6 +27,11 @@ void signal_handler(int signal) {
         previous_sigint_handler(signal);
     }
 };
+
+void fail(std::string reason) {
+    std::perror(reason.c_str());
+    exit(EXIT_FAILURE);
+}
 
 MomentumContext::MomentumContext(std::string name) {
     _name = name;
@@ -61,6 +65,7 @@ MomentumContext::~MomentumContext() {
         mmap_t mem = tuple.second;
         shm_unlink(shm_path.c_str());
         munmap(mem.address, mem.length);
+        close(mem.fd);
     }
 }
 
@@ -93,41 +98,49 @@ void MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint
 }
 
 void MomentumContext::send(std::string stream, const uint8_t *data, size_t length) {
-    std::string shm_path("/" + stream);
+    int retval;
     
-    size_t mmap_length = (length / PAGE_SIZE + 1) * PAGE_SIZE;
+    std::string shm_path("/momentum_" + stream);
+    
+    size_t length_required = (length / PAGE_SIZE + 1) * PAGE_SIZE;
     
     mmap_t mem;
-
-    // create the mmap file if not exists
-    if (!_mmap_by_shm_path.count(shm_path)) {
-        int shm_fd;
-        
-        shm_fd = shm_open(shm_path.c_str(), O_CREAT | O_RDWR, S_IRWXU);
-        if (shm_fd < 0) {
-            std::perror(strerror(errno));
+    
+    // (re-)create the mmap file if it doesn't exist or 
+    bool already_allocated = _mmap_by_shm_path.count(shm_path) > 0;
+    bool meets_length_requirement = _mmap_by_shm_path[shm_path].length >= length_required; 
+    if (!already_allocated || !meets_length_requirement) {
+        if (!already_allocated) {
+            mem.fd = shm_open(shm_path.c_str(), O_CREAT | O_RDWR, S_IRWXU);
+            if (mem.fd < 0) fail("Shared memory allocation");
         } else {
-            ftruncate(shm_fd, mmap_length);
-            mem.length = mmap_length;
-            mem.address = (uint8_t *) mmap(NULL, mmap_length, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-            _mmap_by_shm_path[shm_path] = mem;
-
-            // done with the file descriptor                
-            close(shm_fd);
+            mem =  _mmap_by_shm_path[shm_path];
         }
+
+        retval = ftruncate(mem.fd, length_required);
+        if (retval < 0) fail("Shared memory file truncate");
+ 
+        if (already_allocated && !meets_length_requirement) {
+            mem.address = (uint8_t *) mremap(mem.address, mem.length, length_required, MREMAP_MAYMOVE);
+            if (mem.address == MAP_FAILED) fail("Remapping shared memory");
+
+        } else {
+            mem.address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, mem.fd, 0);
+            if (mem.address == MAP_FAILED) fail("Mapping shared memory");
+        }
+
+        mem.length = length_required;
+
+        _mmap_by_shm_path[shm_path] = mem;
+    } else {
+        mem = _mmap_by_shm_path[shm_path];
     }
 
-    // resize the mmap file if necessary
-    if (_mmap_by_shm_path.count(shm_path)) {
-        mem = _mmap_by_shm_path[shm_path];
 
-        if (mmap_length > mem.length) {
-            mem.address = (uint8_t *) mremap(mem.address, mem.length, mmap_length, 0);
-            mem.length = mmap_length;
-        }
-
+    if (mem.length > 0) {
         memcpy(mem.address, data, length);
     }
+
 }
 
 MomentumContext* momentum_context(const char *name) {
