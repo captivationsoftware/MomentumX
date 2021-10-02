@@ -20,8 +20,8 @@ static void (*previous_sigint_handler)(int) = NULL;
 
 void signal_handler(int signal) {
     for (MomentumContext *ctx : contexts) {
-        Momentum_term(ctx);
-        Momentum_destroy(ctx);
+        momentum_term(ctx);
+        momentum_destroy(ctx);
     }
 
     if (previous_sigint_handler) {
@@ -130,36 +130,36 @@ void MomentumContext::send(std::string stream, const uint8_t *data, size_t lengt
     }
 }
 
-MomentumContext* Momentum_context(const char *name) {
+MomentumContext* momentum_context(const char *name) {
     std::string name_str(name);
 
     MomentumContext* ctx = new MomentumContext(name_str);
     return ctx;
 }
 
-void Momentum_term(MomentumContext* ctx) {
+void momentum_term(MomentumContext* ctx) {
     ctx->term();
 }
 
-bool Momentum_terminated(MomentumContext *ctx) {
+bool momentum_terminated(MomentumContext *ctx) {
     return ctx->terminated();
 }
 
-void Momentum_destroy(MomentumContext *ctx) {
+void momentum_destroy(MomentumContext *ctx) {
     delete ctx;
 }
 
-void Momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+void momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
     std::string stream_str(stream);
     ctx->subscribe(stream_str, handler);
 }
 
-void Momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+void momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
     std::string stream_str(stream);
     ctx->unsubscribe(stream_str, handler);
 }
 
-void Momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
+void momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
     std::string stream_str(stream);
     ctx->send(stream_str, data, length);
 }

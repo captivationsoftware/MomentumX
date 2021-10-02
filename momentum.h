@@ -36,13 +36,13 @@ private:
 extern "C" {
 
     // public interface
-    MomentumContext *Momentum_context(const char *name);
-    void Momentum_term(MomentumContext *ctx);
-    void Momentum_destroy(MomentumContext *ctx);
-    bool Momentum_terminated(MomentumContext *ctx);
-    void Momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *));
-    void Momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *));
-    void Momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length);
+    MomentumContext *momentum_context(const char *name);
+    void momentum_term(MomentumContext *ctx);
+    void momentum_destroy(MomentumContext *ctx);
+    bool momentum_terminated(MomentumContext *ctx);
+    void momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *));
+    void momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *));
+    void momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length);
 
 }
 
