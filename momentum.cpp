@@ -17,11 +17,16 @@ static std::vector<MomentumContext *> contexts;
 
 static void (*previous_sigint_handler)(int) = NULL;
 
-void signal_handler(int signal) {
+void cleanup() {
     for (MomentumContext *ctx : contexts) {
-        momentum_term(ctx);
-        momentum_destroy(ctx);
+        try {
+            momentum_destroy(ctx);
+        } catch(const std::exception& e) { }
     }
+}
+
+void signal_handler(int signal) {
+    cleanup();
 
     if (previous_sigint_handler) {
         previous_sigint_handler(signal);
@@ -30,6 +35,8 @@ void signal_handler(int signal) {
 
 void fail(std::string reason) {
     std::perror(reason.c_str());
+
+    cleanup();
     exit(EXIT_FAILURE);
 }
 
@@ -59,14 +66,15 @@ MomentumContext::MomentumContext(std::string name) {
 MomentumContext::~MomentumContext() {
     term();
 
-    // close shared memory
-    for (auto const& tuple : _mmap_by_shm_path) {
+    for (auto const& tuple : _buffer_by_shm_path) {
         std::string shm_path = tuple.first;
-        mmap_t mem = tuple.second;
+        Buffer *buffer = tuple.second;
         shm_unlink(shm_path.c_str());
-        munmap(mem.address, mem.length);
-        close(mem.fd);
+        munmap(buffer->address, buffer->length);
+        close(buffer->fd);
+        delete buffer;
     }
+    _buffer_by_shm_path.empty();
 }
 
 bool MomentumContext::terminated() {
@@ -78,6 +86,8 @@ void MomentumContext::term() {
 };
 
 void MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *)) {
+    if (_terminated) return;
+
     if (!_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *)>();
     }
@@ -85,6 +95,8 @@ void MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_
 }
 
 void MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *)) {
+    if (_terminated) return;
+
     if (_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream].erase(
             std::remove(
@@ -98,49 +110,75 @@ void MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint
 }
 
 void MomentumContext::send(std::string stream, const uint8_t *data, size_t length) {
-    int retval;
-    
-    std::string shm_path("/momentum_" + stream);
+    if (_terminated) return;
+
+    Buffer *dest_buffer = _last_send_buffer;
     
     size_t length_required = (length / PAGE_SIZE + 1) * PAGE_SIZE;
     
-    mmap_t mem;
-    
-    // (re-)create the mmap file if it doesn't exist or 
-    bool already_allocated = _mmap_by_shm_path.count(shm_path) > 0;
-    bool meets_length_requirement = _mmap_by_shm_path[shm_path].length >= length_required; 
-    if (!already_allocated || !meets_length_requirement) {
-        if (!already_allocated) {
-            mem.fd = shm_open(shm_path.c_str(), O_CREAT | O_RDWR, S_IRWXU);
-            if (mem.fd < 0) fail("Shared memory allocation");
-        } else {
-            mem =  _mmap_by_shm_path[shm_path];
-        }
+    bool is_initialized = !_buffer_by_shm_path.empty();
 
-        retval = ftruncate(mem.fd, length_required);
+    // ensure buffers are allocated, simultaneously discovering existing buffers
+    if (!is_initialized /* || all-1 locked */) {
+        int allocation_count = 0;
+        int attempt = 0;
+
+        while (allocation_count < 2) {
+            std::string shm_path("/momentum_" + stream + "_" + std::to_string(attempt++));
+            int fd = shm_open(shm_path.c_str(), O_CREAT | O_EXCL | O_RDWR, S_IRWXU);
+            if (fd < 0) {
+                if (errno == EEXIST) {
+                    fd = shm_open(shm_path.c_str(), O_CREAT | O_RDWR, S_IRWXU);
+                } 
+
+                if (fd < 0) {
+                    fail("Shared memory allocation");
+                }
+            } else {
+                allocation_count++;
+            }
+
+            Buffer *buffer = new Buffer();
+            buffer->length = 0;
+            buffer->fd = fd;
+            
+            _buffer_by_shm_path[shm_path] = buffer;
+        }
+    }
+
+    // find the next buffer to use
+    while (dest_buffer == _last_send_buffer) {
+        for (auto const& tuple : _buffer_by_shm_path) {
+            Buffer *buffer = tuple.second;
+            if (buffer != _last_send_buffer /* && not locked */) {
+                dest_buffer = buffer;
+                break;
+            }
+        }
+    }
+
+    bool meets_length_requirement = dest_buffer->length >= length_required; 
+
+    int retval;
+    if (!meets_length_requirement) {
+        retval = ftruncate(dest_buffer->fd, length_required);
         if (retval < 0) fail("Shared memory file truncate");
- 
-        if (already_allocated && !meets_length_requirement) {
-            mem.address = (uint8_t *) mremap(mem.address, mem.length, length_required, MREMAP_MAYMOVE);
-            if (mem.address == MAP_FAILED) fail("Remapping shared memory");
-
+    
+        // Mmap the file, or remap if previously mapped
+        if (dest_buffer->length == 0) {
+            dest_buffer->address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, dest_buffer->fd, 0);
         } else {
-            mem.address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, mem.fd, 0);
-            if (mem.address == MAP_FAILED) fail("Mapping shared memory");
+            dest_buffer->address = (uint8_t *) mremap(dest_buffer->address, dest_buffer->length, length_required, MREMAP_MAYMOVE);
         }
-
-        mem.length = length_required;
-
-        _mmap_by_shm_path[shm_path] = mem;
-    } else {
-        mem = _mmap_by_shm_path[shm_path];
+        if (dest_buffer->address == MAP_FAILED) {
+            fail("Mapping shared memory");
+        } else {
+            dest_buffer->length = length_required;
+        }
     }
 
-
-    if (mem.length > 0) {
-        memcpy(mem.address, data, length);
-    }
-
+    memcpy(dest_buffer->address, data, length);
+    _last_send_buffer = dest_buffer;
 }
 
 MomentumContext* momentum_context(const char *name) {

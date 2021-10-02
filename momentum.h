@@ -8,7 +8,7 @@
 
 static const size_t PAGE_SIZE = getpagesize();
 
-struct mmap_t {
+struct Buffer {
     int fd;
     uint8_t *address;
     size_t length;
@@ -29,9 +29,10 @@ public:
 private:
     std::string _name;
     std::map<std::string, std::vector<const void (*)(uint8_t *)>> _consumers_by_stream;
-    std::map<std::string, mmap_t> _mmap_by_shm_path;
+    std::map<std::string, Buffer *> _buffer_by_shm_path;
     volatile bool _terminated = false;
     std::thread _worker;
+    Buffer *_last_send_buffer;
 };
 
 extern "C" {
