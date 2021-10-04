@@ -16,7 +16,12 @@ try:
             data_bytes = big_data
         else:
             data_bytes = data.encode()
+        if (lib.momentum_send(context, b'foo', data_bytes, len(data_bytes)) < 0):
+            print ("failed")
         lib.momentum_send(context, b'foo', data_bytes, len(data_bytes))
+
+        
+        
 
 except KeyboardInterrupt:
     pass

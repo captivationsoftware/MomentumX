@@ -8,8 +8,8 @@
 #include <csignal>
 #include <thread>
 #include <sys/mman.h>
-#include <sys/stat.h>        
-#include <fcntl.h> 
+#include <sys/stat.h>
+#include <sys/file.h>        
 #include <sstream>  
 #include "momentum.h"
 
@@ -49,32 +49,31 @@ MomentumContext::MomentumContext(std::string name) {
 
     contexts.push_back(this);
 
-    _worker = std::thread([&] {
-        // int _epollfd = epoll_create1(0);
-        
+
+
+    _watcher_thread = std::thread([&] {
         while (!_terminated) {
-            usleep(1);    
+            _mutex.lock();
+
+            _mutex.unlock();
         }
-        
-        // close(_epollfd);
     });
 
-    _worker.detach();
+    _watcher_thread.detach();
 }
 
 
 MomentumContext::~MomentumContext() {
     term();
 
-    for (auto const& tuple : _buffer_by_shm_path) {
-        std::string shm_path = tuple.first;
-        Buffer *buffer = tuple.second;
-        shm_unlink(shm_path.c_str());
+    for (Buffer *buffer : _producer_buffers) {
         munmap(buffer->address, buffer->length);
         close(buffer->fd);
+        shm_unlink(buffer->path.c_str());
         delete buffer;
     }
-    _buffer_by_shm_path.empty();
+
+    _producer_buffers.clear();
 }
 
 bool MomentumContext::terminated() {
@@ -85,17 +84,27 @@ void MomentumContext::term() {
     _terminated = true;
 };
 
-void MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *)) {
-    if (_terminated) return;
+int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *)) {
+    if (_terminated) return -1;
+
+    if (stream.find(std::string("__")) != std::string::npos) {
+        return -1;
+    } 
 
     if (!_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *)>();
     }
     _consumers_by_stream[stream].push_back(handler);
+
+    return 0;
 }
 
-void MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *)) {
-    if (_terminated) return;
+int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *)) {
+    if (_terminated) return -1;
+
+    if (stream.find(std::string("__")) != std::string::npos) {
+        return -1;
+    } 
 
     if (_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream].erase(
@@ -107,28 +116,73 @@ void MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint
             _consumers_by_stream[stream].end()
         );
     }
+
+    return 0;
 }
 
-void MomentumContext::send(std::string stream, const uint8_t *data, size_t length) {
-    if (_terminated) return;
+int MomentumContext::send(std::string stream, const uint8_t *data, size_t length) {
+    if (_terminated) return -1;
 
-    Buffer *dest_buffer = _last_send_buffer;
-    
-    size_t length_required = (length / PAGE_SIZE + 1) * PAGE_SIZE;
-    
-    bool is_initialized = !_buffer_by_shm_path.empty();
+    if (stream.find(std::string("__")) != std::string::npos) {
+        return -1;
+    } 
 
-    // ensure buffers are allocated, simultaneously discovering existing buffers
-    if (!is_initialized /* || all-1 locked */) {
-        int allocation_count = 0;
-        int attempt = 0;
+    Buffer *buffer = acquire_buffer(stream, length);
 
-        while (allocation_count < 2) {
-            std::string shm_path("/momentum_" + stream + "_" + std::to_string(attempt++));
+    memcpy(buffer->address, data, length);
+
+    flock(buffer->fd, LOCK_UN);
+
+    return 0;
+}
+
+Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
+    if (_terminated) return NULL;
+
+    if (stream.find(std::string("__")) != std::string::npos) {
+        return NULL;
+    } 
+
+    Buffer *buffer = NULL;
+
+    _mutex.lock();
+    _producer_streams.insert(stream);
+
+    if (_buffers_by_stream.count(stream) == 0) {
+        _buffers_by_stream[stream] = std::queue<Buffer *>();
+    }
+
+    // First, see if we found a free buffer within our existing resources
+    if (_buffers_by_stream.count(stream) > 0) {
+        size_t visit_count = 0;
+
+        // find the next buffer to use
+        while (visit_count++ < _buffers_by_stream[stream].size()) {
+
+            // pull a candidate buffer, rotating the queue in the process
+            Buffer *candidate_buffer = _buffers_by_stream[stream].front();
+            _buffers_by_stream[stream].pop();
+            _buffers_by_stream[stream].push(candidate_buffer);
+
+            if (candidate_buffer != _last_acquired_buffer && flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
+                // found a buffer that is different than the last iteration
+                // that we were able to lock; 
+                buffer = candidate_buffer;
+                break;
+            }
+        }
+    }
+
+    // If we couldn't find a buffer, then create a new one...
+    if (buffer == NULL) {
+        size_t buffer_count = 0;
+        size_t allocation_count = 0;
+        while (allocation_count < 1) {
+            std::string shm_path("/momentum_" + stream + "__" + std::to_string(buffer_count++));
             int fd = shm_open(shm_path.c_str(), O_CREAT | O_EXCL | O_RDWR, S_IRWXU);
             if (fd < 0) {
                 if (errno == EEXIST) {
-                    fd = shm_open(shm_path.c_str(), O_CREAT | O_RDWR, S_IRWXU);
+                    continue;
                 } 
 
                 if (fd < 0) {
@@ -138,47 +192,41 @@ void MomentumContext::send(std::string stream, const uint8_t *data, size_t lengt
                 allocation_count++;
             }
 
-            Buffer *buffer = new Buffer();
+            buffer = new Buffer();
             buffer->length = 0;
+            buffer->path = shm_path;
             buffer->fd = fd;
-            
-            _buffer_by_shm_path[shm_path] = buffer;
+            _producer_buffers.push_back(buffer);
+            _buffers_by_stream[stream].push(buffer);
         }
     }
 
-    // find the next buffer to use
-    while (dest_buffer == _last_send_buffer) {
-        for (auto const& tuple : _buffer_by_shm_path) {
-            Buffer *buffer = tuple.second;
-            if (buffer != _last_send_buffer /* && not locked */) {
-                dest_buffer = buffer;
-                break;
-            }
-        }
-    }
+    _mutex.unlock();    
 
-    bool meets_length_requirement = dest_buffer->length >= length_required; 
+    size_t length_required = (length / PAGE_SIZE + 1) * PAGE_SIZE;
+    bool meets_length_requirement = buffer->length >= length_required;
 
     int retval;
     if (!meets_length_requirement) {
-        retval = ftruncate(dest_buffer->fd, length_required);
+        retval = ftruncate(buffer->fd, length_required);
         if (retval < 0) fail("Shared memory file truncate");
     
         // Mmap the file, or remap if previously mapped
-        if (dest_buffer->length == 0) {
-            dest_buffer->address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, dest_buffer->fd, 0);
+        if (buffer->length == 0) {
+            buffer->address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
         } else {
-            dest_buffer->address = (uint8_t *) mremap(dest_buffer->address, dest_buffer->length, length_required, MREMAP_MAYMOVE);
+            buffer->address = (uint8_t *) mremap(buffer->address, buffer->length, length_required, MREMAP_MAYMOVE);
         }
-        if (dest_buffer->address == MAP_FAILED) {
+        if (buffer->address == MAP_FAILED) {
             fail("Mapping shared memory");
         } else {
-            dest_buffer->length = length_required;
+            buffer->length = length_required;
         }
     }
 
-    memcpy(dest_buffer->address, data, length);
-    _last_send_buffer = dest_buffer;
+    _last_acquired_buffer = buffer;
+
+    return buffer;
 }
 
 MomentumContext* momentum_context(const char *name) {
@@ -200,19 +248,27 @@ void momentum_destroy(MomentumContext *ctx) {
     delete ctx;
 }
 
-void momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
     std::string stream_str(stream);
-    ctx->subscribe(stream_str, handler);
+    return ctx->subscribe(stream_str, handler);
 }
 
-void momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
     std::string stream_str(stream);
-    ctx->unsubscribe(stream_str, handler);
+    return ctx->unsubscribe(stream_str, handler);
 }
 
-void momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
+int momentum_send(MomentumContext *ctx, const char *stream, const uint8_t *data, size_t length) {
     std::string stream_str(stream);
-    ctx->send(stream_str, data, length);
+    return ctx->send(stream_str, data, length);
+}
+
+uint8_t* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length) {
+    std::string stream_str(stream);
+    Buffer *buffer = ctx->acquire_buffer(stream_str, length);
+    
+    if (buffer == NULL) return NULL;
+    else return buffer->address;
 }
 
 // void producer() {  
