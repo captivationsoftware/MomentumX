@@ -63,12 +63,15 @@ MomentumContext::MomentumContext() {
             closedir(dev_shm);
             delete ent;
 
+            std::map<std::string, std::string> stream_by_shm_path;
+
             _consumer_streams_mutex.lock();
             for (std::string stream : _consumer_streams) {
                 std::string match_string = "momentum_" + stream + "__";
 
                 for (std::string filename : filenames) {
                     if (filename.find(match_string) != std::string::npos) {
+                        stream_by_shm_path[filename] = stream;
                         struct stat stat_result;
                         if (stat((DEV_SHM_PATH + filename).c_str(), &stat_result) > -1) {
                             if (
@@ -104,6 +107,9 @@ MomentumContext::MomentumContext() {
                     size_t length;
                     memcpy(&length, buffer->address, SIZE_T_SIZE);
 
+                    for (auto const& handler : _consumers_by_stream[stream_by_shm_path[shm_path]]) {
+                        handler(buffer->address + SIZE_T_SIZE, length);
+                    }
                     // for (size_t i = SIZE_T_SIZE; i < (SIZE_T_SIZE + length); i++) {
                     //     std::cout << buffer->address[i];
                     // }                
@@ -150,7 +156,7 @@ void MomentumContext::term() {
     _terminated = true;
 };
 
-int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *)) {
+int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *, size_t)) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -158,18 +164,20 @@ int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t
     } 
 
     _consumer_streams_mutex.lock();
+
     _consumer_streams.insert(stream);
+    
+    if (!_consumers_by_stream.count(stream)) {
+        _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *, size_t)>();
+    }
+    _consumers_by_stream[stream].push_back(handler);
+   
     _consumer_streams_mutex.unlock();
-        
-    // if (!_consumers_by_stream.count(stream)) {
-    //     _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *)>();
-    // }
-    // _consumers_by_stream[stream].push_back(handler);
 
     return 0;
 }
 
-int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *)) {
+int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *, size_t)) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -309,7 +317,6 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
         int retval = ftruncate(buffer->fd, length_required);
         if (retval < 0) fail("Shared memory file truncate");
 
-        std::cout << "truncated " << buffer->path << " to " << length_required << " bytes for message with "  << length << " bytes" << std::endl;
         // Mmap the file, or remap if previously mapped
         if (buffer->length == 0) {
             buffer->address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
@@ -341,12 +348,12 @@ void momentum_destroy(MomentumContext *ctx) {
     delete ctx;
 }
 
-int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t)) {
     std::string stream_str(stream);
     return ctx->subscribe(stream_str, handler);
 }
 
-int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *)) {
+int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t)) {
     std::string stream_str(stream);
     return ctx->unsubscribe(stream_str, handler);
 }

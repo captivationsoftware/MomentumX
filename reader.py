@@ -6,9 +6,24 @@ lib = cdll.LoadLibrary("./libmomentum.so")
 
 context = lib.momentum_context()
 
-@CFUNCTYPE(None, c_char_p)
-def handle_message(message):
-    print("received", message)
+now = time.time()
+bytes_received = 0
+messages_received = 0
+
+@CFUNCTYPE(None, c_char_p, c_int)
+def handle_message(bytes, length):
+    global now
+    global bytes_received
+    global messages_received
+    
+    messages_received += 1
+    bytes_received += length
+    
+    if (messages_received % 1000 == 0):
+        print("last message size: ", length)
+        elapsed = time.time() - now
+        print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
+        print("Recvd {:.2f} MB/sec".format(bytes_received / elapsed / 1.0e6))
 
 lib.momentum_subscribe(context, b'foo', handle_message)
 
