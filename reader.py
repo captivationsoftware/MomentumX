@@ -11,7 +11,7 @@ bytes_received = 0
 messages_received = 0
 
 @CFUNCTYPE(None, c_char_p, c_int)
-def handle_message(bytes, length):
+def handle_message(data, length):
     global now
     global bytes_received
     global messages_received
@@ -19,13 +19,14 @@ def handle_message(bytes, length):
     messages_received += 1
     bytes_received += length
     
-    if (messages_received % 1000 == 0):
-        print("last message size: ", length)
+    if (messages_received % 100000 == 0):
         elapsed = time.time() - now
+
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
         print("Recvd {:.2f} MB/sec".format(bytes_received / elapsed / 1.0e6))
 
 lib.momentum_subscribe(context, b'foo', handle_message)
+
 
 try:
     while True:

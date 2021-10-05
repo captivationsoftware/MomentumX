@@ -43,87 +43,49 @@ void fail(std::string reason) {
 }
 
 MomentumContext::MomentumContext() {
-
     if (!previous_sigint_handler) {
         previous_sigint_handler = std::signal(SIGINT, signal_handler);
     }
 
-    std::thread watcher([&] {
-        std::map<std::string, struct stat> stat_by_shm_path;
+    _zmq_ctx = zmq_ctx_new();
 
-        while (!_terminated) {
-            std::set<std::string> updated_files;
-            std::vector<std::string> filenames;
-            
-            DIR *dev_shm = opendir(DEV_SHM_PATH.c_str());
-            struct dirent *ent;
-            while ((ent = readdir(dev_shm)) != NULL) {
-                filenames.push_back(ent->d_name);
-            }
-            closedir(dev_shm);
-            delete ent;
+    std::thread listener([&] {
+        int bytes_received;
 
-            std::map<std::string, std::string> stream_by_shm_path;
+        Message message;
 
-            _consumer_streams_mutex.lock();
-            for (std::string stream : _consumer_streams) {
-                std::string match_string = "momentum_" + stream + "__";
-
-                for (std::string filename : filenames) {
-                    if (filename.find(match_string) != std::string::npos) {
-                        stream_by_shm_path[filename] = stream;
-                        struct stat stat_result;
-                        if (stat((DEV_SHM_PATH + filename).c_str(), &stat_result) > -1) {
-                            if (
-                                stat_by_shm_path.count(filename) == 0 
-                                || stat_by_shm_path[filename].st_mtim.tv_nsec < stat_result.st_mtim.tv_nsec
-                            ) {
-                                updated_files.insert(filename);
-                            }
-                            stat_by_shm_path[filename] = stat_result;
-                        }
-                        
-                    }
+        while(!_terminated) {
+            if (_consumer_sock != NULL) {
+                bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
+                if (bytes_received < 0) {
+                    std::perror("Failed to receive message");
                 }
-            }
-            _consumer_streams_mutex.unlock();
 
-            for (std::string shm_path : updated_files) {
+                std::string stream = message.stream;
+                std::string shm_path = message.path;
+
                 Buffer *buffer;
-                _buffer_by_shm_path_mutex.lock();
                 if (_buffer_by_shm_path.count(shm_path) == 0) {
-                    _buffer_by_shm_path_mutex.unlock();
-                    buffer = allocate_buffer(shm_path, stat_by_shm_path[shm_path].st_size - SIZE_T_SIZE, true);
+                    buffer = allocate_buffer(shm_path, message.buffer_length, true);
                 } else {
                     buffer = _buffer_by_shm_path[shm_path];
-                    _buffer_by_shm_path_mutex.unlock();
+                    if (buffer->length < message.buffer_length) {
+                        resize_buffer(buffer, message.buffer_length);
+                    }
                 }
 
-                if (buffer == NULL) {
-                    fail("Unable to create readable shared memory");
-                } 
+                for (auto const& handler : _consumers_by_stream[stream]) {
+                    handler(buffer->address, message.data_length);
+                }
 
-                if (flock(buffer->fd, LOCK_SH) > -1) {
-                    size_t length;
-                    memcpy(&length, buffer->address, SIZE_T_SIZE);
-
-                    for (auto const& handler : _consumers_by_stream[stream_by_shm_path[shm_path]]) {
-                        handler(buffer->address + SIZE_T_SIZE, length);
-                    }
-                    // for (size_t i = SIZE_T_SIZE; i < (SIZE_T_SIZE + length); i++) {
-                    //     std::cout << buffer->address[i];
-                    // }                
-                    // std::cout << std::endl;
-
-                    flock(buffer->fd, LOCK_UN);
-                } 
+            } else {
+                usleep(1);
             }
-
         }
 
     });
 
-    watcher.detach();
+    listener.detach();
 
     contexts.push_back(this);
 }
@@ -140,7 +102,7 @@ MomentumContext::~MomentumContext() {
         close(buffer->fd);
 
         if (!buffer->readonly) {
-            shm_unlink(buffer->path.c_str());
+            shm_unlink(buffer->path);
         }
 
         delete buffer;
@@ -154,6 +116,18 @@ bool MomentumContext::terminated() {
 
 void MomentumContext::term() {
     _terminated = true;
+
+    if (_consumer_sock != NULL) {
+        zmq_close(_consumer_sock);
+    }
+
+    if (_producer_sock != NULL) {
+        zmq_close(_producer_sock);
+    }
+
+    if (_zmq_ctx != NULL) {
+        zmq_ctx_term(_zmq_ctx);
+    }
 };
 
 int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *, size_t)) {
@@ -163,16 +137,28 @@ int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t
         return -1;
     } 
 
-    _consumer_streams_mutex.lock();
+    if (_consumer_sock == NULL) {
+        _consumer_sock = zmq_socket(_zmq_ctx, ZMQ_SUB);
+    }
 
-    _consumer_streams.insert(stream);
+    if (_consumer_streams.find(stream) == _consumer_streams.end()) {
+        zmq_setsockopt(_consumer_sock, ZMQ_SUBSCRIBE, "", 0);
+
+        std::string endpoint(IPC_ENDPOINT_BASE + stream);
+        int rc = zmq_connect(_consumer_sock, endpoint.c_str()); 
+        if (rc < 0) {
+            return -1;
+        } else {
+            _consumer_streams.insert(stream);
+        }
+    }
+    
     
     if (!_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *, size_t)>();
     }
     _consumers_by_stream[stream].push_back(handler);
    
-    _consumer_streams_mutex.unlock();
 
     return 0;
 }
@@ -183,6 +169,19 @@ int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8
     if (stream.find(std::string("__")) != std::string::npos) {
         return -1;
     } 
+
+    if (_consumer_streams.find(stream) != _consumer_streams.end()) {
+
+        std::string endpoint(IPC_ENDPOINT_BASE + stream);
+        int rc = zmq_disconnect(_consumer_sock, endpoint.c_str()); 
+        
+        if (rc < 0) {
+            return -1;
+        } else {
+            _consumer_streams.erase(stream);
+        }
+    }
+    
 
     if (_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream].erase(
@@ -207,11 +206,25 @@ int MomentumContext::send(std::string stream, uint8_t *data, size_t length) {
 
     Buffer *buffer = acquire_buffer(stream, length);
 
-    memcpy(buffer->address, &length, SIZE_T_SIZE);
-    memcpy(buffer->address + SIZE_T_SIZE, data, length);
+    memcpy(buffer->address, data, length);
 
     release_buffer(buffer);
 
+    return send_message(stream, buffer, length);
+}
+
+int MomentumContext::send_message(std::string stream, Buffer *buffer, size_t length) {
+    Message message;
+    message.data_length = length;
+    message.buffer_length = buffer->length;
+    strcpy(message.stream, stream.c_str());
+    strcpy(message.path, buffer->path);
+
+    int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
+    if (rc < 0) {
+        std::perror("Failed to send message");
+        return -1;
+    }
     return 0;
 }
 
@@ -222,6 +235,23 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         return NULL;
     } 
 
+    if (_producer_sock == NULL) {
+        _producer_sock = zmq_socket(_zmq_ctx, ZMQ_PUB);
+    }
+
+    if (_producer_streams.find(stream) == _producer_streams.end()) {
+
+        std::string endpoint(IPC_ENDPOINT_BASE + stream);
+
+        int rc = zmq_bind(_producer_sock, endpoint.c_str()); 
+
+        if (rc < 0) {
+            std::perror("Binding socket to endpoint");
+            return NULL;
+        } else {
+            _producer_streams.insert(stream);
+        }
+    }
     Buffer *buffer = NULL;
 
     if (_buffers_by_stream.count(stream) == 0) {
@@ -294,9 +324,9 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
 
     Buffer *buffer = new Buffer();
     buffer->length = 0;
-    buffer->path = shm_path;
     buffer->fd = fd;
     buffer->readonly = readonly;
+    strcpy(buffer->path, shm_path.c_str());
 
     if (length > buffer->length) {
         resize_buffer(buffer, length);
@@ -310,7 +340,7 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
 }
 
 void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
-    size_t length_required = ((length + SIZE_T_SIZE) / PAGE_SIZE + 1) * PAGE_SIZE;
+    size_t length_required = (length / PAGE_SIZE + 1) * PAGE_SIZE;
     bool meets_length_requirement = buffer->length >= length_required;
 
     if (!meets_length_requirement) {
@@ -358,6 +388,11 @@ int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*
     return ctx->unsubscribe(stream_str, handler);
 }
 
+// int momentum_send_copy(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
+//     std::string stream_str(stream);
+//     return ctx->send_copy(stream_str, data, length);
+// }
+
 int momentum_send(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
     std::string stream_str(stream);
     return ctx->send(stream_str, data, length);
@@ -372,7 +407,3 @@ void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
     ctx->release_buffer(buffer);
 }
 
-uint8_t* momentum_buffer_data(MomentumContext *ctx, Buffer *buffer) {
-    if (buffer != NULL) return buffer->address;
-    else return NULL;
-}
