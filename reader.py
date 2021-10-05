@@ -4,7 +4,7 @@ import time
 
 lib = cdll.LoadLibrary("./libmomentum.so")
 
-context = lib.momentum_context(b'reader')
+context = lib.momentum_context()
 
 @CFUNCTYPE(None, c_char_p)
 def handle_message(message):

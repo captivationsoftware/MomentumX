@@ -4,23 +4,15 @@ import time
 
 lib = cdll.LoadLibrary("./libmomentum.so")
 
-context = lib.momentum_context(b'writer')
+context = lib.momentum_context()
 
-big_data = b'\x01' * 4097
+big_data = b'\x01' * int(1e7)
 try:
     c = 0
     while True:
         c += 1
-        data = f'This is some data: {c}'
-        if c == 5000000:
-            data_bytes = big_data
-        else:
-            data_bytes = data.encode()
-        if (lib.momentum_send(context, b'foo', data_bytes, len(data_bytes)) < 0):
-            print ("failed")
+        data_bytes = f'{c}_'.encode() + big_data
         lib.momentum_send(context, b'foo', data_bytes, len(data_bytes))
-
-        
         
 
 except KeyboardInterrupt:
