@@ -16,8 +16,8 @@ static const std::string NAMESPACE = "momentum";
 static const size_t PAGE_SIZE = getpagesize();
 static const std::string DEV_SHM_PATH = "/dev/shm/";
 static const std::string IPC_ENDPOINT_BASE = "ipc://@" + NAMESPACE + "_";
-static const size_t MAX_STREAM_SIZE = 64;
-static const size_t MAX_PATH_SIZE = 72;
+static const size_t MAX_STREAM_SIZE = 32;
+static const size_t MAX_PATH_SIZE = 40;
 
 struct Buffer {
     int fd;

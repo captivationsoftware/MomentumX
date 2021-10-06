@@ -19,7 +19,7 @@ def handle_message(data, length):
     messages_received += 1
     bytes_received += length
     
-    if (messages_received % (length / 100) == 0):
+    if (messages_received % 100 == 0):
         elapsed = time.time() - now
 
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))

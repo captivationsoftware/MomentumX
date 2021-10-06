@@ -141,7 +141,7 @@ int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t
         _consumer_sock = zmq_socket(_zmq_ctx, ZMQ_SUB);
     }
 
-    if (_consumer_streams.find(stream) == _consumer_streams.end()) {
+    if (_consumer_streams.count(stream) == 0) {
         zmq_setsockopt(_consumer_sock, ZMQ_SUBSCRIBE, "", 0);
 
         std::string endpoint(IPC_ENDPOINT_BASE + stream);
@@ -170,7 +170,7 @@ int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8
         return -1;
     } 
 
-    if (_consumer_streams.find(stream) != _consumer_streams.end()) {
+    if (_consumer_streams.count(stream) == 0) {
 
         std::string endpoint(IPC_ENDPOINT_BASE + stream);
         int rc = zmq_disconnect(_consumer_sock, endpoint.c_str()); 
@@ -239,7 +239,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         _producer_sock = zmq_socket(_zmq_ctx, ZMQ_PUB);
     }
 
-    if (_producer_streams.find(stream) == _producer_streams.end()) {
+    if (_producer_streams.count(stream) == 0) {
 
         std::string endpoint(IPC_ENDPOINT_BASE + stream);
 
@@ -296,9 +296,6 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         // buffer did exist but its undersized, so resize it
         resize_buffer(buffer, length);
     }
-
-    // update the access time
-    futimens(buffer->fd, NULL);
 
     _last_acquired_buffer = buffer;
 
