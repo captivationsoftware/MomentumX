@@ -21,6 +21,7 @@ def handle_message(data, length):
     
     if (messages_received % 100 == 0):
         elapsed = time.time() - now
+        
 
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
         print("Recvd {:.2f} MB/sec".format(bytes_received / elapsed / 1.0e6))
