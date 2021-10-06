@@ -1,6 +1,6 @@
 from ctypes import *
+import sys
 import time
-
 
 lib = cdll.LoadLibrary("./libmomentum.so")
 
@@ -25,7 +25,7 @@ def handle_message(data, length):
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
         print("Recvd {:.2f} MB/sec".format(bytes_received / elapsed / 1.0e6))
 
-lib.momentum_subscribe(context, b'foo', handle_message)
+lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message)
 
 
 try:
