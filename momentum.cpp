@@ -51,6 +51,7 @@ MomentumContext::MomentumContext() {
 
     std::thread listener([&] {
         int bytes_received;
+        uint64_t ts = 0;
 
         Message message;
 
@@ -59,6 +60,13 @@ MomentumContext::MomentumContext() {
                 bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
                 if (bytes_received < 0) {
                     std::perror("Failed to receive message");
+                }
+
+                if (message.ts <= ts) {
+                    std::cout << "Skipping late message: " << ts <<std::endl;
+                    continue;
+                } else {
+                    ts = message.ts;
                 }
 
                 std::string stream = message.stream;
@@ -74,9 +82,11 @@ MomentumContext::MomentumContext() {
                     }
                 }
 
+                flock(buffer->fd, LOCK_SH);
                 for (auto const& handler : _consumers_by_stream[stream]) {
-                    handler(buffer->address, message.data_length);
+                    handler(buffer->address, message.data_length, message.id);
                 }
+                flock(buffer->fd, LOCK_UN);
 
             } else {
                 usleep(1);
@@ -130,7 +140,7 @@ void MomentumContext::term() {
     }
 };
 
-int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *, size_t)) {
+int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -155,7 +165,7 @@ int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t
     
     
     if (!_consumers_by_stream.count(stream)) {
-        _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *, size_t)>();
+        _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *, size_t, uint64_t)>();
     }
     _consumers_by_stream[stream].push_back(handler);
    
@@ -163,7 +173,7 @@ int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t
     return 0;
 }
 
-int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *, size_t)) {
+int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -181,7 +191,6 @@ int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8
             _consumer_streams.erase(stream);
         }
     }
-    
 
     if (_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream].erase(
@@ -217,6 +226,9 @@ int MomentumContext::send_message(std::string stream, Buffer *buffer, size_t len
     Message message;
     message.data_length = length;
     message.buffer_length = buffer->length;
+    message.ts = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+    message.id = ++msg_id;
+
     strcpy(message.stream, stream.c_str());
     strcpy(message.path, buffer->path);
 
@@ -270,11 +282,13 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
             _buffers_by_stream[stream].pop();
             _buffers_by_stream[stream].push(candidate_buffer);
 
-            if (candidate_buffer != _last_acquired_buffer && flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
-                // found a buffer that is different than the last iteration
-                // that we were able to lock; 
-                buffer = candidate_buffer;
-                break;
+            if (candidate_buffer != _last_acquired_buffer) {
+                // found a buffer that is different than the last iteration...
+                if (flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
+                    // and we were also able to set the exclusive lock... 
+                    buffer = candidate_buffer;
+                    break;
+                }
             }
         }
     }
@@ -375,12 +389,12 @@ void momentum_destroy(MomentumContext *ctx) {
     delete ctx;
 }
 
-int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t)) {
+int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
     std::string stream_str(stream);
     return ctx->subscribe(stream_str, handler);
 }
 
-int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t)) {
+int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
     std::string stream_str(stream);
     return ctx->unsubscribe(stream_str, handler);
 }

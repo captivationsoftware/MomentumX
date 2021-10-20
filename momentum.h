@@ -32,6 +32,8 @@ struct Message {
     char path[MAX_PATH_SIZE];
     size_t data_length;
     size_t buffer_length;
+    uint64_t ts;
+    uint64_t id;
 };
 
 class MomentumContext {
@@ -41,8 +43,8 @@ public:
     ~MomentumContext();
     bool terminated();
     void term();
-    int subscribe(std::string stream, const void (*handler)(uint8_t *, size_t));
-    int unsubscribe(std::string stream, const void (*handler)(uint8_t *, size_t));
+    int subscribe(std::string stream, const void (*handler)(uint8_t *, size_t, uint64_t));
+    int unsubscribe(std::string stream, const void (*handler)(uint8_t *, size_t, uint64_t));
     // int send(std::string stream, Buffer *buffer, size_t length);
     int send(std::string stream, uint8_t *data, size_t length);
     Buffer *acquire_buffer(std::string stream, size_t length);
@@ -51,7 +53,7 @@ public:
 private:
     std::atomic<bool>  _terminated{false};    
 
-    std::map<std::string, std::vector<const void (*)(uint8_t *, size_t)>> _consumers_by_stream;
+    std::map<std::string, std::vector<const void (*)(uint8_t *, size_t, uint64_t)>> _consumers_by_stream;
     std::map<std::string, std::queue<Buffer *>> _buffers_by_stream;
     
     Buffer *_last_acquired_buffer = NULL;
@@ -66,10 +68,11 @@ private:
     void resize_buffer(Buffer * buffer, size_t length);
     int send_message(std::string stream, Buffer * buffer, size_t length);
 
-
     void *_zmq_ctx = NULL;
     void *_producer_sock = NULL;
     void *_consumer_sock = NULL;
+
+    uint64_t msg_id = 0;
 };
 
 extern "C" {
@@ -79,8 +82,8 @@ extern "C" {
     void momentum_term(MomentumContext *ctx);
     void momentum_destroy(MomentumContext *ctx);
     bool momentum_terminated(MomentumContext *ctx);
-    int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t));
-    int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t));
+    int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t, uint64_t));
+    int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t, uint64_t));
     int momentum_send(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length);
     // int momentum_send(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length);
     Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length);
