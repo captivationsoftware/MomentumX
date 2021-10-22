@@ -4,34 +4,49 @@ import time
 
 lib = cdll.LoadLibrary("./libmomentum.so")
 
+MAX_LATENCY_MS = c_int.in_dll(lib, "MOMENTUM_OPT_MAX_LATENCY")
+
 context = lib.momentum_context()
 
 now = time.time()
 bytes_received = 0
 messages_received = 0
 
-last_message_id = 0
+latency_avg = 0
+last_msg_id = 0
+skip_count = 0
 
-@CFUNCTYPE(None, c_char_p, c_size_t, c_uint64)
-def handle_message(data, length, msg_id):
+@CFUNCTYPE(None, c_char_p, c_size_t, c_uint64, c_uint64)
+def handle_message(data, length, msg_id, latency_ms):
     global now
     global bytes_received
     global messages_received
-    global last_message_id 
+    global latency_avg 
+    global last_msg_id
+    global skip_count
 
     messages_received += 1
     bytes_received += length
-    
-    if msg_id - last_message_id > 1:
-        print('Missed', msg_id - last_message_id, 'messages')
-    
-    last_message_id = msg_id
-    
-    if (messages_received % 10000 == 0):
-        elapsed = time.time() - now
+    latency_avg += latency_ms
 
+    step = msg_id - last_msg_id
+    if last_msg_id > 0 and step > 1:
+        skip_count = skip_count + step
+
+    last_msg_id = msg_id
+
+    threshold = 10000
+
+    if (messages_received % threshold == 0):
+        elapsed = time.time() - now
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
         print("Recvd {:.2f} MB/sec".format(bytes_received / elapsed / 1.0e6))
+
+        print("Latency: {:.2f}ms".format(latency_avg / messages_received))
+        print(f"Missed {skip_count / threshold * 100}%")
+        skip_count = 0
+
+lib.momentum_configure(context, MAX_LATENCY_MS, 10)
 
 lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message)
 

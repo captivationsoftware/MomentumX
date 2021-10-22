@@ -63,7 +63,6 @@ MomentumContext::MomentumContext() {
                 }
 
                 if (message.ts <= ts) {
-                    std::cout << "Skipping late message: " << ts <<std::endl;
                     continue;
                 } else {
                     ts = message.ts;
@@ -71,6 +70,11 @@ MomentumContext::MomentumContext() {
 
                 std::string stream = message.stream;
                 std::string shm_path = message.path;
+                uint64_t latency_ms = (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count() - ts) / 1e6;
+
+                if (latency_ms > _max_latency) {
+                    continue;
+                }
 
                 Buffer *buffer;
                 if (_buffer_by_shm_path.count(shm_path) == 0) {
@@ -83,8 +87,8 @@ MomentumContext::MomentumContext() {
                 }
 
                 flock(buffer->fd, LOCK_SH);
-                for (auto const& handler : _consumers_by_stream[stream]) {
-                    handler(buffer->address, message.data_length, message.id);
+                for (auto const& callback : _consumers_by_stream[stream]) {
+                    callback(buffer->address, message.data_length, message.id, latency_ms);
                 }
                 flock(buffer->fd, LOCK_UN);
 
@@ -140,7 +144,7 @@ void MomentumContext::term() {
     }
 };
 
-int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
+int MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -165,15 +169,15 @@ int MomentumContext::subscribe(std::string stream, const void (*handler)(uint8_t
     
     
     if (!_consumers_by_stream.count(stream)) {
-        _consumers_by_stream[stream] = std::vector<const void (*)(uint8_t *, size_t, uint64_t)>();
+        _consumers_by_stream[stream] = std::vector<callback_t>();
     }
-    _consumers_by_stream[stream].push_back(handler);
+    _consumers_by_stream[stream].push_back(callback);
    
 
     return 0;
 }
 
-int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
+int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -197,7 +201,7 @@ int MomentumContext::unsubscribe(std::string stream, const void (*handler)(uint8
             std::remove(
                 _consumers_by_stream[stream].begin(), 
                 _consumers_by_stream[stream].end(), 
-                handler
+                callback
             ), 
             _consumers_by_stream[stream].end()
         );
@@ -227,7 +231,7 @@ int MomentumContext::send_message(std::string stream, Buffer *buffer, size_t len
     message.data_length = length;
     message.buffer_length = buffer->length;
     message.ts = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-    message.id = ++msg_id;
+    message.id = ++_msg_id;
 
     strcpy(message.stream, stream.c_str());
     strcpy(message.path, buffer->path);
@@ -334,14 +338,11 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
     } 
 
     Buffer *buffer = new Buffer();
-    buffer->length = 0;
     buffer->fd = fd;
     buffer->readonly = readonly;
     strcpy(buffer->path, shm_path.c_str());
 
-    if (length > buffer->length) {
-        resize_buffer(buffer, length);
-    }
+    resize_buffer(buffer, length);
 
     _buffer_by_shm_path_mutex.lock();
     _buffer_by_shm_path[shm_path] = buffer;
@@ -351,7 +352,7 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
 }
 
 void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
-    size_t length_required = (length / PAGE_SIZE + 1) * PAGE_SIZE;
+    size_t length_required = ((length / PAGE_SIZE) + 1) * PAGE_SIZE;
     bool meets_length_requirement = buffer->length >= length_required;
 
     if (!meets_length_requirement) {
@@ -389,14 +390,14 @@ void momentum_destroy(MomentumContext *ctx) {
     delete ctx;
 }
 
-int momentum_subscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
+int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback) {
     std::string stream_str(stream);
-    return ctx->subscribe(stream_str, handler);
+    return ctx->subscribe(stream_str, callback);
 }
 
-int momentum_unsubscribe(MomentumContext *ctx, const char *stream, const void (*handler)(uint8_t *, size_t, uint64_t)) {
+int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback) {
     std::string stream_str(stream);
-    return ctx->unsubscribe(stream_str, handler);
+    return ctx->unsubscribe(stream_str, callback);
 }
 
 // int momentum_send_copy(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
@@ -418,3 +419,10 @@ void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
     ctx->release_buffer(buffer);
 }
 
+void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value) {
+    if (option == MOMENTUM_OPT_MAX_LATENCY) {
+        ctx->_max_latency = (uint64_t) value;
+    } else if (option == MOMENUTM_OPT_MAX_BYTE_ALLOC) {
+        ctx->_max_byte_allocations = (uint64_t) value;
+    }
+}

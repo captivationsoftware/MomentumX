@@ -1,5 +1,6 @@
 from ctypes import *
 import sys
+import time
 
 lib = cdll.LoadLibrary("./libmomentum.so")
 
@@ -17,6 +18,7 @@ try:
             data = data_bytes_2
         else:
             data = data_bytes_1
+
         lib.momentum_send(context, stream, data, data_len)
 
 except KeyboardInterrupt:
