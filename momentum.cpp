@@ -220,7 +220,7 @@ int MomentumContext::send(std::string stream, uint8_t *data, size_t length) {
     } 
 
     Buffer *buffer = acquire_buffer(stream, length);
-
+    
     memcpy(buffer->address, data, length);
 
     release_buffer(buffer);
@@ -301,21 +301,33 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
 
     // If we don't have enough buffers, then create them...
     bool below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
+
     if (buffer == NULL || below_minimum_buffers) {
         size_t buffer_count = 0;
         size_t allocations_required = below_minimum_buffers ? _min_buffers : 1;
+        
+        Buffer* first_buffer = NULL;
         while (allocations_required > 0) {
             std::ostringstream buffer_count_ss;
-            buffer_count_ss << std::setw(4) << std::setfill( '0' ) << buffer_count++;
+            buffer_count_ss << std::setw(4) << std::setfill( '0' ) << ++buffer_count;
             
             std::string shm_path("/momentum_" + stream + "__" + buffer_count_ss.str());
             buffer = allocate_buffer(shm_path, length, false);
-
+            
             if (buffer != NULL) {
                 allocations_required--;
                 _buffers_by_stream[stream].push(buffer);
+                
+                // Since we may create numerous buffers, make note of this first buffer to 
+                // maintain some semblance of sequential ordering.
+                if (first_buffer == NULL) {
+                    first_buffer = buffer;
+                }
             }
         }
+
+        buffer = first_buffer;
+
     } else if (length > buffer->length) {
         // buffer did exist but its undersized, so resize it
         resize_buffer(buffer, length);
@@ -423,8 +435,6 @@ void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
 void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value) {
     if (option == MOMENTUM_OPT_MAX_LATENCY) {
         ctx->_max_latency = (uint64_t) value;
-    } else if (option == MOMENUTM_OPT_MAX_BYTE_ALLOC) {
-        ctx->_max_byte_allocations = (uint64_t) value;
     } else if (option == MOMENTUM_OPT_MIN_BUFFERS) {
         ctx->_min_buffers = (uint64_t) value;
     }

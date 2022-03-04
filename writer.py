@@ -6,7 +6,7 @@ lib = cdll.LoadLibrary("./libmomentum.so")
 MIN_BUFFERS = c_int.in_dll(lib, "MOMENTUM_OPT_MIN_BUFFERS")
 
 context = lib.momentum_context()
-lib.momentum_configure(context, MIN_BUFFERS, 11)
+lib.momentum_configure(context, MIN_BUFFERS, 30)
 
 data_bytes_1 = b'a' * int(float(sys.argv[2]))
 data_bytes_2 = b'b' * int(float(sys.argv[2]))
