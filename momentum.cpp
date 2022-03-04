@@ -12,6 +12,8 @@
 #include <sys/file.h>        
 #include <dirent.h>
 #include <chrono>
+#include <sstream>
+#include <iomanip>
 
 #include "momentum.h"
 
@@ -295,18 +297,22 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
                 }
             }
         }
-    }
+    } 
 
-    // If we couldn't find a buffer, then create a new one...
-    if (buffer == NULL) {
+    // If we don't have enough buffers, then create them...
+    bool below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
+    if (buffer == NULL || below_minimum_buffers) {
         size_t buffer_count = 0;
-        size_t allocation_count = 0;
-        while (allocation_count < 1) {
-            std::string shm_path("/momentum_" + stream + "__" + std::to_string(buffer_count++));
+        size_t allocations_required = below_minimum_buffers ? _min_buffers : 1;
+        while (allocations_required > 0) {
+            std::ostringstream buffer_count_ss;
+            buffer_count_ss << std::setw(4) << std::setfill( '0' ) << buffer_count++;
+            
+            std::string shm_path("/momentum_" + stream + "__" + buffer_count_ss.str());
             buffer = allocate_buffer(shm_path, length, false);
 
             if (buffer != NULL) {
-                allocation_count++;
+                allocations_required--;
                 _buffers_by_stream[stream].push(buffer);
             }
         }
@@ -400,11 +406,6 @@ int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t ca
     return ctx->unsubscribe(stream_str, callback);
 }
 
-// int momentum_send_copy(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
-//     std::string stream_str(stream);
-//     return ctx->send_copy(stream_str, data, length);
-// }
-
 int momentum_send(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
     std::string stream_str(stream);
     return ctx->send(stream_str, data, length);
@@ -424,5 +425,7 @@ void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value)
         ctx->_max_latency = (uint64_t) value;
     } else if (option == MOMENUTM_OPT_MAX_BYTE_ALLOC) {
         ctx->_max_byte_allocations = (uint64_t) value;
+    } else if (option == MOMENTUM_OPT_MIN_BUFFERS) {
+        ctx->_min_buffers = (uint64_t) value;
     }
 }

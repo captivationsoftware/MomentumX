@@ -47,7 +47,6 @@ public:
     void term();
     int subscribe(std::string stream, callback_t callback);
     int unsubscribe(std::string stream, callback_t callback);
-    // int send(std::string stream, Buffer *buffer, size_t length);
     int send(std::string stream, uint8_t *data, size_t length);
     Buffer *acquire_buffer(std::string stream, size_t length);
     void release_buffer(Buffer *buffer);
@@ -55,6 +54,7 @@ public:
     // public options
     uint64_t _max_latency = -1;             // intentionally wrap
     uint64_t _max_byte_allocations = -1;    // intentionally wrap
+    uint64_t _min_buffers = 1;
 
 private:
     std::atomic<bool>  _terminated{false};    
@@ -85,6 +85,7 @@ extern "C" {
 
     extern const uint8_t MOMENTUM_OPT_MAX_LATENCY = 0;
     extern const uint8_t MOMENUTM_OPT_MAX_BYTE_ALLOC = 1;
+    extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 2;
 
     // public interface
     MomentumContext* momentum_context();
@@ -94,7 +95,6 @@ extern "C" {
     int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback);
     int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback);
     int momentum_send(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length);
-    // int momentum_send(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length);
     Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length);
     void momentum_release_buffer(MomentumContext *ctx, Buffer * buffer);
     

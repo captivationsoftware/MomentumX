@@ -35,7 +35,7 @@ def handle_message(data, length, msg_id, latency_ms):
 
     last_msg_id = msg_id
 
-    threshold = 10000
+    threshold = 10
 
     if (messages_received % threshold == 0):
         elapsed = time.time() - now
