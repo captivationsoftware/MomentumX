@@ -16,8 +16,8 @@ latency_avg = 0
 last_msg_id = 0
 skip_count = 0
 
-@CFUNCTYPE(None, c_char_p, c_size_t, c_uint64, c_uint64)
-def handle_message(data, length, msg_id, latency_ms):
+@CFUNCTYPE(None, POINTER(c_uint8), c_size_t, c_size_t, c_uint64, c_uint64)
+def handle_message(data, data_length, buffer_length, msg_id, latency_ms):
     global now
     global bytes_received
     global messages_received
@@ -26,7 +26,7 @@ def handle_message(data, length, msg_id, latency_ms):
     global skip_count
 
     messages_received += 1
-    bytes_received += length
+    bytes_received += data_length
     latency_avg += latency_ms
 
     step = msg_id - last_msg_id

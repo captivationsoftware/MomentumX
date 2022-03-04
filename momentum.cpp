@@ -90,7 +90,7 @@ MomentumContext::MomentumContext() {
 
                 flock(buffer->fd, LOCK_SH);
                 for (auto const& callback : _consumers_by_stream[stream]) {
-                    callback(buffer->address, message.data_length, message.id, latency_ms);
+                    callback(buffer->address, message.data_length, message.buffer_length, message.id, latency_ms);
                 }
                 flock(buffer->fd, LOCK_UN);
 

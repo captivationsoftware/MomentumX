@@ -36,7 +36,7 @@ struct Message {
     uint64_t id;
 };
 
-typedef const void (*callback_t)(uint8_t *, size_t, uint64_t, uint64_t);
+typedef const void (*callback_t)(uint8_t *, size_t, size_t, uint64_t, uint64_t);
 
 class MomentumContext {
 
