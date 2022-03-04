@@ -358,7 +358,7 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
 }
 
 void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
-    size_t length_required = ((length / PAGE_SIZE) + 1) * PAGE_SIZE;
+    size_t length_required = ceil(length / (double) PAGE_SIZE) * PAGE_SIZE;
     bool meets_length_requirement = buffer->length >= length_required;
 
     if (!meets_length_requirement) {

@@ -37,6 +37,7 @@ def handle_message(data, length, msg_id, latency_ms):
 
     threshold = 10
 
+    print(data[0], data[-1])
     if (messages_received % threshold == 0):
         elapsed = time.time() - now
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
