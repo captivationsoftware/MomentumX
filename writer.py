@@ -21,9 +21,9 @@ try:
         else:
             data = data_bytes_1
 
-        lib.momentum_send(context, stream, data, data_len)
-        time.sleep(1)
+        lib.momentum_send_data(context, stream, data, data_len)
 
 except KeyboardInterrupt:
-    pass
+    lib.momentum_term(context)
+    lib.momentum_destroy(context)
 

@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/shm.h>
 #include <csignal>
+#include <cmath>
 #include <thread>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -19,7 +20,7 @@
 
 static std::vector<MomentumContext *> contexts;
 
-static void (*previous_sigint_handler)(int) = NULL;
+// static void (*previous_sigint_handler)(int) = NULL;
 
 void cleanup() {
     for (MomentumContext *ctx : contexts) {
@@ -29,13 +30,13 @@ void cleanup() {
     }
 }
 
-void signal_handler(int signal) {
-    cleanup();
+// void signal_handler(int signal) {
+//     cleanup();
 
-    if (previous_sigint_handler) {
-        previous_sigint_handler(signal);
-    }
-};
+//     if (previous_sigint_handler) {
+//         previous_sigint_handler(signal);
+//     }
+// };
 
 void fail(std::string reason) {
     std::perror(reason.c_str());
@@ -45,9 +46,9 @@ void fail(std::string reason) {
 }
 
 MomentumContext::MomentumContext() {
-    if (!previous_sigint_handler) {
-        previous_sigint_handler = std::signal(SIGINT, signal_handler);
-    }
+    // if (!previous_sigint_handler) {
+    //     previous_sigint_handler = std::signal(SIGINT, signal_handler);
+    // }
 
     _zmq_ctx = zmq_ctx_new();
 
@@ -80,7 +81,7 @@ MomentumContext::MomentumContext() {
 
                 Buffer *buffer;
                 if (_buffer_by_shm_path.count(shm_path) == 0) {
-                    buffer = allocate_buffer(shm_path, message.buffer_length, true);
+                    buffer = allocate_buffer(shm_path, message.buffer_length, false);
                 } else {
                     buffer = _buffer_by_shm_path[shm_path];
                     if (buffer->length < message.buffer_length) {
@@ -117,7 +118,7 @@ MomentumContext::~MomentumContext() {
         munmap(buffer->address, buffer->length);
         close(buffer->fd);
 
-        if (!buffer->readonly) {
+        if (buffer->was_allocated) {
             shm_unlink(buffer->path);
         }
 
@@ -212,7 +213,7 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     return 0;
 }
 
-int MomentumContext::send(std::string stream, uint8_t *data, size_t length) {
+int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length) {
     if (_terminated) return -1;
 
     if (stream.find(std::string("__")) != std::string::npos) {
@@ -225,10 +226,12 @@ int MomentumContext::send(std::string stream, uint8_t *data, size_t length) {
 
     release_buffer(buffer);
 
-    return send_message(stream, buffer, length);
+    return send_buffer(stream, buffer, length);
 }
 
-int MomentumContext::send_message(std::string stream, Buffer *buffer, size_t length) {
+int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t length) {
+    if (_terminated) return -1;
+
     Message message;
     message.data_length = length;
     message.buffer_length = buffer->length;
@@ -312,7 +315,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
             buffer_count_ss << std::setw(4) << std::setfill( '0' ) << ++buffer_count;
             
             std::string shm_path("/momentum_" + stream + "__" + buffer_count_ss.str());
-            buffer = allocate_buffer(shm_path, length, false);
+            buffer = allocate_buffer(shm_path, length, true);
             
             if (buffer != NULL) {
                 allocations_required--;
@@ -339,11 +342,15 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
 }
 
 void MomentumContext::release_buffer(Buffer *buffer) {
+    if (_terminated) return;
+
     flock(buffer->fd, LOCK_UN);
 }
 
-Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bool readonly) {
-    int flags =  readonly ? O_RDWR : O_RDWR | O_CREAT | O_EXCL;
+Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bool should_allocate) {
+    if (_terminated) return NULL;
+    
+    int flags =  O_RDWR | (should_allocate ? O_CREAT | O_EXCL : 0);
     int fd = shm_open(shm_path.c_str(), flags, S_IRWXU);
     if (fd < 0) {
         if (errno == EEXIST) {
@@ -357,7 +364,7 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
 
     Buffer *buffer = new Buffer();
     buffer->fd = fd;
-    buffer->readonly = readonly;
+    buffer->was_allocated = should_allocate;
     strcpy(buffer->path, shm_path.c_str());
 
     resize_buffer(buffer, length);
@@ -370,6 +377,8 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
 }
 
 void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
+    if (_terminated) return;
+
     size_t length_required = ceil(length / (double) PAGE_SIZE) * PAGE_SIZE;
     bool meets_length_requirement = buffer->length >= length_required;
 
@@ -418,9 +427,14 @@ int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t ca
     return ctx->unsubscribe(stream_str, callback);
 }
 
-int momentum_send(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
+int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
     std::string stream_str(stream);
-    return ctx->send(stream_str, data, length);
+    return ctx->send_data(stream_str, data, length);
+}
+
+int momentum_send_data(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length) {
+    std::string stream_str(stream);
+    return ctx->send_buffer(stream_str, buffer, length);
 }
 
 Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length) {
@@ -430,6 +444,14 @@ Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t
 
 void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
     ctx->release_buffer(buffer);
+}
+
+uint8_t* momentum_get_buffer_address(Buffer *buffer) {
+    return buffer->address;
+}
+
+size_t momentum_get_buffer_length(Buffer *buffer) {
+    return buffer->length;
 }
 
 void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value) {

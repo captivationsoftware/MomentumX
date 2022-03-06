@@ -56,5 +56,6 @@ try:
         time.sleep(1)
 
 except KeyboardInterrupt:
-    pass
+    lib.momentum_term(context)
+    lib.momentum_destroy(context)
 
