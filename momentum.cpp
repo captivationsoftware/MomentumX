@@ -13,14 +13,12 @@
 #include <sys/file.h>        
 #include <dirent.h>
 #include <chrono>
-#include <sstream>
 #include <iomanip>
+#include <sstream>
 
 #include "momentum.h"
 
 static std::vector<MomentumContext *> contexts;
-
-// static void (*previous_sigint_handler)(int) = NULL;
 
 void cleanup() {
     for (MomentumContext *ctx : contexts) {
@@ -30,14 +28,6 @@ void cleanup() {
     }
 }
 
-// void signal_handler(int signal) {
-//     cleanup();
-
-//     if (previous_sigint_handler) {
-//         previous_sigint_handler(signal);
-//     }
-// };
-
 void fail(std::string reason) {
     std::perror(reason.c_str());
 
@@ -46,10 +36,11 @@ void fail(std::string reason) {
 }
 
 MomentumContext::MomentumContext() {
-    // if (!previous_sigint_handler) {
-    //     previous_sigint_handler = std::signal(SIGINT, signal_handler);
-    // }
 
+    // Get our pid
+    _pid = getpid();
+
+    // Initialize our ZMQ context
     _zmq_ctx = zmq_ctx_new();
 
     std::thread listener([&] {
@@ -72,26 +63,26 @@ MomentumContext::MomentumContext() {
                 }
 
                 std::string stream = message.stream;
-                std::string shm_path = message.path;
                 uint64_t latency_ms = (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count() - ts) / 1e6;
 
                 if (latency_ms > _max_latency) {
                     continue;
                 }
 
-                Buffer *buffer;
+                Buffer *buffer;    
+                
+                std::string shm_path = to_shm_path(message.buffer_owner_pid, stream, message.buffer_id);
                 if (_buffer_by_shm_path.count(shm_path) == 0) {
-                    buffer = allocate_buffer(shm_path, message.buffer_length, false);
+                    buffer = allocate_buffer(stream, message.buffer_id, message.buffer_length, O_RDWR, message.buffer_owner_pid);
                 } else {
                     buffer = _buffer_by_shm_path[shm_path];
                     if (buffer->length < message.buffer_length) {
                         resize_buffer(buffer, message.buffer_length);
                     }
                 }
-
                 flock(buffer->fd, LOCK_SH);
                 for (auto const& callback : _consumers_by_stream[stream]) {
-                    callback(buffer->address, message.data_length, message.buffer_length, message.id, latency_ms);
+                    callback(buffer->address, message.data_length, message.buffer_length, message.id, latency_ms);  
                 }
                 flock(buffer->fd, LOCK_UN);
 
@@ -118,13 +109,12 @@ MomentumContext::~MomentumContext() {
         munmap(buffer->address, buffer->length);
         close(buffer->fd);
 
-        if (buffer->was_allocated) {
-            shm_unlink(buffer->path);
+        if (buffer->owner_pid == _pid) {
+            shm_unlink(tuple.first.c_str());
         }
-
+        
         delete buffer;
     }
-
 }
 
 bool MomentumContext::terminated() {
@@ -150,7 +140,7 @@ void MomentumContext::term() {
 int MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return -1;
 
-    if (stream.find(std::string("__")) != std::string::npos) {
+    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
         return -1;
     } 
 
@@ -170,7 +160,6 @@ int MomentumContext::subscribe(std::string stream, callback_t callback) {
         }
     }
     
-    
     if (!_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream] = std::vector<callback_t>();
     }
@@ -183,7 +172,7 @@ int MomentumContext::subscribe(std::string stream, callback_t callback) {
 int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     if (_terminated) return -1;
 
-    if (stream.find(std::string("__")) != std::string::npos) {
+    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
         return -1;
     } 
 
@@ -216,7 +205,7 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
 int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length) {
     if (_terminated) return -1;
 
-    if (stream.find(std::string("__")) != std::string::npos) {
+    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
         return -1;
     } 
 
@@ -224,7 +213,7 @@ int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length)
     
     memcpy(buffer->address, data, length);
 
-    release_buffer(buffer);
+    release_buffer(stream, buffer);
 
     return send_buffer(stream, buffer, length);
 }
@@ -234,13 +223,13 @@ int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t leng
 
     Message message;
     message.data_length = length;
+    message.buffer_id = buffer->id;
+    message.buffer_owner_pid = buffer->owner_pid;
     message.buffer_length = buffer->length;
     message.ts = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     message.id = ++_msg_id;
 
     strcpy(message.stream, stream.c_str());
-    strcpy(message.path, buffer->path);
-
     int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
     if (rc < 0) {
         std::perror("Failed to send message");
@@ -252,7 +241,7 @@ int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t leng
 Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     if (_terminated) return NULL;
 
-    if (stream.find(std::string("__")) != std::string::npos) {
+    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
         return NULL;
     } 
 
@@ -306,16 +295,12 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     bool below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
 
     if (buffer == NULL || below_minimum_buffers) {
-        size_t buffer_count = 0;
         size_t allocations_required = below_minimum_buffers ? _min_buffers : 1;
-        
+
         Buffer* first_buffer = NULL;
+        int id = 1;
         while (allocations_required > 0) {
-            std::ostringstream buffer_count_ss;
-            buffer_count_ss << std::setw(4) << std::setfill( '0' ) << ++buffer_count;
-            
-            std::string shm_path("/momentum_" + stream + "__" + buffer_count_ss.str());
-            buffer = allocate_buffer(shm_path, length, true);
+            buffer = allocate_buffer(stream, id++, length, O_RDWR | O_CREAT | O_EXCL);
             
             if (buffer != NULL) {
                 allocations_required--;
@@ -341,16 +326,24 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     return buffer;
 }
 
-void MomentumContext::release_buffer(Buffer *buffer) {
+void MomentumContext::release_buffer(std::string stream, Buffer *buffer) {
     if (_terminated) return;
+
+    // update buffer modified time
+    update_shm_time(to_shm_path(buffer->owner_pid, stream, buffer->id));
 
     flock(buffer->fd, LOCK_UN);
 }
 
-Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bool should_allocate) {
+Buffer* MomentumContext::allocate_buffer(std::string stream, int id, size_t length, int flags, pid_t owner_pid) {
     if (_terminated) return NULL;
-    
-    int flags =  O_RDWR | (should_allocate ? O_CREAT | O_EXCL : 0);
+
+    // Create the file momentum path to store the shm files
+    mkdir(std::string(SHM_PATH_BASE + "/" + NAMESPACE).c_str(), 0700);
+
+    owner_pid = owner_pid < 0 ? _pid : owner_pid;
+
+    std::string shm_path = to_shm_path(owner_pid, stream, id);
     int fd = shm_open(shm_path.c_str(), flags, S_IRWXU);
     if (fd < 0) {
         if (errno == EEXIST) {
@@ -363,9 +356,9 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, bo
     } 
 
     Buffer *buffer = new Buffer();
+    buffer->id = id;
     buffer->fd = fd;
-    buffer->was_allocated = should_allocate;
-    strcpy(buffer->path, shm_path.c_str());
+    buffer->owner_pid = owner_pid;
 
     resize_buffer(buffer, length);
 
@@ -397,6 +390,32 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
         } else {
             buffer->length = length_required;
         }
+    }
+}
+
+std::string MomentumContext::to_shm_path(pid_t pid, std::string stream, int id) {
+    std::ostringstream oss;
+    oss << "/" << NAMESPACE << "/";
+    oss << std::to_string(pid) << PATH_DELIM << stream << PATH_DELIM;
+    oss << std::setw(8) << std::setfill('0') << id;
+    return oss.str();
+}
+
+void MomentumContext::update_shm_time(std::string shm_path) {
+    struct stat fileinfo;
+    struct timespec updated_times[2];
+    
+    std::string filepath(SHM_PATH_BASE + shm_path);
+
+    if (stat(filepath.c_str(), &fileinfo) < 0) {
+        std::perror("Failed to obtain file timestamps");
+    }
+    
+    updated_times[0] = fileinfo.st_atim;
+    clock_gettime(CLOCK_REALTIME, &updated_times[1]);
+
+    if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
+        std::perror("Failed to write file timestamps");
     }
 }
 
@@ -442,8 +461,9 @@ Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t
     return ctx->acquire_buffer(stream_str, length);
 }
 
-void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
-    ctx->release_buffer(buffer);
+void momentum_release_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer) {
+    std::string stream_str(stream);
+    ctx->release_buffer(stream_str, buffer);
 }
 
 uint8_t* momentum_get_buffer_address(Buffer *buffer) {

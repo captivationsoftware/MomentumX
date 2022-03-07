@@ -12,30 +12,35 @@
 #include <zmq.h>
 
 
+typedef const void (*callback_t)(uint8_t *, size_t, size_t, uint64_t, uint64_t);
+
+
+static const std::string PATH_DELIM = "__";
 static const std::string NAMESPACE = "momentum";
+static const std::string SHM_PATH_BASE = "/dev/shm";
+static const std::string IPC_ENDPOINT_BASE = "ipc://@" + NAMESPACE + PATH_DELIM;
 static const size_t PAGE_SIZE = getpagesize();
-static const std::string IPC_ENDPOINT_BASE = "ipc://@" + NAMESPACE + "_";
 static const size_t MAX_STREAM_SIZE = 32;
 static const size_t MAX_PATH_SIZE = 40;
 
 struct Buffer {
+    int id;
+    pid_t owner_pid;
     int fd;
     size_t length;
-    bool was_allocated;
-    char path[MAX_PATH_SIZE];
     uint8_t *address;
 };
 
 struct Message {
     char stream[MAX_STREAM_SIZE];
-    char path[MAX_PATH_SIZE];
-    size_t data_length;
+    int buffer_id;
     size_t buffer_length;
+    pid_t buffer_owner_pid;
+    size_t data_length;
     uint64_t ts;
     uint64_t id;
 };
 
-typedef const void (*callback_t)(uint8_t *, size_t, size_t, uint64_t, uint64_t);
 
 class MomentumContext {
 
@@ -49,12 +54,13 @@ public:
     int send_data(std::string stream, uint8_t *data, size_t length);
     int send_buffer(std::string stream, Buffer * buffer, size_t length);
     Buffer *acquire_buffer(std::string stream, size_t length);
-    void release_buffer(Buffer *buffer);
+    void release_buffer(std::string stream, Buffer *buffer);
 
     // public options
     uint64_t _max_latency = -1;             // intentionally wrap
     uint64_t _max_byte_allocations = -1;    // intentionally wrap
     uint64_t _min_buffers = 1;
+
 
 private:
     std::atomic<bool>  _terminated{false};    
@@ -64,14 +70,19 @@ private:
     
     Buffer *_last_acquired_buffer = NULL;
 
+    pid_t _pid;
+
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
 
     std::map<std::string, Buffer *> _buffer_by_shm_path;
     std::mutex _buffer_by_shm_path_mutex;
 
-    Buffer *allocate_buffer(std::string shm_path, size_t length, bool fail_on_exists);
+    Buffer *allocate_buffer(std::string stream, int id, size_t length, int flags, pid_t owner_pid=-1);
     void resize_buffer(Buffer * buffer, size_t length);
+
+    std::string to_shm_path(pid_t pid, std::string stream, int id);
+    void update_shm_time(std::string shm_path);
     
     void *_zmq_ctx = NULL;
     void *_producer_sock = NULL;
@@ -82,9 +93,8 @@ private:
 
 extern "C" {
 
-    extern const uint8_t MOMENTUM_OPT_MAX_LATENCY = 0;
-    extern const uint8_t MOMENUTM_OPT_MAX_BYTE_ALLOC = 1;
-    extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 2;
+    extern const uint8_t MOMENTUM_OPT_MAX_LATENCY = 10;
+    extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 20;
 
     // public interface
     MomentumContext* momentum_context();
