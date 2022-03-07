@@ -36,66 +36,91 @@ void fail(std::string reason) {
 }
 
 MomentumContext::MomentumContext() {
-
     // Get our pid
     _pid = getpid();
 
-    // Initialize our ZMQ context
-    _zmq_ctx = zmq_ctx_new();
+    if (fork() != 0) {
+        // Initialize our ZMQ context
+        _zmq_ctx = zmq_ctx_new();
 
-    std::thread listener([&] {
-        int bytes_received;
-        uint64_t ts = 0;
+        std::thread listener([&] {
+            int bytes_received;
+            uint64_t ts = 0;
 
-        Message message;
+            Message message;
 
-        while(!_terminated) {
-            if (_consumer_sock != NULL) {
-                bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
-                if (bytes_received < 0) {
-                    std::perror("Failed to receive message");
-                }
-
-                if (message.ts <= ts) {
-                    continue;
-                } else {
-                    ts = message.ts;
-                }
-
-                std::string stream = message.stream;
-                uint64_t latency_ms = (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count() - ts) / 1e6;
-
-                if (latency_ms > _max_latency) {
-                    continue;
-                }
-
-                Buffer *buffer;    
-                
-                std::string shm_path = to_shm_path(message.buffer_owner_pid, stream, message.buffer_id);
-                if (_buffer_by_shm_path.count(shm_path) == 0) {
-                    buffer = allocate_buffer(stream, message.buffer_id, message.buffer_length, O_RDWR, message.buffer_owner_pid);
-                } else {
-                    buffer = _buffer_by_shm_path[shm_path];
-                    if (buffer->length < message.buffer_length) {
-                        resize_buffer(buffer, message.buffer_length);
+            while(!_terminated) {
+                if (_consumer_sock != NULL) {
+                    bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
+                    if (bytes_received < 0) {
+                        std::perror("Failed to receive message");
                     }
-                }
-                flock(buffer->fd, LOCK_SH);
-                for (auto const& callback : _consumers_by_stream[stream]) {
-                    callback(buffer->address, message.data_length, message.buffer_length, message.id, latency_ms);  
-                }
-                flock(buffer->fd, LOCK_UN);
 
-            } else {
-                usleep(1);
+                    if (message.ts <= ts) {
+                        continue;
+                    } else {
+                        ts = message.ts;
+                    }
+
+                    std::string stream = message.stream;
+                    uint64_t latency_ms = (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count() - ts) / 1e6;
+
+                    if (latency_ms > _max_latency) {
+                        continue;
+                    }
+
+                    Buffer *buffer;    
+                    
+                    std::string shm_path = to_shm_path(message.buffer_owner_pid, stream, message.buffer_id);
+                    if (_buffer_by_shm_path.count(shm_path) == 0) {
+                        buffer = allocate_buffer(stream, message.buffer_id, message.buffer_length, O_RDWR, message.buffer_owner_pid);
+                    } else {
+                        buffer = _buffer_by_shm_path[shm_path];
+                        if (buffer->length < message.buffer_length) {
+                            resize_buffer(buffer, message.buffer_length);
+                        }
+                    }
+                    flock(buffer->fd, LOCK_SH);
+                    for (auto const& callback : _consumers_by_stream[stream]) {
+                        callback(buffer->address, message.data_length, message.buffer_length, message.id, latency_ms);  
+                    }
+                    flock(buffer->fd, LOCK_UN);
+
+                } else {
+                    usleep(1);
+                }
             }
+
+        });
+
+        listener.detach();
+
+        contexts.push_back(this);
+    } else {
+        // wait for our parent to die... :(
+        while (getppid() == _pid) {
+            usleep(1);
         }
 
-    });
+        struct dirent *entry;
 
-    listener.detach();
+        std::string shm_dir = SHM_PATH_BASE + "/" + NAMESPACE; 
+        DIR *dp;
+        dp = opendir(shm_dir.c_str());
+        if (dp == NULL) {
+            std::perror("Could not access shm directory");
+        } else {
+            while ((entry = readdir(dp)))
+                if (std::string(entry->d_name).rfind(std::to_string(_pid) + PATH_DELIM) == 0) {
+                    unlink(std::string(shm_dir + "/" + entry->d_name).c_str());
+                }
+            closedir(dp);
+        }
 
-    contexts.push_back(this);
+        // and then exit!
+        exit(0);
+    }
+
 }
 
 
@@ -108,10 +133,6 @@ MomentumContext::~MomentumContext() {
 
         munmap(buffer->address, buffer->length);
         close(buffer->fd);
-
-        if (buffer->owner_pid == _pid) {
-            shm_unlink(tuple.first.c_str());
-        }
         
         delete buffer;
     }
