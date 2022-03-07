@@ -104,11 +104,9 @@ MomentumContext::MomentumContext() {
         }
 
         // clean up any unnecessary files created by the parent process
-        std::string shm_dir = SHM_PATH_BASE + "/" + NAMESPACE; 
-        
         struct dirent *entry;
         DIR *dir;
-        dir = opendir(shm_dir.c_str());
+        dir = opendir(std::string(SHM_PATH_BASE + "/" + NAMESPACE).c_str());
         if (dir == NULL) {
             std::perror("Could not access shm directory");
         } else {
@@ -121,15 +119,15 @@ MomentumContext::MomentumContext() {
 
                 file_count++;
                 if (std::string(entry->d_name).rfind(std::to_string(_pid) + PATH_DELIM) == 0) {
-                    unlink(std::string(shm_dir + "/" + entry->d_name).c_str());
+                    shm_unlink(std::string(NAMESPACE + "/" + entry->d_name).c_str());
                     delete_count++;
                 }
             }
             closedir(dir);
 
             // if we deleted every file in the folder, then delete the folder too.
-            if (file_count == delete_count) {
-                rmdir(shm_dir.c_str());
+            if (file_count == delete_count && NAMESPACE.size() > 0) {
+                rmdir(std::string(SHM_PATH_BASE + "/" + NAMESPACE).c_str());
             }
         }
 
