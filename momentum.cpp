@@ -15,6 +15,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <dirent.h>
 
 #include "momentum.h"
 
@@ -102,19 +103,34 @@ MomentumContext::MomentumContext() {
             usleep(1);
         }
 
-        struct dirent *entry;
-
+        // clean up any unnecessary files created by the parent process
         std::string shm_dir = SHM_PATH_BASE + "/" + NAMESPACE; 
-        DIR *dp;
-        dp = opendir(shm_dir.c_str());
-        if (dp == NULL) {
+        
+        struct dirent *entry;
+        DIR *dir;
+        dir = opendir(shm_dir.c_str());
+        if (dir == NULL) {
             std::perror("Could not access shm directory");
         } else {
-            while ((entry = readdir(dp)))
+            int file_count = 0;
+            int delete_count = 0;
+            while ((entry = readdir(dir))) {
+                if (entry->d_name[0] == '.' || (entry->d_name[0] == '.' && entry->d_name[1] == '.')) {
+                    continue;
+                }
+
+                file_count++;
                 if (std::string(entry->d_name).rfind(std::to_string(_pid) + PATH_DELIM) == 0) {
                     unlink(std::string(shm_dir + "/" + entry->d_name).c_str());
+                    delete_count++;
                 }
-            closedir(dp);
+            }
+            closedir(dir);
+
+            // if we deleted every file in the folder, then delete the folder too.
+            if (file_count == delete_count) {
+                rmdir(shm_dir.c_str());
+            }
         }
 
         // and then exit!
