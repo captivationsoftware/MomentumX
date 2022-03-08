@@ -64,7 +64,11 @@ MomentumContext::MomentumContext() {
                     }
 
                     std::string stream = message.stream;
-                    uint64_t latency_ms = (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count() - ts) / 1e6;
+                    uint64_t latency_ms = (
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::high_resolution_clock::now().time_since_epoch()
+                        ).count() - ts
+                    ) / 1e6;
 
                     if (latency_ms > _max_latency) {
                         continue;
@@ -103,23 +107,8 @@ MomentumContext::MomentumContext() {
             usleep(1);
         }
 
-        // clean up any unnecessary files created by the parent process
-        struct dirent *entry;
-        DIR *dir;
-        dir = opendir(SHM_PATH_BASE.c_str());
-        if (dir == NULL) {
-            std::perror("Could not access shm directory");
-        } else {
-            while ((entry = readdir(dir))) {
-                if (entry->d_name[0] == '.' || (entry->d_name[0] == '.' && entry->d_name[1] == '.')) {
-                    continue;
-                }
-
-                if (std::string(entry->d_name).rfind(std::string(NAMESPACE + PATH_DELIM + std::to_string(_pid) + PATH_DELIM)) == 0) {
-                    shm_unlink(entry->d_name);
-                }
-            }
-            closedir(dir);
+        for (std::string filename : owned_shm_files()) {
+            shm_unlink(filename.c_str());
         }
 
         // and then exit!
@@ -143,7 +132,7 @@ MomentumContext::~MomentumContext() {
     }
 }
 
-bool MomentumContext::terminated() {
+bool MomentumContext::is_terminated() {
     return _terminated;
 }
 
@@ -228,7 +217,7 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     return 0;
 }
 
-int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length) {
+int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length, uint64_t ts) {
     if (_terminated) return -1;
 
     if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
@@ -241,10 +230,10 @@ int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length)
 
     release_buffer(stream, buffer);
 
-    return send_buffer(stream, buffer, length);
+    return send_buffer(stream, buffer, length, ts);
 }
 
-int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t length) {
+int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t length, uint64_t ts) {
     if (_terminated) return -1;
 
     Message message;
@@ -252,17 +241,24 @@ int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t leng
     message.buffer_id = buffer->id;
     message.buffer_owner_pid = buffer->owner_pid;
     message.buffer_length = buffer->length;
-    message.ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::high_resolution_clock::now().time_since_epoch()
-    ).count();
     message.id = ++_msg_id;
-
     strcpy(message.stream, stream.c_str());
+
+    // adjust the buffer timestamp
+    if (ts == 0) {
+        ts = now();
+    }
+    message.ts = ts;
+    update_shm_time(to_shm_path(buffer->owner_pid, stream, buffer->id), ts);
+
+    
+    // send the buffer
     int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
     if (rc < 0) {
         std::perror("Failed to send message");
         return -1;
     }
+
     return 0;
 }
 
@@ -357,9 +353,6 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
 void MomentumContext::release_buffer(std::string stream, Buffer *buffer) {
     if (_terminated) return;
 
-    // update buffer modified time
-    update_shm_time(to_shm_path(buffer->owner_pid, stream, buffer->id));
-
     flock(buffer->fd, LOCK_UN);
 }
 
@@ -418,6 +411,16 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
     }
 }
 
+bool MomentumContext::is_streaming(std::string stream) {
+    for (std::string filename : owned_shm_files()) {
+        if (filename.rfind(std::string(NAMESPACE + PATH_DELIM + std::to_string(_pid) + PATH_DELIM + stream + PATH_DELIM)) == 0) {
+            return true;
+        }
+    }
+
+    return false;                
+}
+
 std::string MomentumContext::to_shm_path(pid_t pid, std::string stream, int id) {
     std::ostringstream oss;
     oss << "/" << NAMESPACE << PATH_DELIM;
@@ -426,7 +429,7 @@ std::string MomentumContext::to_shm_path(pid_t pid, std::string stream, int id) 
     return oss.str();
 }
 
-void MomentumContext::update_shm_time(std::string shm_path) {
+void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
     struct stat fileinfo;
     struct timespec updated_times[2];
     
@@ -435,13 +438,46 @@ void MomentumContext::update_shm_time(std::string shm_path) {
     if (stat(filepath.c_str(), &fileinfo) < 0) {
         std::perror("Failed to obtain file timestamps");
     }
-    
+
     updated_times[0] = fileinfo.st_atim;
-    clock_gettime(CLOCK_REALTIME, &updated_times[1]);
+    updated_times[1].tv_sec = ts / 1e9; 
+    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * 1e9);
 
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
         std::perror("Failed to write file timestamps");
     }
+}
+
+uint64_t MomentumContext::now() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::high_resolution_clock::now().time_since_epoch()
+    ).count();
+}
+
+std::set<std::string> MomentumContext::owned_shm_files() {
+    std::set<std::string> filenames;
+
+    // clean up any unnecessary files created by the parent process
+    struct dirent *entry;
+    DIR *dir;
+    dir = opendir(SHM_PATH_BASE.c_str());
+    if (dir == NULL) {
+        std::perror("Could not access shm directory");
+    } else {
+        while ((entry = readdir(dir))) {
+            if (entry->d_name[0] == '.' || (entry->d_name[0] == '.' && entry->d_name[1] == '.')) {
+                continue;
+            }
+
+            std::string filename(entry->d_name);
+            if (filename.rfind(std::string(NAMESPACE + PATH_DELIM + std::to_string(_pid) + PATH_DELIM)) == 0) {
+                filenames.insert(filename);
+            }
+        }
+        closedir(dir);
+    }
+    return filenames;
+
 }
 
 MomentumContext* momentum_context() {
@@ -453,8 +489,8 @@ void momentum_term(MomentumContext* ctx) {
     ctx->term();
 }
 
-bool momentum_terminated(MomentumContext *ctx) {
-    return ctx->terminated();
+bool momentum_is_terminated(MomentumContext *ctx) {
+    return ctx->is_terminated();
 }
 
 void momentum_destroy(MomentumContext *ctx) {
@@ -471,14 +507,14 @@ int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t ca
     return ctx->unsubscribe(stream_str, callback);
 }
 
-int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length) {
+int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts) {
     std::string stream_str(stream);
-    return ctx->send_data(stream_str, data, length);
+    return ctx->send_data(stream_str, data, length, ts ? ts : 0);
 }
 
-int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length) {
+int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length, uint64_t ts) {
     std::string stream_str(stream);
-    return ctx->send_buffer(stream_str, buffer, length);
+    return ctx->send_buffer(stream_str, buffer, length, ts ? ts : 0);
 }
 
 Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length) {
@@ -505,4 +541,8 @@ void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value)
     } else if (option == MOMENTUM_OPT_MIN_BUFFERS) {
         ctx->_min_buffers = (uint64_t) value;
     }
+}
+
+int momentum_is_streaming(MomentumContext *ctx, const char* stream) {
+    return ctx->is_streaming(stream);
 }

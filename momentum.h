@@ -47,12 +47,13 @@ class MomentumContext {
 public:
     MomentumContext();
     ~MomentumContext();
-    bool terminated();
+    bool is_terminated();
+    bool is_streaming(std::string stream);
     void term();
     int subscribe(std::string stream, callback_t callback);
     int unsubscribe(std::string stream, callback_t callback);
-    int send_data(std::string stream, uint8_t *data, size_t length);
-    int send_buffer(std::string stream, Buffer * buffer, size_t length);
+    int send_data(std::string stream, uint8_t *data, size_t length, uint64_t ts=0);
+    int send_buffer(std::string stream, Buffer * buffer, size_t length, uint64_t ts=0);
     Buffer *acquire_buffer(std::string stream, size_t length);
     void release_buffer(std::string stream, Buffer *buffer);
 
@@ -81,8 +82,10 @@ private:
     Buffer *allocate_buffer(std::string stream, int id, size_t length, int flags, pid_t owner_pid=-1);
     void resize_buffer(Buffer * buffer, size_t length);
 
+    std::set<std::string> owned_shm_files();
     std::string to_shm_path(pid_t pid, std::string stream, int id);
-    void update_shm_time(std::string shm_path);
+    void update_shm_time(std::string shm_path, uint64_t ts);
+    uint64_t now();
     
     void *_zmq_ctx = NULL;
     void *_producer_sock = NULL;
@@ -103,12 +106,13 @@ extern "C" {
     bool momentum_terminated(MomentumContext *ctx);
     int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback);
     int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback);
-    int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length);
-    int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length);
+    int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts);
+    int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length, uint64_t ts);
     Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length);
     void momentum_release_buffer(MomentumContext *ctx, const char *stream, Buffer * buffer);
     uint8_t* momentum_get_buffer_address(Buffer *buffer);
     size_t momentum_get_buffer_length(Buffer *buffer);
+    int momentum_is_streaming(MomentumContext *ctx, const char *stream);
     void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value);
 }
 
