@@ -474,7 +474,7 @@ int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, 
     return ctx->send_data(stream_str, data, length);
 }
 
-int momentum_send_data(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length) {
+int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length) {
     std::string stream_str(stream);
     return ctx->send_buffer(stream_str, buffer, length);
 }
