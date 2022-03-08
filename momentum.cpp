@@ -252,7 +252,9 @@ int MomentumContext::send_buffer(std::string stream, Buffer *buffer, size_t leng
     message.buffer_id = buffer->id;
     message.buffer_owner_pid = buffer->owner_pid;
     message.buffer_length = buffer->length;
-    message.ts = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+    message.ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::high_resolution_clock::now().time_since_epoch()
+    ).count();
     message.id = ++_msg_id;
 
     strcpy(message.stream, stream.c_str());
