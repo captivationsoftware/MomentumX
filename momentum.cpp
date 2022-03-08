@@ -106,29 +106,20 @@ MomentumContext::MomentumContext() {
         // clean up any unnecessary files created by the parent process
         struct dirent *entry;
         DIR *dir;
-        dir = opendir(std::string(SHM_PATH_BASE + "/" + NAMESPACE).c_str());
+        dir = opendir(SHM_PATH_BASE.c_str());
         if (dir == NULL) {
             std::perror("Could not access shm directory");
         } else {
-            int file_count = 0;
-            int delete_count = 0;
             while ((entry = readdir(dir))) {
                 if (entry->d_name[0] == '.' || (entry->d_name[0] == '.' && entry->d_name[1] == '.')) {
                     continue;
                 }
 
-                file_count++;
-                if (std::string(entry->d_name).rfind(std::to_string(_pid) + PATH_DELIM) == 0) {
-                    shm_unlink(std::string(NAMESPACE + "/" + entry->d_name).c_str());
-                    delete_count++;
+                if (std::string(entry->d_name).rfind(std::string(NAMESPACE + PATH_DELIM + std::to_string(_pid) + PATH_DELIM)) == 0) {
+                    shm_unlink(entry->d_name);
                 }
             }
             closedir(dir);
-
-            // if we deleted every file in the folder, then delete the folder too.
-            if (file_count == delete_count && NAMESPACE.size() > 0) {
-                rmdir(std::string(SHM_PATH_BASE + "/" + NAMESPACE).c_str());
-            }
         }
 
         // and then exit!
@@ -373,9 +364,6 @@ void MomentumContext::release_buffer(std::string stream, Buffer *buffer) {
 Buffer* MomentumContext::allocate_buffer(std::string stream, int id, size_t length, int flags, pid_t owner_pid) {
     if (_terminated) return NULL;
 
-    // Create the file momentum path to store the shm files
-    mkdir(std::string(SHM_PATH_BASE + "/" + NAMESPACE).c_str(), 0700);
-
     owner_pid = owner_pid < 0 ? _pid : owner_pid;
 
     std::string shm_path = to_shm_path(owner_pid, stream, id);
@@ -430,7 +418,7 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length) {
 
 std::string MomentumContext::to_shm_path(pid_t pid, std::string stream, int id) {
     std::ostringstream oss;
-    oss << "/" << NAMESPACE << "/";
+    oss << "/" << NAMESPACE << PATH_DELIM;
     oss << std::to_string(pid) << PATH_DELIM << stream << PATH_DELIM;
     oss << std::setw(8) << std::setfill('0') << id;
     return oss.str();
