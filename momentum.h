@@ -106,7 +106,7 @@ extern "C" {
     int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length);
     int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length);
     Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length);
-    void momentum_release_buffer(MomentumContext *ctx, Buffer * buffer);
+    void momentum_release_buffer(MomentumContext *ctx, const char *stream, Buffer * buffer);
     uint8_t* momentum_get_buffer_address(Buffer *buffer);
     size_t momentum_get_buffer_length(Buffer *buffer);
     void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value);
