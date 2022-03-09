@@ -12,7 +12,7 @@
 #include <zmq.h>
 
 
-typedef const void (*callback_t)(uint8_t *, size_t, size_t, uint64_t, uint64_t);
+typedef const void (*callback_t)(uint8_t *, size_t, size_t, uint64_t);
 
 
 static const std::string PATH_DELIM = "__";
@@ -21,11 +21,11 @@ static const std::string SHM_PATH_BASE = "/dev/shm";
 static const std::string IPC_ENDPOINT_BASE = "ipc://@" + NAMESPACE + PATH_DELIM;
 static const size_t PAGE_SIZE = getpagesize();
 static const size_t MAX_STREAM_SIZE = 32;
-static const size_t MAX_PATH_SIZE = 40;
+static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for the leading slash
+static const uint64_t NANOS_PER_SECOND = 1000000000;
 
 struct Buffer {
-    int id;
-    pid_t owner_pid;
+    char shm_path[MAX_PATH_SIZE];
     int fd;
     size_t length;
     uint8_t *address;
@@ -33,9 +33,8 @@ struct Buffer {
 
 struct Message {
     char stream[MAX_STREAM_SIZE];
-    int buffer_id;
+    char buffer_shm_path[MAX_PATH_SIZE];
     size_t buffer_length;
-    pid_t buffer_owner_pid;
     size_t data_length;
     uint64_t ts;
     uint64_t id;
@@ -53,13 +52,10 @@ public:
     int subscribe(std::string stream, callback_t callback);
     int unsubscribe(std::string stream, callback_t callback);
     int send_data(std::string stream, uint8_t *data, size_t length, uint64_t ts=0);
-    int send_buffer(std::string stream, Buffer * buffer, size_t length, uint64_t ts=0);
+    int release_buffer(Buffer * buffer, size_t length, uint64_t ts=0);
     Buffer *acquire_buffer(std::string stream, size_t length);
-    void release_buffer(std::string stream, Buffer *buffer);
 
     // public options
-    uint64_t _max_latency = -1;             // intentionally wrap
-    uint64_t _max_byte_allocations = -1;    // intentionally wrap
     uint64_t _min_buffers = 1;
 
 
@@ -79,13 +75,14 @@ private:
     std::map<std::string, Buffer *> _buffer_by_shm_path;
     std::mutex _buffer_by_shm_path_mutex;
 
-    Buffer *allocate_buffer(std::string stream, int id, size_t length, int flags, pid_t owner_pid=-1);
-    void resize_buffer(Buffer * buffer, size_t length);
+    Buffer *allocate_buffer(std::string shm_path, size_t length, int flags);
+    void resize_buffer(Buffer * buffer, size_t length, bool truncate=false);
 
-    std::set<std::string> owned_shm_files();
-    std::string to_shm_path(pid_t pid, std::string stream, int id);
+    std::string to_shm_path(pid_t pid, std::string stream, uint64_t id);
+    void shm_iter(std::function<void(std::string)> callback);
     void update_shm_time(std::string shm_path, uint64_t ts);
     uint64_t now();
+    std::string stream_from_shm_path(std::string shm_path);
     
     void *_zmq_ctx = NULL;
     void *_producer_sock = NULL;
@@ -96,8 +93,7 @@ private:
 
 extern "C" {
 
-    extern const uint8_t MOMENTUM_OPT_MAX_LATENCY = 10;
-    extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 20;
+    extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 1;
 
     // public interface
     MomentumContext* momentum_context();
@@ -106,13 +102,11 @@ extern "C" {
     bool momentum_terminated(MomentumContext *ctx);
     int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback);
     int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback);
-    int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts);
-    int momentum_send_buffer(MomentumContext *ctx, const char *stream, Buffer *buffer, size_t length, uint64_t ts);
     Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length);
-    void momentum_release_buffer(MomentumContext *ctx, const char *stream, Buffer * buffer);
+    int momentum_release_buffer(MomentumContext *ctx, Buffer * buffer, size_t data_length, uint64_t ts);
+    int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts);
     uint8_t* momentum_get_buffer_address(Buffer *buffer);
     size_t momentum_get_buffer_length(Buffer *buffer);
-    int momentum_is_streaming(MomentumContext *ctx, const char *stream);
     void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value);
 }
 
