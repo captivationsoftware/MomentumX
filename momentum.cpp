@@ -95,7 +95,11 @@ MomentumContext::MomentumContext() {
                         for (auto const& callback : _consumers_by_stream[stream]) {
                             callback(buffer->address, message.data_length, message.buffer_length, message.id);  
                         }
-                    } 
+                    } else {
+                        if (_debug) {
+                            std::perror("Buffer / message mismatch");
+                        }
+                    }
                     flock(buffer->fd, LOCK_UN);
 
                 } else {
