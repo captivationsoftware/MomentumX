@@ -75,8 +75,11 @@ MomentumContext::MomentumContext() {
                             resize_buffer(buffer, message.buffer_length);
                         }
                     }
-                    flock(buffer->fd, LOCK_SH);
 
+                    
+                    if (flock(buffer->fd, LOCK_SH) < 0) {
+                        continue;
+                    }
                     // with the file locked, do a quick validity check to ensure the buffer has the same
                     // modified time as was provided in the message
                     struct stat fileinfo;
@@ -97,11 +100,12 @@ MomentumContext::MomentumContext() {
                         }
                     } else {
                         if (_debug) {
+                            errno = EAGAIN;
                             std::perror("Buffer / message mismatch");
                         }
                     }
+                    
                     flock(buffer->fd, LOCK_UN);
-
                 } else {
                     usleep(1);
                 }
