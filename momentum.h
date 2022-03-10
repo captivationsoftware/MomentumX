@@ -2,6 +2,7 @@
 #define MOMENTUM_H
 
 #include <set>
+#include <functional>
 #include <string>
 #include <vector>
 #include <map>
