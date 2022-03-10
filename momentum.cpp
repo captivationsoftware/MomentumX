@@ -40,6 +40,10 @@ MomentumContext::MomentumContext() {
     // Get our pid
     _pid = getpid();
 
+    // enable debug mode via DEBUG=true or DEBUG=1 env variable
+    char *env_value = getenv(DEBUG_ENV.c_str());
+    _debug = env_value != NULL && (strcmp(env_value, "true") == 0 || strcmp(env_value, "1") == 0);
+
     if (fork() != 0) {
         // Initialize our ZMQ context
         _zmq_ctx = zmq_ctx_new();
@@ -53,7 +57,10 @@ MomentumContext::MomentumContext() {
                 if (_consumer_sock != NULL) {
                     bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
                     if (bytes_received < 0) {
-                        std::perror("Failed to receive message");
+                        if (_debug) {
+                            std::perror("Message receive failed to return a valid number of bytes");
+                        }
+                        continue;
                     }
 
                     std::string stream = message.stream;
@@ -68,16 +75,19 @@ MomentumContext::MomentumContext() {
                             resize_buffer(buffer, message.buffer_length);
                         }
                     }
-
-
                     flock(buffer->fd, LOCK_SH);
 
                     // with the file locked, do a quick validity check to ensure the buffer has the same
                     // modified time as was provided in the message
                     struct stat fileinfo;
                     if (stat(std::string(SHM_PATH_BASE + message.buffer_shm_path).c_str(), &fileinfo) < 0) {
-                        std::perror("Failed to obtain file timestamps");
-                        std::cout << "Errno: " << errno << std::endl;
+                        if (errno == ENOENT) {
+                            deallocate_buffer(buffer);
+                        } else {
+                            if (_debug) {
+                                std::perror("Failed to obtain file timestamps");
+                            }
+                        }
                     }
 
                     uint64_t buffer_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
@@ -120,12 +130,7 @@ MomentumContext::~MomentumContext() {
 
     for (auto const& tuple : _buffer_by_shm_path) {
         std::string shm_path = tuple.first;
-        Buffer *buffer = tuple.second;
-
-        munmap(buffer->address, buffer->length);
-        close(buffer->fd);
-        
-        delete buffer;
+        deallocate_buffer(tuple.second);
     }
 }
 
@@ -152,9 +157,8 @@ void MomentumContext::term() {
 int MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return -1;
 
-    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
-        return -1;
-    } 
+    if (!is_valid_stream(stream)) return -1; 
+    stream.erase(0, PROTOCOL.size());
 
     if (_consumer_sock == NULL) {
         _consumer_sock = zmq_socket(_zmq_ctx, ZMQ_SUB);
@@ -184,9 +188,8 @@ int MomentumContext::subscribe(std::string stream, callback_t callback) {
 int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     if (_terminated) return -1;
 
-    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
-        return -1;
-    } 
+    if (!is_valid_stream(stream)) return -1; 
+    stream.erase(0, PROTOCOL.size());
 
     if (_consumer_streams.count(stream) == 0) {
 
@@ -217,18 +220,22 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
 int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length, uint64_t ts) {
     if (_terminated) return -1;
 
-    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
-        return -1;
-    } 
+    if (!is_valid_stream(stream)) return -1; 
+    stream.erase(0, PROTOCOL.size());
 
     Buffer *buffer = acquire_buffer(stream, length);
     
     memcpy(buffer->address, data, length);
 
-    return release_buffer(buffer, length, ts);
+    int rc = send_buffer(buffer, length, ts);
+    
+    release_buffer(buffer);
+
+    return rc;
 }
 
-int MomentumContext::release_buffer(Buffer *buffer, size_t length, uint64_t ts) {
+
+int MomentumContext::send_buffer(Buffer *buffer, size_t length, uint64_t ts) {
     if (_terminated) return -1;
 
     Message message;
@@ -244,26 +251,33 @@ int MomentumContext::release_buffer(Buffer *buffer, size_t length, uint64_t ts) 
     }
     message.ts = ts;
     update_shm_time(buffer->shm_path, ts);
-
-    flock(buffer->fd, LOCK_UN);
     
     // send the buffer
     int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
     if (rc < 0) {
-        std::perror("Failed to send message");
+        if (_debug) {
+            std::perror("Failed to send message");
+        }
         return -1;
     }
     
     return 0;
 }
 
+void MomentumContext::release_buffer(Buffer *buffer) {
+    if (_terminated) { 
+        return;
+    }
+
+    flock(buffer->fd, LOCK_UN);
+}
+
 Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     if (_terminated) return NULL;
 
-    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
-        return NULL;
-    } 
-
+    if (!is_valid_stream(stream)) return NULL;
+    stream.erase(0, PROTOCOL.size());
+    
     if (_producer_sock == NULL) {
         _producer_sock = zmq_socket(_zmq_ctx, ZMQ_PUB);
     }
@@ -275,7 +289,9 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         int rc = zmq_bind(_producer_sock, endpoint.c_str()); 
 
         if (rc < 0) {
-            std::perror("Binding socket to endpoint");
+            if (_debug) {
+                std::perror("Binding socket to endpoint");
+            }
             return NULL;
         } else {
             _producer_streams.insert(stream);
@@ -400,6 +416,16 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length, bool truncate
     }
 }
 
+void MomentumContext::deallocate_buffer(Buffer *buffer) {
+    munmap(buffer->address, buffer->length);
+    close(buffer->fd);
+
+    _buffer_by_shm_path_mutex.lock();
+    _buffer_by_shm_path.erase(buffer->shm_path);
+    _buffer_by_shm_path_mutex.unlock();
+
+    delete buffer;
+}
 
 void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
     struct stat fileinfo;
@@ -408,7 +434,9 @@ void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
     std::string filepath(SHM_PATH_BASE + shm_path);
 
     if (stat(filepath.c_str(), &fileinfo) < 0) {
-        std::perror("Failed to obtain file timestamps");
+        if (_debug) {
+            std::perror("Failed to obtain file timestamps");
+        }
     }
 
     updated_times[0] = fileinfo.st_atim;
@@ -416,11 +444,15 @@ void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
     updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
 
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
-        std::perror("Failed to write file timestamps");
+        if (_debug) {
+            std::perror("Failed to write file timestamps");
+        }
     }
 
     if (stat(filepath.c_str(), &fileinfo) < 0) {
-        std::perror("Failed to obtain file timestamps");
+        if (_debug) {
+            std::perror("Failed to obtain file timestamps");
+        }
     }
 
     updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
@@ -442,7 +474,9 @@ void MomentumContext::shm_iter(std::function<void(std::string)> callback) {
     DIR *dir;
     dir = opendir(SHM_PATH_BASE.c_str());
     if (dir == NULL) {
-        std::perror("Could not access shm directory");
+        if (_debug) {
+            std::perror("Could not access shm directory");
+        }
     } else {
         while ((entry = readdir(dir))) {
             if (entry->d_name[0] == '.' || (entry->d_name[0] == '.' && entry->d_name[1] == '.')) {
@@ -483,6 +517,26 @@ std::string MomentumContext::stream_from_shm_path(std::string shm_path) {
     return "";
 }
 
+bool MomentumContext::is_valid_stream(std::string stream) {
+    // stream must start with protocol (i.e. "momentum://")
+    if (stream.find(PROTOCOL) != 0) {
+        if (_debug) {
+            std::perror(std::string("Stream must start with \"" + PROTOCOL + "\"").c_str());
+        }
+        return false;
+    }
+
+    // stream must not contain path delimiter (i.e. "__")
+    if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
+        if (_debug) {
+            std::perror(std::string("Stream must not contain \"" + PATH_DELIM + "\"").c_str());
+        }
+        return false;
+    } 
+
+    return true;
+}
+
 
 MomentumContext* momentum_context() {
     MomentumContext* ctx = new MomentumContext();
@@ -502,27 +556,27 @@ void momentum_destroy(MomentumContext *ctx) {
 }
 
 int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback) {
-    std::string stream_str(stream);
-    return ctx->subscribe(stream_str, callback);
+    return ctx->subscribe(std::string(stream), callback);
 }
 
 int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback) {
-    std::string stream_str(stream);
-    return ctx->unsubscribe(stream_str, callback);
+    return ctx->unsubscribe(std::string(stream), callback);
 }
 
 Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length) {
-    std::string stream_str(stream);
-    return ctx->acquire_buffer(stream_str, length);
+    return ctx->acquire_buffer(std::string(stream), length);
 }
 
-int momentum_release_buffer(MomentumContext *ctx, Buffer *buffer, size_t length, uint64_t ts) {
-    return ctx->release_buffer(buffer, length, ts ? ts : 0);
+void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
+    return ctx->release_buffer(buffer);
+}
+
+int momentum_send_buffer(MomentumContext *ctx, Buffer *buffer, size_t length, uint64_t ts) {
+    return ctx->send_buffer(buffer, length, ts ? ts : 0);
 }
 
 int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts) {
-    std::string stream_str(stream);
-    return ctx->send_data(stream_str, data, length, ts ? ts : 0);
+    return ctx->send_data(std::string(stream), data, length, ts ? ts : 0);
 }
 
 uint8_t* momentum_get_buffer_address(Buffer *buffer) {

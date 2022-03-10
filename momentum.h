@@ -17,10 +17,12 @@ typedef const void (*callback_t)(uint8_t *, size_t, size_t, uint64_t);
 
 static const std::string PATH_DELIM = "__";
 static const std::string NAMESPACE = "momentum";
+static const std::string PROTOCOL = NAMESPACE + "://";
 static const std::string SHM_PATH_BASE = "/dev/shm";
+static const std::string DEBUG_ENV = "DEBUG";
 static const std::string IPC_ENDPOINT_BASE = "ipc://@" + NAMESPACE + PATH_DELIM;
 static const size_t PAGE_SIZE = getpagesize();
-static const size_t MAX_STREAM_SIZE = 32;
+static const size_t MAX_STREAM_SIZE = 43; // 32 chars for stream name, and 11 for protocol (i.e. "momentum://)
 static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for the leading slash
 static const uint64_t NANOS_PER_SECOND = 1000000000;
 
@@ -52,8 +54,9 @@ public:
     int subscribe(std::string stream, callback_t callback);
     int unsubscribe(std::string stream, callback_t callback);
     int send_data(std::string stream, uint8_t *data, size_t length, uint64_t ts=0);
-    int release_buffer(Buffer * buffer, size_t length, uint64_t ts=0);
+    int send_buffer(Buffer * buffer, size_t length, uint64_t ts=0);
     Buffer *acquire_buffer(std::string stream, size_t length);
+    void release_buffer(Buffer *buffer);
 
     // public options
     uint64_t _min_buffers = 1;
@@ -76,19 +79,22 @@ private:
     std::mutex _buffer_by_shm_path_mutex;
 
     Buffer *allocate_buffer(std::string shm_path, size_t length, int flags);
-    void resize_buffer(Buffer * buffer, size_t length, bool truncate=false);
-
+    void resize_buffer(Buffer *buffer, size_t length, bool truncate=false);
+    void deallocate_buffer(Buffer *buffer);
     std::string to_shm_path(pid_t pid, std::string stream, uint64_t id);
     void shm_iter(std::function<void(std::string)> callback);
     void update_shm_time(std::string shm_path, uint64_t ts);
     uint64_t now();
     std::string stream_from_shm_path(std::string shm_path);
-    
+    bool is_valid_stream(std::string stream);
+
     void *_zmq_ctx = NULL;
     void *_producer_sock = NULL;
     void *_consumer_sock = NULL;
 
     uint64_t _msg_id = 0;
+
+    bool _debug;
 };
 
 extern "C" {
@@ -103,7 +109,8 @@ extern "C" {
     int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback);
     int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback);
     Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length);
-    int momentum_release_buffer(MomentumContext *ctx, Buffer * buffer, size_t data_length, uint64_t ts);
+    void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer);
+    int momentum_send_buffer(MomentumContext *ctx, Buffer * buffer, size_t data_length, uint64_t ts);
     int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts);
     uint8_t* momentum_get_buffer_address(Buffer *buffer);
     size_t momentum_get_buffer_length(Buffer *buffer);

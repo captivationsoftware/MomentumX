@@ -35,14 +35,15 @@ def handle_message(data, data_length, buffer_length, msg_id):
     if (messages_received % threshold == 0):
         elapsed = time.time() - now
         print("Recvd {:.2f} msgs/sec".format(messages_received / elapsed))
-        print("Recvd {:.2f} MB/sec".format(bytes_received / elapsed / 1.0e6))
+        print("Recvd {:.2f} GB/sec".format(bytes_received / elapsed / 1.0e9))
 
         print(f"Missed: {skip_count}")
         skip_count = 0
 
 
-lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message)
-
+subscription = lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message)
+if subscription < 0:
+    print("Failed to subscribe to stream!")
 
 try:
     while True:

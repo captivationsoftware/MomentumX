@@ -23,12 +23,17 @@ try:
     while True:
         buffer = lib.momentum_acquire_buffer(context, stream, data_length)
 
-        # if data == data_bytes_1:
-        #     data = data_bytes_2
-        # else:
-        #     data = data_bytes_1
+        if (buffer):
+            # if data == data_bytes_1:
+            #     data = data_bytes_2
+            # else:
+            #     data = data_bytes_1
 
-        lib.momentum_release_buffer(context, buffer, data_length, 0)
+            lib.momentum_send_buffer(context, buffer, data_length, 0)
+            lib.momentum_release_buffer(context, buffer)
+        else: 
+            print("Failed to acquire buffer")
+
 
 except KeyboardInterrupt:
     lib.momentum_term(context)
