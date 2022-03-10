@@ -19,17 +19,17 @@
 
 #include "momentum.h"
 
-static std::vector<MomentumContext *> contexts;
+static std::vector<MomentumContext*> contexts;
 
 void cleanup() {
-    for (MomentumContext *ctx : contexts) {
+    for (MomentumContext* ctx : contexts) {
         try {
             momentum_destroy(ctx);
         } catch(const std::exception& e) { }
     }
 }
 
-void fail(std::string reason) {
+void fail(const std::string& reason) {
     std::perror(reason.c_str());
 
     cleanup();
@@ -41,7 +41,7 @@ MomentumContext::MomentumContext() {
     _pid = getpid();
 
     // enable debug mode via DEBUG=true or DEBUG=1 env variable
-    char *env_value = getenv(DEBUG_ENV.c_str());
+    char* env_value = getenv(DEBUG_ENV.c_str());
     _debug = env_value != NULL && (strcmp(env_value, "true") == 0 || strcmp(env_value, "1") == 0);
 
     if (fork() != 0) {
@@ -65,7 +65,7 @@ MomentumContext::MomentumContext() {
 
                     std::string stream = message.stream;
 
-                    Buffer *buffer;    
+                    Buffer* buffer;    
 
                     if (_buffer_by_shm_path.count(message.buffer_shm_path) == 0) {
                         buffer = allocate_buffer(message.buffer_shm_path, message.buffer_length, O_RDWR);
@@ -90,7 +90,7 @@ MomentumContext::MomentumContext() {
                         }
                     }
 
-                    uint64_t buffer_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
+                    uint64_t buffer_ts = fileinfo.st_mtim.tv_sec*  NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
                     if (message.ts == buffer_ts) {
                         for (auto const& callback : _consumers_by_stream[stream]) {
                             callback(buffer->address, message.data_length, message.buffer_length, message.id);  
@@ -129,12 +129,11 @@ MomentumContext::~MomentumContext() {
     term();
 
     for (auto const& tuple : _buffer_by_shm_path) {
-        std::string shm_path = tuple.first;
         deallocate_buffer(tuple.second);
     }
 }
 
-bool MomentumContext::is_terminated() {
+bool MomentumContext::is_terminated() const {
     return _terminated;
 }
 
@@ -217,13 +216,13 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     return 0;
 }
 
-int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length, uint64_t ts) {
+int MomentumContext::send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts) {
     if (_terminated) return -1;
 
     if (!is_valid_stream(stream)) return -1; 
     stream.erase(0, PROTOCOL.size());
 
-    Buffer *buffer = acquire_buffer(stream, length);
+    Buffer* buffer = acquire_buffer(stream, length);
     
     memcpy(buffer->address, data, length);
 
@@ -231,7 +230,7 @@ int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length,
 }
 
 
-int MomentumContext::send_buffer(Buffer *buffer, size_t length, uint64_t ts) {
+int MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     if (_terminated) return -1;
 
     Message message;
@@ -288,10 +287,10 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         }
     }
 
-    Buffer *buffer = NULL;
+    Buffer* buffer = NULL;
 
     if (_buffers_by_stream.count(stream) == 0) {
-        _buffers_by_stream[stream] = std::queue<Buffer *>();
+        _buffers_by_stream[stream] = std::queue<Buffer*>();
     }
 
     // First, see if we found a free buffer within our existing resources
@@ -302,7 +301,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         while (visit_count++ < _buffers_by_stream[stream].size()) {
 
             // pull a candidate buffer, rotating the queue in the process
-            Buffer *candidate_buffer = _buffers_by_stream[stream].front();
+            Buffer* candidate_buffer = _buffers_by_stream[stream].front();
             _buffers_by_stream[stream].pop();
             _buffers_by_stream[stream].push(candidate_buffer);
 
@@ -353,13 +352,13 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     return buffer;
 }
 
-void MomentumContext::release_buffer(Buffer *buffer) {
+void MomentumContext::release_buffer(Buffer* buffer) {
     if (!_terminated) {
         flock(buffer->fd, LOCK_UN);
     } 
 }
 
-Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, int flags) {
+Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t length, int flags) {
     if (_terminated) return NULL;
     
     int fd = shm_open(shm_path.c_str(), flags, S_IRWXU);
@@ -373,7 +372,7 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, in
         }
     } 
 
-    Buffer *buffer = new Buffer();
+    Buffer* buffer = new Buffer();
     buffer->fd = fd;
     strcpy(buffer->shm_path, shm_path.c_str());
 
@@ -386,10 +385,10 @@ Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, in
     return buffer;
 }
 
-void MomentumContext::resize_buffer(Buffer *buffer, size_t length, bool truncate) {
+void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate) {
     if (_terminated) return;
 
-    size_t length_required = ceil(length / (double) PAGE_SIZE) * PAGE_SIZE;
+    size_t length_required = ceil(length / (double) PAGE_SIZE)*  PAGE_SIZE;
     bool meets_length_requirement = buffer->length >= length_required;
 
     if (!meets_length_requirement) {
@@ -400,9 +399,9 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length, bool truncate
 
         // Mmap the file, or remap if previously mapped
         if (buffer->length == 0) {
-            buffer->address = (uint8_t *) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
+            buffer->address = (uint8_t* ) mmap(NULL, length_required, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
         } else {
-            buffer->address = (uint8_t *) mremap(buffer->address, buffer->length, length_required, MREMAP_MAYMOVE);
+            buffer->address = (uint8_t* ) mremap(buffer->address, buffer->length, length_required, MREMAP_MAYMOVE);
         }
         if (buffer->address == MAP_FAILED) {
             fail("Mapping shared memory");
@@ -412,7 +411,7 @@ void MomentumContext::resize_buffer(Buffer *buffer, size_t length, bool truncate
     }
 }
 
-void MomentumContext::deallocate_buffer(Buffer *buffer) {
+void MomentumContext::deallocate_buffer(Buffer* buffer) {
     munmap(buffer->address, buffer->length);
     close(buffer->fd);
 
@@ -423,7 +422,7 @@ void MomentumContext::deallocate_buffer(Buffer *buffer) {
     delete buffer;
 }
 
-void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
+void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) {
     struct stat fileinfo;
     struct timespec updated_times[2];
     
@@ -437,7 +436,7 @@ void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
 
     updated_times[0] = fileinfo.st_atim;
     updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
-    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
+    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec*  NANOS_PER_SECOND);
 
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
         if (_debug) {
@@ -452,10 +451,10 @@ void MomentumContext::update_shm_time(std::string shm_path, uint64_t ts) {
     }
 
     updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
-    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
+    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec*  NANOS_PER_SECOND);
 }
 
-uint64_t MomentumContext::now() {
+uint64_t MomentumContext::now() const {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::high_resolution_clock::now().time_since_epoch()
     ).count();
@@ -466,8 +465,8 @@ void MomentumContext::shm_iter(std::function<void(std::string)> callback) {
     std::set<std::string> filenames;
 
     // clean up any unnecessary files created by the parent process
-    struct dirent *entry;
-    DIR *dir;
+    struct dirent* entry;
+    DIR* dir;
     dir = opendir(SHM_PATH_BASE.c_str());
     if (dir == NULL) {
         if (_debug) {
@@ -489,7 +488,7 @@ void MomentumContext::shm_iter(std::function<void(std::string)> callback) {
     }
 }
 
-std::string MomentumContext::to_shm_path(pid_t pid, std::string stream, uint64_t id) {
+std::string MomentumContext::to_shm_path(pid_t pid, const std::string& stream, uint64_t id) const {
     // Build the path to the underlying shm file 
     std::ostringstream oss;
     oss << "/" << NAMESPACE << PATH_DELIM;
@@ -499,7 +498,7 @@ std::string MomentumContext::to_shm_path(pid_t pid, std::string stream, uint64_t
 }
 
 
-std::string MomentumContext::stream_from_shm_path(std::string shm_path) {
+std::string MomentumContext::stream_from_shm_path(std::string shm_path) const {
     size_t pos = 0;
     std::string token;
     int token_index = 0;
@@ -513,7 +512,7 @@ std::string MomentumContext::stream_from_shm_path(std::string shm_path) {
     return "";
 }
 
-bool MomentumContext::is_valid_stream(std::string stream) {
+bool MomentumContext::is_valid_stream(const std::string &stream) const {
     // stream must start with protocol (i.e. "momentum://")
     if (stream.find(PROTOCOL) != 0) {
         if (_debug) {
@@ -543,47 +542,47 @@ void momentum_term(MomentumContext* ctx) {
     ctx->term();
 }
 
-bool momentum_is_terminated(MomentumContext *ctx) {
+bool momentum_is_terminated(MomentumContext* ctx) {
     return ctx->is_terminated();
 }
 
-void momentum_destroy(MomentumContext *ctx) {
+void momentum_destroy(MomentumContext* ctx) {
     delete ctx;
 }
 
-int momentum_subscribe(MomentumContext *ctx, const char *stream, callback_t callback) {
+int momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
     return ctx->subscribe(std::string(stream), callback);
 }
 
-int momentum_unsubscribe(MomentumContext *ctx, const char *stream, callback_t callback) {
+int momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
     return ctx->unsubscribe(std::string(stream), callback);
 }
 
-Buffer* momentum_acquire_buffer(MomentumContext *ctx, const char *stream, size_t length) {
+Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length) {
     return ctx->acquire_buffer(std::string(stream), length);
 }
 
-void momentum_release_buffer(MomentumContext *ctx, Buffer *buffer) {
+void momentum_release_buffer(MomentumContext* ctx, Buffer* buffer) {
     return ctx->release_buffer(buffer);
 }
 
-int momentum_send_buffer(MomentumContext *ctx, Buffer *buffer, size_t length, uint64_t ts) {
+int momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, uint64_t ts) {
     return ctx->send_buffer(buffer, length, ts ? ts : 0);
 }
 
-int momentum_send_data(MomentumContext *ctx, const char *stream, uint8_t *data, size_t length, uint64_t ts) {
+int momentum_send_data(MomentumContext* ctx, const char* stream, uint8_t* data, size_t length, uint64_t ts) {
     return ctx->send_data(std::string(stream), data, length, ts ? ts : 0);
 }
 
-uint8_t* momentum_get_buffer_address(Buffer *buffer) {
+uint8_t* momentum_get_buffer_address(Buffer* buffer) {
     return buffer->address;
 }
 
-size_t momentum_get_buffer_length(Buffer *buffer) {
+size_t momentum_get_buffer_length(Buffer* buffer) {
     return buffer->length;
 }
 
-void momentum_configure(MomentumContext *ctx, uint8_t option, const void *value) {
+void momentum_configure(MomentumContext* ctx, uint8_t option, const void* value) {
     if (option == MOMENTUM_OPT_MIN_BUFFERS) {
         ctx->_min_buffers = (uint64_t) value;
     }
