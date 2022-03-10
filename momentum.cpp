@@ -90,7 +90,7 @@ MomentumContext::MomentumContext() {
                         }
                     }
 
-                    uint64_t buffer_ts = fileinfo.st_mtim.tv_sec*  NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
+                    uint64_t buffer_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
                     if (message.ts == buffer_ts) {
                         for (auto const& callback : _consumers_by_stream[stream]) {
                             callback(buffer->address, message.data_length, message.buffer_length, message.id);  
@@ -436,7 +436,7 @@ void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) 
 
     updated_times[0] = fileinfo.st_atim;
     updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
-    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec*  NANOS_PER_SECOND);
+    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
 
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
         if (_debug) {
@@ -451,7 +451,7 @@ void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) 
     }
 
     updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
-    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec*  NANOS_PER_SECOND);
+    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
 }
 
 uint64_t MomentumContext::now() const {
@@ -512,7 +512,7 @@ std::string MomentumContext::stream_from_shm_path(std::string shm_path) const {
     return "";
 }
 
-bool MomentumContext::is_valid_stream(const std::string &stream) const {
+bool MomentumContext::is_valid_stream(const std::string& stream) const {
     // stream must start with protocol (i.e. "momentum://")
     if (stream.find(PROTOCOL) != 0) {
         if (_debug) {
