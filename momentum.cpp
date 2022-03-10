@@ -227,11 +227,7 @@ int MomentumContext::send_data(std::string stream, uint8_t *data, size_t length,
     
     memcpy(buffer->address, data, length);
 
-    int rc = send_buffer(buffer, length, ts);
-    
-    release_buffer(buffer);
-
-    return rc;
+    return send_buffer(buffer, length, ts);
 }
 
 
@@ -252,6 +248,8 @@ int MomentumContext::send_buffer(Buffer *buffer, size_t length, uint64_t ts) {
     message.ts = ts;
     update_shm_time(buffer->shm_path, ts);
     
+    release_buffer(buffer);
+    
     // send the buffer
     int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
     if (rc < 0) {
@@ -262,14 +260,6 @@ int MomentumContext::send_buffer(Buffer *buffer, size_t length, uint64_t ts) {
     }
     
     return 0;
-}
-
-void MomentumContext::release_buffer(Buffer *buffer) {
-    if (_terminated) { 
-        return;
-    }
-
-    flock(buffer->fd, LOCK_UN);
 }
 
 Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
@@ -361,6 +351,12 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     _last_acquired_buffer = buffer;
 
     return buffer;
+}
+
+void MomentumContext::release_buffer(Buffer *buffer) {
+    if (!_terminated) {
+        flock(buffer->fd, LOCK_UN);
+    } 
 }
 
 Buffer* MomentumContext::allocate_buffer(std::string shm_path, size_t length, int flags) {

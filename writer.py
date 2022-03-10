@@ -30,7 +30,6 @@ try:
             #     data = data_bytes_1
 
             lib.momentum_send_buffer(context, buffer, data_length, 0)
-            lib.momentum_release_buffer(context, buffer)
         else: 
             print("Failed to acquire buffer")
 
