@@ -30,7 +30,7 @@ def handle_message(data, data_length, buffer_length, msg_id):
 
     last_msg_id = msg_id
 
-    threshold = 10
+    threshold = 10000
 
     if (messages_received % threshold == 0):
         elapsed = time.time() - now

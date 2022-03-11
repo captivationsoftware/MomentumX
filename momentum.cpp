@@ -136,7 +136,7 @@ MomentumContext::MomentumContext() {
 MomentumContext::~MomentumContext() {
     term();
 
-    for (auto const& tuple : _buffer_by_shm_path) {
+    for (auto const& tuple : std::map<std::string, Buffer*>(_buffer_by_shm_path)) {
         deallocate_buffer(tuple.second);
     }
 }
@@ -280,7 +280,6 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     }
 
     if (_producer_streams.count(stream) == 0) {
-
         std::string endpoint(IPC_ENDPOINT_BASE + stream);
 
         int rc = zmq_bind(_producer_sock, endpoint.c_str()); 
