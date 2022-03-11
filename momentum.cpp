@@ -330,7 +330,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         size_t allocations_required = below_minimum_buffers ? _min_buffers : 1;
 
         Buffer* first_buffer = NULL;
-        int id = 0;
+        int id = 1; // start buffer count at 1
 
         while (allocations_required > 0) {
             buffer = allocate_buffer(to_shm_path(_pid, stream, id++), length, O_RDWR | O_CREAT | O_EXCL);
