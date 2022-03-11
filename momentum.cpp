@@ -77,7 +77,7 @@ MomentumContext::MomentumContext() {
                     }
 
                     
-                    if (flock(buffer->fd, LOCK_SH) < 0) {
+                    if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
                         continue;
                     }
                     // with the file locked, do a quick validity check to ensure the buffer has the same
@@ -105,7 +105,7 @@ MomentumContext::MomentumContext() {
                         }
                     }
                     
-                    flock(buffer->fd, LOCK_UN);
+                    flock(buffer->fd, LOCK_UN | LOCK_NB);
                 } else {
                     usleep(1);
                 }
@@ -361,7 +361,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
 
 void MomentumContext::release_buffer(Buffer* buffer) {
     if (!_terminated) {
-        flock(buffer->fd, LOCK_UN);
+        flock(buffer->fd, LOCK_UN | LOCK_NB);
     } 
 }
 
