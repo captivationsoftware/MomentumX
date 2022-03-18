@@ -23,26 +23,15 @@ static std::vector<MomentumContext*> contexts;
 
 void cleanup() {
     for (MomentumContext* ctx : contexts) {
-        try {
-            momentum_destroy(ctx);
-        } catch(const std::exception& e) { }
+        if (ctx != NULL) {
+            delete ctx;
+        }            
     }
-}
-
-void fail(const std::string& reason) {
-    std::perror(reason.c_str());
-
-    cleanup();
-    exit(EXIT_FAILURE);
 }
 
 MomentumContext::MomentumContext() {
     // Get our pid
     _pid = getpid();
-
-    // enable debug mode via DEBUG=true or DEBUG=1 env variable
-    char* env_value = getenv(DEBUG_ENV.c_str());
-    _debug = env_value != NULL && (strcmp(env_value, "true") == 0 || strcmp(env_value, "1") == 0);
 
     if (fork() != 0) {
         // Initialize our ZMQ context
@@ -58,7 +47,7 @@ MomentumContext::MomentumContext() {
                     bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
                     if (bytes_received < 0) {
                         if (_debug) {
-                            std::perror("Message receive failed to return a valid number of bytes");
+                            std::cerr << DEBUG_PREFIX << "Received " << bytes_received << " message bytes" << std::endl;
                         }
                         continue;
                     }
@@ -88,7 +77,7 @@ MomentumContext::MomentumContext() {
                             deallocate_buffer(buffer);
                         } else {
                             if (_debug) {
-                                std::perror("Failed to obtain file timestamps");
+                                std::cerr << DEBUG_PREFIX << "Failed to stat file: " << message.buffer_shm_path << std::endl;
                             }
                         }
                     }
@@ -99,10 +88,7 @@ MomentumContext::MomentumContext() {
                             callback(buffer->address, message.data_length, message.buffer_length, message.id);  
                         }
                     } else {
-                        if (_debug) {
-                            errno = EAGAIN;
-                            std::perror("Buffer / message mismatch");
-                        }
+                        // too late
                     }
                     
                     flock(buffer->fd, LOCK_UN | LOCK_NB);
@@ -145,7 +131,11 @@ bool MomentumContext::is_terminated() const {
     return _terminated;
 }
 
-void MomentumContext::term() {
+bool MomentumContext::term() {
+    if (_terminated) {
+        return false;
+    }
+
     _terminated = true;
 
     if (_consumer_sock != NULL) {
@@ -159,13 +149,20 @@ void MomentumContext::term() {
     if (_zmq_ctx != NULL) {
         zmq_ctx_term(_zmq_ctx);
     }
+
+    return true;
 };
 
-int MomentumContext::subscribe(std::string stream, callback_t callback) {
-    if (_terminated) return -1;
+bool MomentumContext::subscribe(std::string stream, callback_t callback) {
+    if (_terminated) return false;
 
-    if (!is_valid_stream(stream)) return -1; 
-    stream.erase(0, PROTOCOL.size());
+    normalize_stream(stream); 
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return false;
+    }
 
     if (_consumer_sock == NULL) {
         _consumer_sock = zmq_socket(_zmq_ctx, ZMQ_SUB);
@@ -177,7 +174,7 @@ int MomentumContext::subscribe(std::string stream, callback_t callback) {
         std::string endpoint(IPC_ENDPOINT_BASE + stream);
         int rc = zmq_connect(_consumer_sock, endpoint.c_str()); 
         if (rc < 0) {
-            return -1;
+            return false;
         } else {
             _consumer_streams.insert(stream);
         }
@@ -189,14 +186,19 @@ int MomentumContext::subscribe(std::string stream, callback_t callback) {
     _consumers_by_stream[stream].push_back(callback);
    
 
-    return 0;
+    return true;
 }
 
-int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
-    if (_terminated) return -1;
+bool MomentumContext::unsubscribe(std::string stream, callback_t callback) {
+    if (_terminated) return false;
 
-    if (!is_valid_stream(stream)) return -1; 
-    stream.erase(0, PROTOCOL.size());
+    normalize_stream(stream);
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return false;
+    } 
 
     if (_consumer_streams.count(stream) == 0) {
 
@@ -204,7 +206,7 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
         int rc = zmq_disconnect(_consumer_sock, endpoint.c_str()); 
         
         if (rc < 0) {
-            return -1;
+            return false;
         } else {
             _consumer_streams.erase(stream);
         }
@@ -221,14 +223,19 @@ int MomentumContext::unsubscribe(std::string stream, callback_t callback) {
         );
     }
 
-    return 0;
+    return true;
 }
 
-int MomentumContext::send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts) {
-    if (_terminated) return -1;
+bool MomentumContext::send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts) {
+    if (_terminated) return false;
 
-    if (!is_valid_stream(stream)) return -1; 
-    stream.erase(0, PROTOCOL.size());
+    normalize_stream(stream);
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return false;
+    } 
 
     Buffer* buffer = acquire_buffer(stream, length);
     
@@ -238,8 +245,8 @@ int MomentumContext::send_data(std::string stream, uint8_t* data, size_t length,
 }
 
 
-int MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
-    if (_terminated) return -1;
+bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
+    if (_terminated) return false;
 
     Message message;
     message.data_length = length;
@@ -261,19 +268,24 @@ int MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
     if (rc < 0) {
         if (_debug) {
-            std::perror("Failed to send message");
+            std::cerr << DEBUG_PREFIX << "Failed to send message" << std::endl;
         }
-        return -1;
+        return false;
     }
     
-    return 0;
+    return true;
 }
 
 Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     if (_terminated) return NULL;
 
-    if (!is_valid_stream(stream)) return NULL;
-    stream.erase(0, PROTOCOL.size());
+    normalize_stream(stream);
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return NULL;
+    };
     
     if (_producer_sock == NULL) {
         _producer_sock = zmq_socket(_zmq_ctx, ZMQ_PUB);
@@ -286,7 +298,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
 
         if (rc < 0) {
             if (_debug) {
-                std::perror("Binding socket to endpoint");
+                std::cerr << DEBUG_PREFIX << "Failed to bind producer socket to stream: " << stream << std::endl;
             }
             return NULL;
         } else {
@@ -359,10 +371,12 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     return buffer;
 }
 
-void MomentumContext::release_buffer(Buffer* buffer) {
+bool MomentumContext::release_buffer(Buffer* buffer) {
     if (!_terminated) {
         flock(buffer->fd, LOCK_UN | LOCK_NB);
+        return true;
     } 
+    return false;
 }
 
 Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t length, int flags) {
@@ -375,7 +389,9 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
         } 
 
         if (fd < 0) {
-            fail("Shared memory allocation");
+            if (_debug) {
+                std::cerr << DEBUG_PREFIX << "Failed to allocate shm file: " << shm_path << std::endl;
+            }
         }
     } 
 
@@ -401,7 +417,11 @@ void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate
     if (!meets_length_requirement) {
         if (truncate) {
             int retval = ftruncate(buffer->fd, length_required);
-            if (retval < 0) fail("Shared memory file truncate");
+            if (retval < 0) {
+                if (_debug) {
+                    std::cerr << DEBUG_PREFIX << "Failed to truncate file: " << buffer->shm_path << std::endl;
+                }
+            }
         }
 
         // Mmap the file, or remap if previously mapped
@@ -411,7 +431,9 @@ void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate
             buffer->address = (uint8_t* ) mremap(buffer->address, buffer->length, length_required, MREMAP_MAYMOVE);
         }
         if (buffer->address == MAP_FAILED) {
-            fail("Mapping shared memory");
+            if (_debug) {
+                std::cerr << DEBUG_PREFIX << "Failed to mmap shared memory file: " << buffer->shm_path << std::endl;
+            }
         } else {
             buffer->length = length_required;
         }
@@ -437,7 +459,7 @@ void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) 
 
     if (stat(filepath.c_str(), &fileinfo) < 0) {
         if (_debug) {
-            std::perror("Failed to obtain file timestamps");
+            std::cerr << DEBUG_PREFIX << "Failed to stat file: " << filepath << std::endl;
         }
     }
 
@@ -447,13 +469,13 @@ void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) 
 
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
         if (_debug) {
-            std::perror("Failed to write file timestamps");
+            std::cerr << DEBUG_PREFIX << "Failed to obtain file timestamp: " << filepath << std::endl;
         }
     }
 
     if (stat(filepath.c_str(), &fileinfo) < 0) {
         if (_debug) {
-            std::perror("Failed to obtain file timestamps");
+            std::cerr << DEBUG_PREFIX << "Failed to stat file: " << filepath << std::endl;
         }
     }
 
@@ -477,7 +499,7 @@ void MomentumContext::shm_iter(std::function<void(std::string)> callback) {
     dir = opendir(SHM_PATH_BASE.c_str());
     if (dir == NULL) {
         if (_debug) {
-            std::perror("Could not access shm directory");
+            std::cerr << DEBUG_PREFIX << "Failed to access shm directory: " << SHM_PATH_BASE << std::endl;
         }
     } else {
         while ((entry = readdir(dir))) {
@@ -520,23 +542,25 @@ std::string MomentumContext::stream_from_shm_path(std::string shm_path) const {
 }
 
 bool MomentumContext::is_valid_stream(const std::string& stream) const {
-    // stream must start with protocol (i.e. "momentum://")
-    if (stream.find(PROTOCOL) != 0) {
-        if (_debug) {
-            std::perror(std::string("Stream must start with \"" + PROTOCOL + "\"").c_str());
-        }
-        return false;
-    }
-
-    // stream must not contain path delimiter (i.e. "__")
+    // stream must not contain path delimiter (i.e. "_")
     if (stream.find(std::string(PATH_DELIM)) != std::string::npos) {
-        if (_debug) {
-            std::perror(std::string("Stream must not contain \"" + PATH_DELIM + "\"").c_str());
-        }
         return false;
     } 
 
     return true;
+}
+
+
+void MomentumContext::normalize_stream(std::string& stream) {
+    // convert to lowercase
+    for (char &ch : stream) {
+        ch = tolower(ch);
+    }
+
+    // remove the protocol string prefix if present
+    if (stream.find(PROTOCOL) != std::string::npos) {
+        stream.erase(0, PROTOCOL.size());
+    } 
 }
 
 
@@ -545,23 +569,29 @@ MomentumContext* momentum_context() {
     return ctx;
 }
 
-void momentum_term(MomentumContext* ctx) {
-    ctx->term();
+bool momentum_term(MomentumContext* ctx) {
+    return ctx->term();
 }
 
 bool momentum_is_terminated(MomentumContext* ctx) {
     return ctx->is_terminated();
 }
 
-void momentum_destroy(MomentumContext* ctx) {
-    delete ctx;
+bool momentum_destroy(MomentumContext* ctx) {
+    if (ctx != NULL) {
+        delete ctx;
+        return true;
+    } else {
+        return false;
+    }
+    
 }
 
-int momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
+bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
     return ctx->subscribe(std::string(stream), callback);
 }
 
-int momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
+bool momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
     return ctx->unsubscribe(std::string(stream), callback);
 }
 
@@ -569,15 +599,15 @@ Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t
     return ctx->acquire_buffer(std::string(stream), length);
 }
 
-void momentum_release_buffer(MomentumContext* ctx, Buffer* buffer) {
+bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer) {
     return ctx->release_buffer(buffer);
 }
 
-int momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, uint64_t ts) {
+bool momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, uint64_t ts) {
     return ctx->send_buffer(buffer, length, ts ? ts : 0);
 }
 
-int momentum_send_data(MomentumContext* ctx, const char* stream, uint8_t* data, size_t length, uint64_t ts) {
+bool momentum_send_data(MomentumContext* ctx, const char* stream, uint8_t* data, size_t length, uint64_t ts) {
     return ctx->send_data(std::string(stream), data, length, ts ? ts : 0);
 }
 
@@ -589,8 +619,11 @@ size_t momentum_get_buffer_length(Buffer* buffer) {
     return buffer->length;
 }
 
-void momentum_configure(MomentumContext* ctx, uint8_t option, const void* value) {
+bool momentum_configure(MomentumContext* ctx, uint8_t option, const void* value) {
     if (option == MOMENTUM_OPT_MIN_BUFFERS) {
         ctx->_min_buffers = (uint64_t) value;
+    } else if (option == MOMENTUM_OPT_DEBUG) {
+        ctx->_debug = (bool) value;
     }
+    return true;
 }

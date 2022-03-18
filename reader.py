@@ -3,8 +3,10 @@ import sys
 import time
 
 lib = cdll.LoadLibrary("./libmomentum.so")
+DEBUG = c_bool.in_dll(lib, "MOMENTUM_OPT_DEBUG")
 
 context = lib.momentum_context()
+# lib.momentum_configure(context, DEBUG, True)
 
 now = time.time()
 bytes_received = 0
