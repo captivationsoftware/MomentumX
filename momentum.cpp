@@ -171,7 +171,7 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_consumer_streams.count(stream) == 0) {
         zmq_setsockopt(_consumer_sock, ZMQ_SUBSCRIBE, "", 0);
 
-        std::string endpoint(IPC_ENDPOINT_BASE + stream);
+        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
         int rc = zmq_connect(_consumer_sock, endpoint.c_str()); 
         if (rc < 0) {
             return false;
@@ -202,7 +202,7 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback) {
 
     if (_consumer_streams.count(stream) == 0) {
 
-        std::string endpoint(IPC_ENDPOINT_BASE + stream);
+        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
         int rc = zmq_disconnect(_consumer_sock, endpoint.c_str()); 
         
         if (rc < 0) {
@@ -292,7 +292,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     }
 
     if (_producer_streams.count(stream) == 0) {
-        std::string endpoint(IPC_ENDPOINT_BASE + stream);
+        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
 
         int rc = zmq_bind(_producer_sock, endpoint.c_str()); 
 
