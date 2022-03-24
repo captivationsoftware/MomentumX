@@ -86,7 +86,7 @@ private:
     void deallocate_buffer(Buffer* buffer);
     std::string to_shm_path(pid_t pid, const std::string& stream, uint64_t id) const;
     void shm_iter(const std::function<void(std::string)> callback);
-    void update_shm_time(const std::string& shm_path, uint64_t ts);
+    void update_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts);
     uint64_t now() const;
     std::string stream_from_shm_path(std::string shm_path) const;
     bool is_valid_stream(const std::string& stream) const;

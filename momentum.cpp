@@ -69,12 +69,15 @@ MomentumContext::MomentumContext() {
                     if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
                         continue;
                     }
+
+                    bool buffer_unlinked = false;
+
                     // with the file locked, do a quick validity check to ensure the buffer has the same
                     // modified time as was provided in the message
                     struct stat fileinfo;
                     if (stat(std::string(SHM_PATH_BASE + message.buffer_shm_path).c_str(), &fileinfo) < 0) {
                         if (errno == ENOENT) {
-                            deallocate_buffer(buffer);
+                            buffer_unlinked = true;
                         } else {
                             if (_debug) {
                                 std::cerr << DEBUG_PREFIX << "Failed to stat file: " << message.buffer_shm_path << std::endl;
@@ -84,6 +87,9 @@ MomentumContext::MomentumContext() {
 
                     uint64_t buffer_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
                     if (message.ts == buffer_ts) {
+                        // update buffer access (read) time
+                        update_shm_time(message.buffer_shm_path, now(), 0);
+
                         for (auto const& callback : _consumers_by_stream[stream]) {
                             callback(buffer->address, message.data_length, message.buffer_length, message.id);  
                         }
@@ -92,6 +98,13 @@ MomentumContext::MomentumContext() {
                     }
                     
                     flock(buffer->fd, LOCK_UN | LOCK_NB);
+
+                    // If the buffer was unlinked, deallocate it now that our callback has executed.
+                    // This ensures that the callback above would still have access to the buffer's fd 
+                    // within this process, but closes it afterwards to prevent future reads
+                    if (buffer_unlinked) {
+                        deallocate_buffer(buffer);
+                    }
                 } else {
                     usleep(1);
                 }
@@ -105,7 +118,7 @@ MomentumContext::MomentumContext() {
     } else {
         // wait for our parent to die... :(
         while (getppid() == _pid) {
-            usleep(1);
+            sleep(1);
         }
 
         shm_iter([&](std::string filename) {
@@ -122,6 +135,7 @@ MomentumContext::MomentumContext() {
 MomentumContext::~MomentumContext() {
     term();
 
+    // iterate over a copy of the buffer by shm_path map, deallocating all buffers
     for (auto const& tuple : std::map<std::string, Buffer*>(_buffer_by_shm_path)) {
         deallocate_buffer(tuple.second);
     }
@@ -260,7 +274,9 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         ts = now();
     }
     message.ts = ts;
-    update_shm_time(buffer->shm_path, ts);
+    
+    // update buffer modify (write) time
+    update_shm_time(buffer->shm_path, 0, ts);
     
     release_buffer(buffer);
     
@@ -451,7 +467,7 @@ void MomentumContext::deallocate_buffer(Buffer* buffer) {
     delete buffer;
 }
 
-void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) {
+void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts) {
     struct stat fileinfo;
     struct timespec updated_times[2];
     
@@ -463,24 +479,25 @@ void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t ts) 
         }
     }
 
-    updated_times[0] = fileinfo.st_atim;
-    updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
-    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
+    if (read_ts != 0) {
+        updated_times[0].tv_sec = read_ts / NANOS_PER_SECOND; 
+        updated_times[0].tv_nsec = read_ts - (updated_times[0].tv_sec * NANOS_PER_SECOND);
+    } else {
+        updated_times[0] = fileinfo.st_atim;
+    }
+
+    if (write_ts != 0) {
+        updated_times[1].tv_sec = write_ts / NANOS_PER_SECOND; 
+        updated_times[1].tv_nsec = write_ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
+    } else {
+        updated_times[1] = fileinfo.st_mtim;
+    }
 
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
         if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Failed to obtain file timestamp: " << filepath << std::endl;
+            std::cerr << DEBUG_PREFIX << "Failed to update file timestamp: " << filepath << std::endl;
         }
     }
-
-    if (stat(filepath.c_str(), &fileinfo) < 0) {
-        if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Failed to stat file: " << filepath << std::endl;
-        }
-    }
-
-    updated_times[1].tv_sec = ts / NANOS_PER_SECOND; 
-    updated_times[1].tv_nsec = ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
 }
 
 uint64_t MomentumContext::now() const {
