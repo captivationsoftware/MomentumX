@@ -74,21 +74,12 @@ MomentumContext::MomentumContext() {
 
                     // with the file locked, do a quick validity check to ensure the buffer has the same
                     // modified time as was provided in the message
-                    struct stat fileinfo;
-                    if (stat(std::string(SHM_PATH_BASE + message.buffer_shm_path).c_str(), &fileinfo) < 0) {
-                        if (errno == ENOENT) {
-                            buffer_unlinked = true;
-                        } else {
-                            if (_debug) {
-                                std::cerr << DEBUG_PREFIX << "Failed to stat file: " << message.buffer_shm_path << std::endl;
-                            }
-                        }
-                    }
+                    uint64_t buffer_write_ts;
+                    get_shm_time(message.buffer_shm_path, NULL, &buffer_write_ts);
 
-                    uint64_t buffer_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec; 
-                    if (message.ts == buffer_ts) {
+                    if (message.ts == buffer_write_ts) {
                         // update buffer access (read) time
-                        update_shm_time(message.buffer_shm_path, now(), 0);
+                        set_shm_time(message.buffer_shm_path, now(), 0);
 
                         for (auto const& callback : _consumers_by_stream[stream]) {
                             callback(buffer->address, message.data_length, message.buffer_length, message.id);  
@@ -273,10 +264,11 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     if (ts == 0) {
         ts = now();
     }
+
     message.ts = ts;
     
     // update buffer modify (write) time
-    update_shm_time(buffer->shm_path, 0, ts);
+    set_shm_time(buffer->shm_path, 0, ts);
     
     release_buffer(buffer);
     
@@ -467,32 +459,44 @@ void MomentumContext::deallocate_buffer(Buffer* buffer) {
     delete buffer;
 }
 
-void MomentumContext::update_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts) {
+
+void MomentumContext::get_shm_time(const std::string& shm_path, uint64_t* read_ts, uint64_t* write_ts) {
     struct stat fileinfo;
-    struct timespec updated_times[2];
     
     std::string filepath(SHM_PATH_BASE + shm_path);
-
     if (stat(filepath.c_str(), &fileinfo) < 0) {
         if (_debug) {
             std::cerr << DEBUG_PREFIX << "Failed to stat file: " << filepath << std::endl;
         }
     }
-
-    if (read_ts != 0) {
-        updated_times[0].tv_sec = read_ts / NANOS_PER_SECOND; 
-        updated_times[0].tv_nsec = read_ts - (updated_times[0].tv_sec * NANOS_PER_SECOND);
-    } else {
-        updated_times[0] = fileinfo.st_atim;
+    
+    if (read_ts != NULL) {
+        *read_ts = fileinfo.st_atim.tv_sec * NANOS_PER_SECOND + fileinfo.st_atim.tv_nsec;
     }
 
-    if (write_ts != 0) {
-        updated_times[1].tv_sec = write_ts / NANOS_PER_SECOND; 
-        updated_times[1].tv_nsec = write_ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
-    } else {
-        updated_times[1] = fileinfo.st_mtim;
+    if (write_ts != NULL) {
+        *write_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec;
     }
+}
 
+void MomentumContext::set_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts) {
+    uint64_t existing_read_ts;
+    uint64_t existing_write_ts;
+    struct timespec updated_times[2];
+    
+    std::string filepath(SHM_PATH_BASE + shm_path);
+
+    // get the existing timestamps
+    get_shm_time(shm_path, &existing_read_ts, &existing_write_ts);
+
+    uint64_t next_read_ts = read_ts == 0 ? existing_read_ts : read_ts;
+    uint64_t next_write_ts = write_ts == 0 ? existing_write_ts : write_ts;
+
+    updated_times[0].tv_sec = next_read_ts / NANOS_PER_SECOND; 
+    updated_times[0].tv_nsec = next_read_ts - (updated_times[0].tv_sec * NANOS_PER_SECOND);
+    updated_times[1].tv_sec = next_write_ts / NANOS_PER_SECOND; 
+    updated_times[1].tv_nsec = next_write_ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
+    
     if (utimensat(AT_FDCWD, filepath.c_str(), updated_times, 0) < 0) {
         if (_debug) {
             std::cerr << DEBUG_PREFIX << "Failed to update file timestamp: " << filepath << std::endl;
