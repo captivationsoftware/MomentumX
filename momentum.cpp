@@ -66,34 +66,36 @@ MomentumContext::MomentumContext() {
                     }
 
                     
-                    if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
-                        continue;
-                    }
-
-                    bool buffer_unlinked = false;
-
                     // with the file locked, do a quick validity check to ensure the buffer has the same
                     // modified time as was provided in the message
                     uint64_t buffer_write_ts;
                     get_shm_time(message.buffer_shm_path, NULL, &buffer_write_ts);
 
-                    if (message.ts == buffer_write_ts) {
-                        // update buffer access (read) time
-                        set_shm_time(message.buffer_shm_path, now(), 0);
 
-                        for (auto const& callback : _consumers_by_stream[stream]) {
-                            callback(buffer->address, message.data_length, message.buffer_length, message.id);  
+                    bool buffer_unlinked = buffer_write_ts == 0;
+
+
+                    if (flock(buffer->fd, LOCK_SH | LOCK_NB) > -1) {
+                        if (buffer_unlinked || message.ts == buffer_write_ts) {
+                            // update buffer access (read) time
+                            set_shm_time(message.buffer_shm_path, now(), 0);
+
+                            for (auto const& callback : _consumers_by_stream[stream]) {
+                                callback(buffer->address, message.data_length, message.buffer_length, message.id);  
+                            }
+                        } else {
+                            // too late
                         }
-                    } else {
-                        // too late
+    
+                        flock(buffer->fd, LOCK_UN | LOCK_NB);
                     }
-                    
-                    flock(buffer->fd, LOCK_UN | LOCK_NB);
+
 
                     // If the buffer was unlinked, deallocate it now that our callback has executed.
                     // This ensures that the callback above would still have access to the buffer's fd 
                     // within this process, but closes it afterwards to prevent future reads
                     if (buffer_unlinked) {
+                        std::cout << "Buffer unlinked" << std::endl;
                         deallocate_buffer(buffer);
                     }
                 } else {
@@ -465,19 +467,27 @@ void MomentumContext::get_shm_time(const std::string& shm_path, uint64_t* read_t
     
     std::string filepath(SHM_PATH_BASE + shm_path);
     if (stat(filepath.c_str(), &fileinfo) < 0) {
-        if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Failed to stat file: " << filepath << std::endl;
+        // if file was deleted, then set read/write timestamps to null
+        if (errno == ENOENT) {
+            if (read_ts != NULL) *read_ts = 0;
+
+            if (write_ts != NULL) *write_ts = 0;
+        } else {
+            if (_debug) {
+                std::cerr << DEBUG_PREFIX << "Failed to stat file: " << filepath << std::endl;
+            }
+        }
+    } else {
+        if (read_ts != NULL) {
+            *read_ts = fileinfo.st_atim.tv_sec * NANOS_PER_SECOND + fileinfo.st_atim.tv_nsec;
+        }
+
+        if (write_ts != NULL) {
+            *write_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec;
         }
     }
-    
-    if (read_ts != NULL) {
-        *read_ts = fileinfo.st_atim.tv_sec * NANOS_PER_SECOND + fileinfo.st_atim.tv_nsec;
-    }
-
-    if (write_ts != NULL) {
-        *write_ts = fileinfo.st_mtim.tv_sec * NANOS_PER_SECOND + fileinfo.st_mtim.tv_nsec;
-    }
 }
+
 
 void MomentumContext::set_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts) {
     uint64_t existing_read_ts;
