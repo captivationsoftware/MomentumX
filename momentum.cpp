@@ -54,11 +54,6 @@ MomentumContext::MomentumContext() {
 
                     std::string stream = message.stream;
 
-                    // skip messages for which we are not a consumer
-                    if (_consumers_by_stream.count(stream) == 0) {
-                        continue;
-                    }
-
                     Buffer* buffer;    
 
                     if (_buffer_by_shm_path.count(message.buffer_shm_path) == 0) {
@@ -94,7 +89,6 @@ MomentumContext::MomentumContext() {
     
                         flock(buffer->fd, LOCK_UN | LOCK_NB);
                     }
-
 
                     // If the buffer was unlinked, deallocate it now that our callback has executed.
                     // This ensures that the callback above would still have access to the buffer's fd 
@@ -178,21 +172,25 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
 
     if (_consumer_sock == NULL) {
         _consumer_sock = zmq_socket(_zmq_ctx, ZMQ_SUB);
-
-        int rc = zmq_connect(_consumer_sock, IPC_SOCK_PATH.c_str()); 
-        if (rc < 0) {
-            return false;
-        }
-        
-        zmq_setsockopt(_consumer_sock, ZMQ_SUBSCRIBE, "", 0);
     }
 
-    _consumer_streams.insert(stream);
+    if (_consumer_streams.count(stream) == 0) {
+        zmq_setsockopt(_consumer_sock, ZMQ_SUBSCRIBE, "", 0);
+
+        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
+        int rc = zmq_connect(_consumer_sock, endpoint.c_str()); 
+        if (rc < 0) {
+            return false;
+        } 
+        
+        _consumer_streams.insert(stream);
+    }
     
-    if (_consumers_by_stream.count(stream) == 0) {
+    if (!_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream] = std::vector<callback_t>();
     }
     _consumers_by_stream[stream].push_back(callback);
+   
 
     return true;
 }
@@ -208,7 +206,17 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback) {
         return false;
     } 
 
-    _consumer_streams.erase(stream);
+    if (_consumer_streams.count(stream) == 0) {
+
+        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
+        int rc = zmq_disconnect(_consumer_sock, endpoint.c_str()); 
+        
+        if (rc < 0) {
+            return false;
+        } else {
+            _consumer_streams.erase(stream);
+        }
+    }
 
     if (_consumers_by_stream.count(stream)) {
         _consumers_by_stream[stream].erase(
@@ -250,8 +258,8 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     message.data_length = length;
     message.buffer_length = buffer->length;
     message.id = ++_msg_id;
+    strcpy(message.stream, stream_from_shm_path(buffer->shm_path).c_str());  
     strcpy(message.buffer_shm_path, buffer->shm_path);
-    strcpy(message.stream, stream_from_shm_path(buffer->shm_path).c_str());
 
     // adjust the buffer timestamp
     if (ts == 0) {
@@ -264,9 +272,11 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     set_shm_time(buffer->shm_path, 0, ts);
     
     release_buffer(buffer);
+
+    std::string endpoint(IPC_ENDPOINT_BASE + message.stream + ".sock");
     
-    // send the stream and message
-    int rc = zmq_send(_producer_sock, &message, sizeof(message), 0);
+    // send the buffer
+    int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
     if (rc < 0) {
         if (_debug) {
             std::cerr << DEBUG_PREFIX << "Failed to send message" << std::endl;
@@ -290,16 +300,22 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     
     if (_producer_sock == NULL) {
         _producer_sock = zmq_socket(_zmq_ctx, ZMQ_PUB);
-        int rc = zmq_bind(_producer_sock, IPC_SOCK_PATH.c_str()); 
+    }
+
+    if (_producer_streams.count(stream) == 0) {
+        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
+
+        int rc = zmq_bind(_producer_sock, endpoint.c_str()); 
+
         if (rc < 0) {
             if (_debug) {
                 std::cerr << DEBUG_PREFIX << "Failed to bind producer socket to stream: " << stream << std::endl;
             }
             return NULL;
+        } else {
+            _producer_streams.insert(stream);
         }
     }
-
-    _producer_streams.insert(stream);
 
     Buffer* buffer = NULL;
 

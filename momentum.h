@@ -18,11 +18,11 @@ typedef const void (*callback_t)(uint8_t* , size_t, size_t, uint64_t);
 
 static const std::string PATH_DELIM = "_";
 static const std::string NAMESPACE = "momentum";
-static const std::string DEBUG_PREFIX = "[MOMENTUM]: ";
+static const std::string DEBUG_PREFIX = "[" + NAMESPACE + "]: ";
 static const std::string PROTOCOL = NAMESPACE + "://";
 static const std::string SHM_PATH_BASE = "/dev/shm";
 static const std::string DEBUG_ENV = "DEBUG";
-static const std::string IPC_SOCK_PATH = "ipc:///tmp/" + NAMESPACE + ".sock";
+static const std::string IPC_ENDPOINT_BASE = "ipc:///tmp/" + NAMESPACE + PATH_DELIM;
 static const size_t PAGE_SIZE = getpagesize();
 static const size_t MAX_STREAM_SIZE = 43; // 32 chars for stream name, and 11 for protocol (i.e. "momentum://)
 static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for the leading slash
