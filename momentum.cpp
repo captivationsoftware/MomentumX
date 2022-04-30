@@ -64,7 +64,6 @@ MomentumContext::MomentumContext() {
                             resize_buffer(buffer, message.buffer_length);
                         }
                     }
-
                     
                     // with the file locked, do a quick validity check to ensure the buffer has the same
                     // modified time as was provided in the message
@@ -245,6 +244,8 @@ bool MomentumContext::send_data(std::string stream, uint8_t* data, size_t length
 
     Buffer* buffer = acquire_buffer(stream, length);
     
+    if (buffer == NULL) return false;
+
     memcpy(buffer->address, data, length);
 
     return send_buffer(buffer, length, ts);
@@ -253,6 +254,8 @@ bool MomentumContext::send_data(std::string stream, uint8_t* data, size_t length
 
 bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     if (_terminated) return false;
+
+    if (buffer == NULL) return false;
 
     Message message;
     message.data_length = length;
@@ -317,62 +320,47 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         }
     }
 
-    Buffer* buffer = NULL;
 
     if (_buffers_by_stream.count(stream) == 0) {
         _buffers_by_stream[stream] = std::queue<Buffer*>();
     }
 
-    // First, see if we found a free buffer within our existing resources
-    if (_buffers_by_stream.count(stream) > 0) {
-        size_t visit_count = 0;
-
-        // find the next buffer to use
-        while (visit_count++ < _buffers_by_stream[stream].size()) {
-
-            // pull a candidate buffer, rotating the queue in the process
-            Buffer* candidate_buffer = _buffers_by_stream[stream].front();
-            _buffers_by_stream[stream].pop();
-            _buffers_by_stream[stream].push(candidate_buffer);
-
-            if (candidate_buffer != _last_acquired_buffer) {
-                // found a buffer that is different than the last iteration...
-                if (flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
-                    // and we were also able to set the exclusive lock... 
-                    buffer = candidate_buffer;
-                    break;
-                }
-            }
-        }
-    } 
-
     // If we don't have enough buffers, then create them...
-    bool below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
+    if (_buffers_by_stream[stream].size() < _min_buffers) {
+        size_t allocations_required = _min_buffers - _buffers_by_stream[stream].size();
 
-    if (buffer == NULL || below_minimum_buffers) {
-        size_t allocations_required = below_minimum_buffers ? _min_buffers : 1;
-
-        Buffer* first_buffer = NULL;
         int id = 1; // start buffer count at 1
-
-        while (allocations_required > 0) {
-            buffer = allocate_buffer(to_shm_path(_pid, stream, id++), length, O_RDWR | O_CREAT | O_EXCL);
+        while (allocations_required > 0 && _buffers_by_stream[stream].size() < _max_buffers) {
+            Buffer* allocated = allocate_buffer(to_shm_path(_pid, stream, id++), length, O_RDWR | O_CREAT | O_EXCL);
             
-            if (buffer != NULL) {
+            if (allocated != NULL) {
                 allocations_required--;
-                _buffers_by_stream[stream].push(buffer);
-                
-                // Since we may create numerous buffers, make note of this first buffer to 
-                // maintain some semblance of sequential ordering.
-                if (first_buffer == NULL) {
-                    first_buffer = buffer;
-                }
+                _buffers_by_stream[stream].push(allocated);
             }
         }
+    }
 
-        buffer = first_buffer;
+    // If we have buffers, look to lock a free one down
+    Buffer* buffer = NULL;
+    if (_buffers_by_stream.count(stream) > 0) {
 
-    } else if (length > buffer->length) {
+        // pull a candidate buffer, rotating the queue in the process
+        Buffer* candidate_buffer = _buffers_by_stream[stream].front();
+        _buffers_by_stream[stream].pop();
+        _buffers_by_stream[stream].push(candidate_buffer);
+
+        if (_buffers_by_stream.count(stream) == 1 || candidate_buffer != _last_acquired_buffer) {
+            // attempt to acquire the exclusive lock on the candidate buffer, blocking until its free
+            if (flock(candidate_buffer->fd, LOCK_EX) > -1) {
+                buffer = candidate_buffer;
+            } else {
+                // something unexpected happened (likely, program termination)
+                return NULL;
+            }
+        }
+    }     
+
+    if (length > buffer->length) {
         // buffer did exist but its undersized, so resize it
         resize_buffer(buffer, length, true);
     }
@@ -392,7 +380,11 @@ bool MomentumContext::release_buffer(Buffer* buffer) {
 
 Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t length, int flags) {
     if (_terminated) return NULL;
-    
+
+    uint64_t pre_read_ts;
+    uint64_t pre_write_ts;
+    get_shm_time(shm_path, &pre_read_ts, &pre_write_ts);
+
     int fd = shm_open(shm_path.c_str(), flags, S_IRWXU);
     if (fd < 0) {
         if (errno == EEXIST) {
@@ -411,6 +403,10 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
     strcpy(buffer->shm_path, shm_path.c_str());
 
     resize_buffer(buffer, length, (flags & O_CREAT) == O_CREAT);
+
+    uint64_t post_read_ts;
+    uint64_t post_write_ts;
+    get_shm_time(shm_path, &post_read_ts, &post_write_ts);
 
     _buffer_by_shm_path_mutex.lock();
     _buffer_by_shm_path[shm_path] = buffer;

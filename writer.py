@@ -22,7 +22,6 @@ try:
         i += 1
         data = f'{i}'
         data_len = len(data)
-
         lib.momentum_send_data(context, stream, data.encode('utf8'), data_len, 0)
         # buffer = lib.momentum_acquire_buffer(context, stream, data_length)
 
