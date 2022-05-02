@@ -297,6 +297,28 @@ bool MomentumContext::term() {
     return true;
 };
 
+bool MomentumContext::is_subscribed(std::string stream, callback_t callback) {
+    if (_terminated) return false;
+
+    normalize_stream(stream); 
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return false;
+    }
+
+    if (_callbacks_by_stream.count(stream) > 0) {
+        return std::find(
+            _callbacks_by_stream[stream].begin(),
+            _callbacks_by_stream[stream].end(),
+            callback
+        ) != _callbacks_by_stream[stream].end();
+    }
+
+    return false;
+}
+
 bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return false;
 
@@ -878,6 +900,10 @@ bool momentum_destroy(MomentumContext* ctx) {
     } else {
         return false;
     }
+}
+
+bool momentum_subscribed(MomentumContext* ctx, const char* stream, callback_t callback) {
+    return ctx->is_subscribed(std::string(stream), callback);
 }
 
 bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback) {

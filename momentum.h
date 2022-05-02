@@ -60,6 +60,7 @@ public:
     bool is_terminated() const;
     bool is_streaming(const std::string& stream) const;
     bool term();
+    bool is_subscribed(std::string stream, callback_t callback);
     bool subscribe(std::string stream, callback_t callback);
     bool unsubscribe(std::string stream, callback_t callback);
     bool send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts=0);
@@ -131,6 +132,7 @@ extern "C" {
     bool momentum_term(MomentumContext* ctx);
     bool momentum_destroy(MomentumContext* ctx);
     bool momentum_terminated(MomentumContext* ctx);
+    bool momentum_subscribed(MomentumContext* ctx, const char* stream, callback_t callback);
     bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback);
     bool momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback);
     Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length);
@@ -140,6 +142,7 @@ extern "C" {
     uint8_t* momentum_get_buffer_address(Buffer* buffer);
     size_t momentum_get_buffer_length(Buffer* buffer);
     bool momentum_configure(MomentumContext* ctx, uint8_t option, const void* value);
+
 }
 
 #endif

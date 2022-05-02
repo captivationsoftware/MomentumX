@@ -15,6 +15,8 @@ messages_received = 0
 last_msg_id = 0
 skip_count = 0
 
+lib.momentum_subscribed.restype = c_uint8
+
 @CFUNCTYPE(None, POINTER(c_uint8), c_size_t, c_size_t, c_uint64)
 def handle_message(data, data_length, buffer_length, msg_id):
     memory = cast(data, POINTER(c_uint8 * data_length))
@@ -46,12 +48,14 @@ def handle_message(data, data_length, buffer_length, msg_id):
         skip_count = 0
 
 
-while lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message) == 0:
+stream = sys.argv[1].encode()
+
+while lib.momentum_subscribe(context, stream, handle_message) == 0:
     time.sleep(1)
 
 try:
-    while True:
-        time.sleep(1)
+    while lib.momentum_subscribed(context, stream, handle_message):
+        time.sleep(0.1)
 
 except KeyboardInterrupt:
     lib.momentum_term(context)
