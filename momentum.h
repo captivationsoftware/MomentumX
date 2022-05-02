@@ -29,6 +29,8 @@ static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for 
 static const uint64_t NANOS_PER_SECOND = 1000000000;
 static const mode_t MQ_MODE = 0644;
 
+static const size_t MAX_MESSAGE_SIZE = 1024;
+
 static const char MESSAGE_TYPE_SUBSCRIBE = 1;
 static const char MESSAGE_TYPE_UNSUBSCRIBE = 2;
 static const char MESSAGE_TYPE_BUFFER = 3;
@@ -40,17 +42,7 @@ struct Buffer {
     int fd;
     size_t length;
     uint8_t* address;
-    ino_t inode;
 };
-
-struct Message {
-    char buffer_shm_path[MAX_PATH_SIZE];
-    size_t buffer_length;
-    size_t data_length;
-    uint64_t ts;
-    uint64_t id;
-};
-
 
 class MomentumContext {
 
@@ -78,6 +70,9 @@ private:
     // State variables
     std::atomic<bool>  _terminated{false};
 
+    pid_t _pid;
+    uint64_t _msg_id = 0;
+
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
 
@@ -85,14 +80,13 @@ private:
     std::map<std::string, std::vector<mqd_t>> _consumer_mqs_by_stream;
     std::map<std::string, mqd_t> _mq_by_mq_name;
 
-
     std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
 
     std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     std::mutex _buffer_by_shm_path_mutex;
-    pid_t _pid;
     Buffer* _last_acquired_buffer = NULL;
+
 
     // Buffer / SHM functions
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
@@ -116,9 +110,7 @@ private:
     bool lock_ex(const Buffer* buffer, bool block);
     bool lock_sh(const Buffer* buffer, bool block);
     bool lock_un(const Buffer* buffer);
-    bool test_lock_ex(const Buffer* buffer) const;
 
-    uint64_t _msg_id = 0;
 };
 
 extern "C" {
