@@ -9,34 +9,41 @@
 #include <queue>
 #include <mutex>
 #include <atomic>
+#include <sys/stat.h>
 #include <sys/types.h>
-#include <zmq.h>
-
+#include <mqueue.h>
 
 typedef const void (*callback_t)(uint8_t* , size_t, size_t, uint64_t);
 
 
 static const std::string PATH_DELIM = "_";
+static const std::string MESSAGE_DELIM = " ";
 static const std::string NAMESPACE = "momentum";
 static const std::string DEBUG_PREFIX = "[" + NAMESPACE + "]: ";
 static const std::string PROTOCOL = NAMESPACE + "://";
 static const std::string SHM_PATH_BASE = "/dev/shm";
 static const std::string DEBUG_ENV = "DEBUG";
-static const std::string IPC_ENDPOINT_BASE = "ipc:///tmp/" + NAMESPACE + PATH_DELIM;
 static const size_t PAGE_SIZE = getpagesize();
-static const size_t MAX_STREAM_SIZE = 43; // 32 chars for stream name, and 11 for protocol (i.e. "momentum://)
+static const size_t MAX_STREAM_SIZE = 128; // 32 chars for stream name, and 11 for protocol (i.e. "momentum://)
 static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for the leading slash
 static const uint64_t NANOS_PER_SECOND = 1000000000;
+static const mode_t MQ_MODE = 0644;
+
+static const char MESSAGE_TYPE_SUBSCRIBE = 1;
+static const char MESSAGE_TYPE_UNSUBSCRIBE = 2;
+static const char MESSAGE_TYPE_BUFFER = 3;
+static const char MESSAGE_TYPE_ACK = 4;
+static const char MESSAGE_TYPE_TERM = 5;
 
 struct Buffer {
     char shm_path[MAX_PATH_SIZE];
     int fd;
     size_t length;
     uint8_t* address;
+    ino_t inode;
 };
 
 struct Message {
-    char stream[MAX_STREAM_SIZE];
     char buffer_shm_path[MAX_PATH_SIZE];
     size_t buffer_length;
     size_t data_length;
@@ -65,23 +72,28 @@ public:
     volatile uint64_t _max_buffers = -1; // intentionally wrap
     volatile bool _debug = false;
 
-
 private:
-    std::atomic<bool>  _terminated{false};    
 
-    std::map<std::string, std::vector<callback_t>> _consumers_by_stream;
-    std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
-    
-    Buffer* _last_acquired_buffer = NULL;
-
-    pid_t _pid;
+    // State variables
+    std::atomic<bool>  _terminated{false};
 
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
 
+    std::map<std::string, mqd_t> _producer_mq_by_stream;
+    std::map<std::string, std::vector<mqd_t>> _consumer_mqs_by_stream;
+    std::map<std::string, mqd_t> _mq_by_mq_name;
+
+
+    std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
+
+    std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     std::mutex _buffer_by_shm_path_mutex;
+    pid_t _pid;
+    Buffer* _last_acquired_buffer = NULL;
 
+    // Buffer / SHM functions
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
     void resize_buffer(Buffer* buffer, size_t length, bool truncate=false);
     void deallocate_buffer(Buffer* buffer);
@@ -89,14 +101,21 @@ private:
     void shm_iter(const std::function<void(std::string)> callback);
     void get_shm_time(const std::string& shm_path, uint64_t* read_ts, uint64_t* write_ts);
     void set_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts);
-    uint64_t now() const;
     std::string stream_from_shm_path(std::string shm_path) const;
+
+    // Message / MQ functions
+    std::string to_mq_name(pid_t pid, const std::string& stream);
+
+    // Stream functions    
     bool is_valid_stream(const std::string& stream) const;
     void normalize_stream(std::string& stream);
 
-    void* _zmq_ctx = NULL;
-    void* _producer_sock = NULL;
-    void* _consumer_sock = NULL;
+    // Utility functions
+    uint64_t now() const;
+    bool lock_ex(const Buffer* buffer, bool block);
+    bool lock_sh(const Buffer* buffer, bool block);
+    bool lock_un(const Buffer* buffer);
+    bool test_lock_ex(const Buffer* buffer) const;
 
     uint64_t _msg_id = 0;
 };

@@ -2,7 +2,7 @@ CC = g++
 
 CFLAGS = -std=c++11 -g -Wall -c 
 
-LIBS = -lrt -lzmq
+LIBS = -lrt 
 
 all: libmomentum.so
 

@@ -9,13 +9,14 @@
 #include <cmath>
 #include <thread>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/file.h>        
 #include <dirent.h>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
 #include <dirent.h>
+#include <fcntl.h>
+#include <fstream>
 
 #include "momentum.h"
 
@@ -34,76 +35,178 @@ MomentumContext::MomentumContext() {
     _pid = getpid();
 
     if (fork() != 0) {
-        // Initialize our ZMQ context
-        _zmq_ctx = zmq_ctx_new();
 
-        std::thread listener([&] {
-            int bytes_received;
-
-            Message message;
+        std::thread consume([&] {
+            char message[1024];
 
             while(!_terminated) {
-                if (_consumer_sock != NULL) {
-                    bytes_received = zmq_recv(_consumer_sock, &message, sizeof(message), 0);
-                    if (bytes_received < 0) {
-                        if (_debug) {
-                            std::cerr << DEBUG_PREFIX << "Received " << bytes_received << " message bytes" << std::endl;
+                if (_consumer_streams.size() > 0) {
+                    for (auto const& stream : _consumer_streams) {
+                        for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
+                            mq_receive(consumer_mq, message, sizeof(message), NULL);
+
+                            std::cout << "Received message: " << message << std::endl;
                         }
-                        continue;
-                    }
 
-                    std::string stream = message.stream;
-
-                    Buffer* buffer;    
-
-                    if (_buffer_by_shm_path.count(message.buffer_shm_path) == 0) {
-                        buffer = allocate_buffer(message.buffer_shm_path, message.buffer_length, O_RDWR);
-                    } else {
-                        buffer = _buffer_by_shm_path[message.buffer_shm_path];
-                        if (buffer->length < message.buffer_length) {
-                            resize_buffer(buffer, message.buffer_length);
-                        }
-                    }
-                    
-                    // with the file locked, do a quick validity check to ensure the buffer has the same
-                    // modified time as was provided in the message
-                    uint64_t buffer_write_ts;
-                    get_shm_time(message.buffer_shm_path, NULL, &buffer_write_ts);
-
-
-                    bool buffer_unlinked = buffer_write_ts == 0;
-
-
-                    if (flock(buffer->fd, LOCK_SH | LOCK_NB) > -1) {
-                        if (buffer_unlinked || message.ts == buffer_write_ts) {
-                            // update buffer access (read) time
-                            set_shm_time(message.buffer_shm_path, now(), 0);
-
-                            for (auto const& callback : _consumers_by_stream[stream]) {
-                                callback(buffer->address, message.data_length, message.buffer_length, message.id);  
-                            }
-                        } else {
-                            // too late
-                        }
-    
-                        flock(buffer->fd, LOCK_UN | LOCK_NB);
-                    }
-
-                    // If the buffer was unlinked, deallocate it now that our callback has executed.
-                    // This ensures that the callback above would still have access to the buffer's fd 
-                    // within this process, but closes it afterwards to prevent future reads
-                    if (buffer_unlinked) {
-                        std::cout << "Buffer unlinked" << std::endl;
-                        deallocate_buffer(buffer);
                     }
                 } else {
                     usleep(1);
                 }
+                // if (_consumer_sock != NULL) {
+                //     bytes_received = zmq_recv(_consumer_sock, message, sizeof(message), 0);
+                //     if (bytes_received < 0) {
+                //         if (_debug) {
+                //             std::cerr << DEBUG_PREFIX << "Received " << bytes_received << " message bytes" << std::endl;
+                //         }
+                //         continue;
+                //     }
+
+                //     std::string stream = message.stream;
+
+                //     Buffer* buffer;    
+
+                //     if (_buffer_by_shm_path.count(message.buffer_shm_path) == 0) {
+                //         buffer = allocate_buffer(message.buffer_shm_path, message.buffer_length, O_RDWR);
+                //     } else {
+                //         buffer = _buffer_by_shm_path[message.buffer_shm_path];
+                //         if (buffer->length < message.buffer_length) {
+                //             resize_buffer(buffer, message.buffer_length);
+                //         }
+                //     }
+                    
+                //     // with the file locked, do a quick validity check to ensure the buffer has the same
+                //     // modified time as was provided in the message
+                //     uint64_t buffer_write_ts;
+                //     get_shm_time(message.buffer_shm_path, NULL, &buffer_write_ts);
+
+
+                //     bool buffer_unlinked = buffer_write_ts == 0;
+
+
+                //     if (lock_sh(buffer, false)) {
+                //         if (buffer_unlinked || message.ts == buffer_write_ts) {
+                //             // update buffer access (read) time
+                //             set_shm_time(message.buffer_shm_path, now(), 0);
+
+                //             for (auto const& callback : _callbacks_by_stream[stream]) {
+                //                 callback(buffer->address, message.data_length, message.buffer_length, message.id);  
+                //             }
+                //         } else {
+                //             // too late
+                //         }
+    
+                //         // lock_un(buffer);
+                //     }
+
+                //     // If the buffer was unlinked, deallocate it now that our callback has executed.
+                //     // This ensures that the callback above would still have access to the buffer's fd 
+                //     // within this process, but closes it afterwards to prevent future reads
+                //     if (buffer_unlinked) {
+                //         std::cout << "Buffer unlinked" << std::endl;
+                //         deallocate_buffer(buffer);
+                //     }
+                // } else {
+                //     usleep(1);
+                // }
+            }
+        });
+        
+        consume.detach();
+
+        std::thread produce([&] {
+            char message[1024];
+
+            while(!_terminated) {
+                if (_producer_streams.size() > 0) {
+
+                    for (auto const& producer_stream : _producer_streams) {
+                        // wait for a message 
+                        mqd_t producer_mq = _producer_mq_by_stream[producer_stream];
+                        mq_receive(producer_mq, message, sizeof(message), NULL);
+
+                        uint8_t type;
+                        std::string stream, payload;
+
+                        std::stringstream parser(message);
+                        parser >> type >> stream >> payload;
+
+                        mqd_t consumer_mq;
+
+                        switch (type) {
+                            case MESSAGE_TYPE_SUBSCRIBE:
+                                
+                                // create the consumer_mq for this consumer
+                                consumer_mq = mq_open(payload.c_str(), O_RDWR);
+                                if (consumer_mq < 0) {
+                                    if (_debug) {
+                                        std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
+                                    }
+                                } else {
+                                    _mq_by_mq_name[payload] = consumer_mq;
+                                    _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+                                    if (_debug) {
+                                        std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
+                                    }
+                                }    
+                                
+
+                                break;
+
+                            case MESSAGE_TYPE_TERM:
+                            case MESSAGE_TYPE_UNSUBSCRIBE:
+                                if (_mq_by_mq_name.count(payload) > 0) {
+                                    consumer_mq = _mq_by_mq_name[payload];
+                                    mq_close(consumer_mq);
+                                    _mq_by_mq_name.erase(payload);
+    
+                                    _consumer_mqs_by_stream[stream].erase(
+                                        std::remove(
+                                            _consumer_mqs_by_stream[stream].begin(),
+                                            _consumer_mqs_by_stream[stream].end(),
+                                            consumer_mq
+                                        ),
+                                        _consumer_mqs_by_stream[stream].end()
+                                    );
+
+                                    if (_debug) {
+                                        std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
+                                    }
+                                }
+
+                                break;
+                            case MESSAGE_TYPE_ACK:
+                                if (_debug) {
+                                    std::cout << DEBUG_PREFIX << "Ack stream: " << stream << std::endl;
+                                }
+                                break;
+                        }
+
+                    }
+                } else {
+                    usleep(1);
+                }
+
+                // // if (_producer_sock != NULL) {
+
+                //     bytes_received = zmq_recv(_producer_sock, &subscription, sizeof(subscription));
+                //     if (bytes_received < 0) {
+                //         if (_debug) {
+                //             std::cerr << DEBUG_PREFIX << "Received " << bytes_received << " subscription bytes" << std::endl;
+                //         }
+                //         continue;
+                //     }
+
+                //     std::cout << "received " << std::string(subscription) << std::endl;
+                //}    
+                // else {
+                //     usleep(1);
+                // }
             }
 
         });
 
-        listener.detach();
+        produce.detach();
+
 
         contexts.push_back(this);
     } else {
@@ -130,6 +233,8 @@ MomentumContext::~MomentumContext() {
     for (auto const& tuple : std::map<std::string, Buffer*>(_buffer_by_shm_path)) {
         deallocate_buffer(tuple.second);
     }
+
+    
 }
 
 bool MomentumContext::is_terminated() const {
@@ -141,19 +246,32 @@ bool MomentumContext::term() {
         return false;
     }
 
+    // for every stream we are producing, notify the consumers that we are terminating
+    for (auto const& stream : _producer_streams) {
+        std::string producer_mq_name = to_mq_name(0, stream);
+
+        std::string message(MESSAGE_TYPE_TERM + MESSAGE_DELIM + stream + MESSAGE_DELIM + producer_mq_name);
+        
+        for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
+            if (mq_send(consumer_mq, message.c_str(), message.length(), 0) < 0) {
+                std::cerr << DEBUG_PREFIX << "Failed to notify term for stream: " << stream << std::endl;
+            };
+        }
+
+
+        if (mq_unlink(producer_mq_name.c_str()) < 0) {
+            std::cout << DEBUG_PREFIX << "Failed to unlink producer mq for stream: " << stream << std::endl;
+        }
+    }
+
+    // for every stream we are consuming, issue an unsubscribe
+    for (auto const& stream : _consumer_streams) {
+        for (auto const& callback : _callbacks_by_stream[stream]) {
+            unsubscribe(stream, callback);
+        }
+    }
+    
     _terminated = true;
-
-    if (_consumer_sock != NULL) {
-        zmq_close(_consumer_sock);
-    }
-
-    if (_producer_sock != NULL) {
-        zmq_close(_producer_sock);
-    }
-
-    if (_zmq_ctx != NULL) {
-        zmq_ctx_term(_zmq_ctx);
-    }
 
     return true;
 };
@@ -169,27 +287,69 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
         return false;
     }
 
-    if (_consumer_sock == NULL) {
-        _consumer_sock = zmq_socket(_zmq_ctx, ZMQ_SUB);
+    // Open the producer mq  
+    std::string producer_mq_name = to_mq_name(0, stream);
+    mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR);
+    if (producer_mq < 0) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
+        }
+        return false;
+    } 
+
+    // ...and then open our own consumer mq
+    struct mq_attr attrs;
+    memset(&attrs, 0, sizeof(attrs));
+    attrs.mq_maxmsg = 1;
+    attrs.mq_msgsize = 1024;
+    std::string consumer_mq_name = to_mq_name(_pid, stream);
+    mqd_t consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR | O_CREAT, MQ_MODE, &attrs);
+    if (consumer_mq < 0) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Failed to create mq for stream: " << stream << std::endl;
+        }
+        mq_close(producer_mq);
+        return false;
     }
 
-    if (_consumer_streams.count(stream) == 0) {
-        zmq_setsockopt(_consumer_sock, ZMQ_SUBSCRIBE, "", 0);
+    // ...and send the producer subscription message
+    std::string message(MESSAGE_TYPE_SUBSCRIBE + MESSAGE_DELIM + stream + MESSAGE_DELIM + consumer_mq_name);
+    if (mq_send(producer_mq, message.c_str(), message.length(), 0) < 0) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Failed to send subscribe message for stream: " << stream << std::endl;
+        }
 
-        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
-        int rc = zmq_connect(_consumer_sock, endpoint.c_str()); 
-        if (rc < 0) {
-            return false;
-        } 
+        mq_close(producer_mq);
+
+        mq_close(consumer_mq);
+        if (mq_unlink(consumer_mq_name.c_str()) < 0) {
+            if (_debug) {        
+                std::cerr << DEBUG_PREFIX << "Failed to unlink consumer mq for stream: " << stream << std::endl;
+            }
+        }
         
-        _consumer_streams.insert(stream);
-    }
+        return false;
+    };
     
-    if (!_consumers_by_stream.count(stream)) {
-        _consumers_by_stream[stream] = std::vector<callback_t>();
+    // If we made it here, everything went well so cache references
+    _producer_mq_by_stream[stream] = producer_mq;
+    
+    if (_consumer_mqs_by_stream.count(stream) == 0) {
+        _consumer_mqs_by_stream[stream] = std::vector<mqd_t>();
     }
-    _consumers_by_stream[stream].push_back(callback);
+    _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+
+
+    if (!_callbacks_by_stream.count(stream)) {
+        _callbacks_by_stream[stream] = std::vector<callback_t>();
+    }
+    _callbacks_by_stream[stream].push_back(callback);
    
+    _consumer_streams.insert(stream);
+
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Subscribed to stream: " << stream << std::endl;
+    }
 
     return true;
 }
@@ -200,32 +360,52 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback) {
     normalize_stream(stream);
     if (!is_valid_stream(stream)) {
         if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+            std::cerr << DEBUG_PREFIX << "Invalid stream " << stream << std::endl;
         }
         return false;
     } 
 
+    // exit early if we are not subscribed to this stream
     if (_consumer_streams.count(stream) == 0) {
-
-        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
-        int rc = zmq_disconnect(_consumer_sock, endpoint.c_str()); 
-        
-        if (rc < 0) {
-            return false;
-        } else {
-            _consumer_streams.erase(stream);
-        }
+        return false;
     }
 
-    if (_consumers_by_stream.count(stream)) {
-        _consumers_by_stream[stream].erase(
+    // first notify the producer that we're exiting
+    std::string message(MESSAGE_TYPE_UNSUBSCRIBE + MESSAGE_DELIM + stream + MESSAGE_DELIM + to_mq_name(_pid, stream));
+    if (mq_send(_producer_mq_by_stream[stream], message.c_str(), message.length(), 0) < 0) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
+        }
+        return false;
+    };
+
+    mq_close(_producer_mq_by_stream[stream]);
+    _producer_mq_by_stream.erase(stream);
+
+    for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
+        mq_close(consumer_mq);
+    }
+    _consumer_mqs_by_stream.erase(stream);
+    std::string consumer_mq_name = to_mq_name(_pid, stream); 
+    if (mq_unlink(consumer_mq_name.c_str()) < 0) {
+        std::cout << DEBUG_PREFIX << "Failed to unlink consumer mq: " << consumer_mq_name << std::endl;
+    }
+    
+    _consumer_streams.erase(stream);
+
+    if (_callbacks_by_stream.count(stream)) {
+        _callbacks_by_stream[stream].erase(
             std::remove(
-                _consumers_by_stream[stream].begin(), 
-                _consumers_by_stream[stream].end(), 
+                _callbacks_by_stream[stream].begin(), 
+                _callbacks_by_stream[stream].end(), 
                 callback
             ), 
-            _consumers_by_stream[stream].end()
+            _callbacks_by_stream[stream].end()
         );
+    }
+
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Unsubscribed from stream: " << stream << std::endl;
     }
 
     return true;
@@ -261,7 +441,7 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     message.data_length = length;
     message.buffer_length = buffer->length;
     message.id = ++_msg_id;
-    strcpy(message.stream, stream_from_shm_path(buffer->shm_path).c_str());  
+    // strcpy(message.stream, stream_from_shm_path(buffer->shm_path).c_str());  
     strcpy(message.buffer_shm_path, buffer->shm_path);
 
     // adjust the buffer timestamp
@@ -274,18 +454,16 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     // update buffer modify (write) time
     set_shm_time(buffer->shm_path, 0, ts);
     
-    release_buffer(buffer);
+    // release_buffer(buffer);
 
-    std::string endpoint(IPC_ENDPOINT_BASE + message.stream + ".sock");
-    
     // send the buffer
-    int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
-    if (rc < 0) {
-        if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Failed to send message" << std::endl;
-        }
-        return false;
-    }
+    // int rc = zmq_send(_producer_sock, &message, sizeof(message), 0); 
+    // if (rc < 0) {
+    //     if (_debug) {
+    //         std::cerr << DEBUG_PREFIX << "Failed to send message" << std::endl;
+    //     }
+    //     return false;
+    // }
     
     return true;
 }
@@ -300,25 +478,25 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         }
         return NULL;
     };
-    
-    if (_producer_sock == NULL) {
-        _producer_sock = zmq_socket(_zmq_ctx, ZMQ_PUB);
-    }
 
-    if (_producer_streams.count(stream) == 0) {
-        std::string endpoint(IPC_ENDPOINT_BASE + stream + ".sock");
+    if (_producer_mq_by_stream.count(stream) == 0) {
+        struct mq_attr attrs;
+        memset(&attrs, 0, sizeof(attrs));
+        attrs.mq_maxmsg = 1;
+        attrs.mq_msgsize = 1024;
 
-        int rc = zmq_bind(_producer_sock, endpoint.c_str()); 
-
-        if (rc < 0) {
+        mqd_t producer_mq = mq_open(to_mq_name(0, stream).c_str(), O_RDWR | O_CREAT, MQ_MODE, &attrs);
+        if (producer_mq < 0) {
             if (_debug) {
-                std::cerr << DEBUG_PREFIX << "Failed to bind producer socket to stream: " << stream << std::endl;
+                std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
             }
-            return NULL;
-        } else {
-            _producer_streams.insert(stream);
+            return false;
         }
+
+        _producer_mq_by_stream[stream] = producer_mq;        
     }
+
+    _producer_streams.insert(stream);
 
 
     if (_buffers_by_stream.count(stream) == 0) {
@@ -350,8 +528,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         _buffers_by_stream[stream].push(candidate_buffer);
 
         if (_buffers_by_stream.count(stream) == 1 || candidate_buffer != _last_acquired_buffer) {
-            // attempt to acquire the exclusive lock on the candidate buffer, blocking until its free
-            if (flock(candidate_buffer->fd, LOCK_EX) > -1) {
+            if (lock_ex(candidate_buffer, true) > -1) {
                 buffer = candidate_buffer;
             } else {
                 // something unexpected happened (likely, program termination)
@@ -372,7 +549,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
 
 bool MomentumContext::release_buffer(Buffer* buffer) {
     if (!_terminated) {
-        flock(buffer->fd, LOCK_UN | LOCK_NB);
+        lock_un(buffer);
         return true;
     } 
     return false;
@@ -380,10 +557,6 @@ bool MomentumContext::release_buffer(Buffer* buffer) {
 
 Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t length, int flags) {
     if (_terminated) return NULL;
-
-    uint64_t pre_read_ts;
-    uint64_t pre_write_ts;
-    get_shm_time(shm_path, &pre_read_ts, &pre_write_ts);
 
     int fd = shm_open(shm_path.c_str(), flags, S_IRWXU);
     if (fd < 0) {
@@ -398,15 +571,24 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
         }
     } 
 
+    struct stat file_stat;  
+    if (fstat (fd, &file_stat) < 0) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Failed to stat shm file: " << shm_path << std::endl;
+            
+        }
+        close(fd);
+        shm_unlink(shm_path.c_str());
+        return NULL;
+    }  
+    
     Buffer* buffer = new Buffer();
     buffer->fd = fd;
     strcpy(buffer->shm_path, shm_path.c_str());
 
-    resize_buffer(buffer, length, (flags & O_CREAT) == O_CREAT);
+    buffer->inode = file_stat.st_ino;
 
-    uint64_t post_read_ts;
-    uint64_t post_write_ts;
-    get_shm_time(shm_path, &post_read_ts, &post_write_ts);
+    resize_buffer(buffer, length, (flags & O_CREAT) == O_CREAT);
 
     _buffer_by_shm_path_mutex.lock();
     _buffer_by_shm_path[shm_path] = buffer;
@@ -591,6 +773,69 @@ void MomentumContext::normalize_stream(std::string& stream) {
     } 
 }
 
+bool MomentumContext::lock_ex(const Buffer* buffer, bool block) {
+    struct flock lck;
+    memset(&lck, 0, sizeof(lck));
+    lck.l_type = F_WRLCK;
+    return fcntl(buffer->fd, block ? F_SETLKW : F_SETLK, &lck) > -1;
+}
+
+bool MomentumContext::lock_sh(const Buffer* buffer, bool block) {
+    struct flock lck;
+    memset(&lck, 0, sizeof(lck));
+    lck.l_type = F_RDLCK;
+    return fcntl(buffer->fd, block ? F_SETLKW : F_SETLK, &lck) > -1;
+}
+
+bool MomentumContext::lock_un(const Buffer* buffer) {
+    struct flock lck;
+    memset(&lck, 0, sizeof(lck));
+    lck.l_type = F_UNLCK;
+    return fcntl(buffer->fd, F_SETLK, &lck) > -1;
+}
+
+bool MomentumContext::test_lock_ex(const Buffer* buffer) const {
+    struct flock lck;
+    memset(&lck, 0, sizeof(lck));
+    if (fcntl(buffer->fd, F_GETLK, &lck) < 0) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Failed to obtain status of lock for file: " << buffer->shm_path << " " << errno << std::endl;
+        }
+        return false;
+    }
+    if (lck.l_type == F_UNLCK) {
+        // since locking will succeed if we already hold the lock, only return true if we don't hold the lock
+        bool is_free = true;
+
+        std::string _, file_id;
+        pid_t pid;
+        std::ifstream proc_locks("/proc/locks");
+        while (proc_locks >> _ >> _ >> _ >> _ >> pid >> file_id >> _ >> _) {
+            if (pid == _pid && file_id.find(":" + buffer->inode) != std::string::npos) {
+                is_free = false;
+                break;
+            }
+        }
+
+        proc_locks.close();
+
+        return is_free;
+    } else {
+        return false;
+    }
+}
+
+std::string MomentumContext::to_mq_name(pid_t pid, const std::string& stream) {
+    // Build the path to the underlying shm file 
+    std::ostringstream oss;
+    oss << "/" << NAMESPACE << PATH_DELIM << stream;
+    if (pid > 0) {
+        oss << PATH_DELIM << std::to_string(pid);
+    }
+    return oss.str();
+}
+
+
 
 MomentumContext* momentum_context() {
     MomentumContext* ctx = new MomentumContext();
@@ -612,7 +857,6 @@ bool momentum_destroy(MomentumContext* ctx) {
     } else {
         return false;
     }
-    
 }
 
 bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
