@@ -45,7 +45,25 @@ MomentumContext::MomentumContext() {
                         for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
                             mq_receive(consumer_mq, message, sizeof(message), NULL);
 
-                            std::cout << "Received message: " << message << std::endl;
+                            // we may have exitted while blocking, so if so, return
+                            if (_terminated) return;
+
+                            uint8_t type;
+                            std::string stream, payload;
+
+                            std::stringstream parser(message);
+                            parser >> type >> stream >> payload;
+
+                            switch(type) {
+                                case MESSAGE_TYPE_TERM:
+                                    for (auto const& callback : _callbacks_by_stream[stream]) {
+                                        unsubscribe(stream, callback);
+                                    }
+                                    break;
+                                case MESSAGE_TYPE_BUFFER:
+                                    break;
+                            }            
+
                         }
 
                     }
@@ -124,6 +142,9 @@ MomentumContext::MomentumContext() {
                         mqd_t producer_mq = _producer_mq_by_stream[producer_stream];
                         mq_receive(producer_mq, message, sizeof(message), NULL);
 
+                        // we may have been terminated while awaiting, so exit if that's the case
+                        if (_terminated) return;
+
                         uint8_t type;
                         std::string stream, payload;
 
@@ -152,9 +173,9 @@ MomentumContext::MomentumContext() {
 
                                 break;
 
-                            case MESSAGE_TYPE_TERM:
                             case MESSAGE_TYPE_UNSUBSCRIBE:
                                 if (_mq_by_mq_name.count(payload) > 0) {
+
                                     consumer_mq = _mq_by_mq_name[payload];
                                     mq_close(consumer_mq);
                                     _mq_by_mq_name.erase(payload);
@@ -258,7 +279,6 @@ bool MomentumContext::term() {
             };
         }
 
-
         if (mq_unlink(producer_mq_name.c_str()) < 0) {
             std::cout << DEBUG_PREFIX << "Failed to unlink producer mq for stream: " << stream << std::endl;
         }
@@ -270,6 +290,7 @@ bool MomentumContext::term() {
             unsubscribe(stream, callback);
         }
     }
+
     
     _terminated = true;
 
