@@ -46,9 +46,8 @@ def handle_message(data, data_length, buffer_length, msg_id):
         skip_count = 0
 
 
-subscription = lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message)
-if subscription < 0:
-    print("Failed to subscribe to stream!")
+while lib.momentum_subscribe(context, sys.argv[1].encode(), handle_message) == 0:
+    time.sleep(1)
 
 try:
     while True:
