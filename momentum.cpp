@@ -17,7 +17,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
-#include <cstdarg>
+#include <sys/select.h>
 
 #include "momentum.h"
 
@@ -40,9 +40,33 @@ MomentumContext::MomentumContext() {
         std::thread consume([&] {
             size_t bytes_received;
             char message_buffer[MAX_MESSAGE_SIZE];
+            fd_set read_fds;
+            mqd_t max_fd;
 
             while(!_terminated) {
                 if (_consumer_streams.size() > 0) {
+                    
+                    max_fd = 0;
+                    FD_ZERO(&read_fds);
+                    
+                    for (auto const& stream : _consumer_streams) {
+                        for (auto const& consumer_fd : _consumer_mqs_by_stream[stream]) {
+                            FD_SET(consumer_fd, &read_fds);
+
+                            if (consumer_fd > max_fd) {
+                                max_fd = consumer_fd;
+                            }
+                        }
+                    }
+
+                    int rc = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+                    
+                    if (_terminated) return;
+                    
+                    if (rc < 0) {
+                        continue;
+                    }
+
                     for (auto const& stream : _consumer_streams) {
                         for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
                             bytes_received = mq_receive(consumer_mq, message_buffer, sizeof(message_buffer), NULL);
@@ -53,7 +77,7 @@ MomentumContext::MomentumContext() {
                             if (bytes_received < 0) {
                                 continue;
                             }
- 
+
                             uint8_t type;
                             std::string stream;
 
@@ -63,7 +87,7 @@ MomentumContext::MomentumContext() {
                             switch(type) {
                                 case MESSAGE_TYPE_TERM:
                                     for (auto const& callback : _callbacks_by_stream[stream]) {
-                                        unsubscribe(stream, callback);
+                                        unsubscribe(stream, callback, false);
                                     }
                                     break;
                                 case MESSAGE_TYPE_BUFFER:
@@ -124,86 +148,108 @@ MomentumContext::MomentumContext() {
         std::thread produce([&] {
             size_t bytes_received;
             char message_buffer[MAX_MESSAGE_SIZE];
+            fd_set read_fds;
+            mqd_t max_fd;
 
             while(!_terminated) {
                 if (_producer_streams.size() > 0) {
 
+                    max_fd = 0;
+                    FD_ZERO(&read_fds);
+
                     for (auto const& producer_stream : _producer_streams) {
-                        // wait for a message 
-                        mqd_t producer_mq = _producer_mq_by_stream[producer_stream];
-                        bytes_received = mq_receive(producer_mq, message_buffer, sizeof(message_buffer), NULL);
-
-                        // we may have been terminated while awaiting, so exit if that's the case
-                        if (_terminated) return;
-                        
-                        if (bytes_received < 0) {
-                            continue;
+                        mqd_t producer_fd = _producer_mq_by_stream[producer_stream];
+                        FD_SET(producer_fd, &read_fds);
+                        if (producer_fd > max_fd) {
+                            max_fd = producer_fd;
                         }
-
-                        uint8_t type;
-                        std::string stream;
-
-                        std::stringstream parser(std::string(message_buffer).substr(0, bytes_received));
-                        parser >> type >> stream;
-
-                        std::string consumer_mq_name;
-                        mqd_t consumer_mq;
-
-                        switch (type) {
-                            case MESSAGE_TYPE_SUBSCRIBE:
-                                parser >> consumer_mq_name;
-
-                                // create the consumer_mq for this consumer
-                                consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR);
-                                if (consumer_mq < 0) {
-                                    if (_debug) {
-                                        std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
-                                    }
-                                } else {
-                                    _mq_by_mq_name[consumer_mq_name] = consumer_mq;
-                                    _consumer_mqs_by_stream[stream].push_back(consumer_mq);
-                                    if (_debug) {
-                                        std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
-                                    }
-                                }    
-                                
-                                // unlink the consumer file so that it does not dangle around after all instances are closed
-                                mq_unlink(consumer_mq_name.c_str());
-
-                                break;
-
-                            case MESSAGE_TYPE_UNSUBSCRIBE:
-                                parser >> consumer_mq_name;
-                                
-                                if (_mq_by_mq_name.count(consumer_mq_name) > 0) {
-
-                                    consumer_mq = _mq_by_mq_name[consumer_mq_name];
-                                    mq_close(consumer_mq);
-                                    _mq_by_mq_name.erase(consumer_mq_name);
-    
-                                    _consumer_mqs_by_stream[stream].erase(
-                                        std::remove(
-                                            _consumer_mqs_by_stream[stream].begin(),
-                                            _consumer_mqs_by_stream[stream].end(),
-                                            consumer_mq
-                                        ),
-                                        _consumer_mqs_by_stream[stream].end()
-                                    );
-
-                                    if (_debug) {
-                                        std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
-                                    }
-                                }
-
-                                break;
-                            case MESSAGE_TYPE_ACK:
-                                if (_debug) {
-                                    // std::cout << DEBUG_PREFIX << "Ack stream: " << stream << std::endl;
-                                }
-                                break;
-                        }
-
                     }
+
+                    int rc = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+                    
+                    if (_terminated) return;
+                    
+                    if (rc < 0) {
+                        continue;
+                    }
+
+                    for (auto const& producer_stream : _producer_streams) {
+                        mqd_t producer_mq = _producer_mq_by_stream[producer_stream];
+                        if (FD_ISSET(producer_mq, &read_fds)) {
+                            bytes_received = mq_receive(producer_mq, message_buffer, sizeof(message_buffer), NULL);
+
+                            // we may have been terminated while awaiting, so exit if that's the case
+                            if (_terminated) return;
+                            
+                            if (bytes_received < 0) {
+                                continue;
+                            }
+
+                            uint8_t type;
+                            std::string stream;
+
+                            std::stringstream parser(std::string(message_buffer).substr(0, bytes_received));
+                            parser >> type >> stream;
+
+                            std::string consumer_mq_name;
+                            mqd_t consumer_mq;
+
+                            switch (type) {
+                                case MESSAGE_TYPE_SUBSCRIBE:
+                                    parser >> consumer_mq_name;
+
+                                    // create the consumer_mq for this consumer
+                                    consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR);
+                                    if (consumer_mq < 0) {
+                                        if (_debug) {
+                                            std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
+                                        }
+                                    } else {
+                                        _mq_by_mq_name[consumer_mq_name] = consumer_mq;
+                                        _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+                                        if (_debug) {
+                                            std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
+                                        }
+                                    }    
+                                    
+                                    // unlink the consumer file so that it does not dangle around after all instances are closed
+                                    mq_unlink(consumer_mq_name.c_str());
+
+                                    break;
+
+                                case MESSAGE_TYPE_UNSUBSCRIBE:
+                                    parser >> consumer_mq_name;
+                                    
+                                    if (_mq_by_mq_name.count(consumer_mq_name) > 0) {
+
+                                        consumer_mq = _mq_by_mq_name[consumer_mq_name];
+                                        mq_close(consumer_mq);
+                                        _mq_by_mq_name.erase(consumer_mq_name);
+        
+                                        _consumer_mqs_by_stream[stream].erase(
+                                            std::remove(
+                                                _consumer_mqs_by_stream[stream].begin(),
+                                                _consumer_mqs_by_stream[stream].end(),
+                                                consumer_mq
+                                            ),
+                                            _consumer_mqs_by_stream[stream].end()
+                                        );
+
+                                        if (_debug) {
+                                            std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
+                                        }
+                                    }
+
+                                    break;
+                                case MESSAGE_TYPE_ACK:
+                                    if (_debug) {
+                                        // std::cout << DEBUG_PREFIX << "Ack stream: " << stream << std::endl;
+                                    }
+                                    break;
+                            }
+                        }
+                    }
+
                 } else {
                     usleep(1);
                 }
@@ -272,7 +318,7 @@ bool MomentumContext::term() {
     // for every stream we are consuming, issue an unsubscribe
     for (auto const& stream : _consumer_streams) {
         for (auto const& callback : _callbacks_by_stream[stream]) {
-            unsubscribe(stream, callback);
+            unsubscribe(stream, callback, false);
         }
     }
 
@@ -382,7 +428,7 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     return true;
 }
 
-bool MomentumContext::unsubscribe(std::string stream, callback_t callback) {
+bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool notify) {
     if (_terminated) return false;
 
     normalize_stream(stream);
@@ -398,14 +444,17 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback) {
         return false;
     }
 
-    // first notify the producer that we're exiting
-    std::string message(MESSAGE_TYPE_UNSUBSCRIBE + MESSAGE_DELIM + stream + MESSAGE_DELIM + to_mq_name(_pid, stream));
-    if (mq_send(_producer_mq_by_stream[stream], message.c_str(), message.length(), 0) < 0) {
-        if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
-        }
-        return false;
-    };
+
+    if (notify) {
+        // first notify the producer that we're exiting
+        std::string message(MESSAGE_TYPE_UNSUBSCRIBE + MESSAGE_DELIM + stream + MESSAGE_DELIM + to_mq_name(_pid, stream));
+        if (mq_send(_producer_mq_by_stream[stream], message.c_str(), message.length(), 0) < 0) {
+            if (_debug) {
+                std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
+            }
+            return false;
+        };
+    }
 
     mq_close(_producer_mq_by_stream[stream]);
     _producer_mq_by_stream.erase(stream);

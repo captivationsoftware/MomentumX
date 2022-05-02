@@ -54,7 +54,7 @@ public:
     bool term();
     bool is_subscribed(std::string stream, callback_t callback);
     bool subscribe(std::string stream, callback_t callback);
-    bool unsubscribe(std::string stream, callback_t callback);
+    bool unsubscribe(std::string stream, callback_t callback, bool notify=true);
     bool send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts=0);
     bool send_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
     Buffer* acquire_buffer(std::string stream, size_t length);
