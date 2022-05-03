@@ -153,7 +153,6 @@ MomentumContext::MomentumContext() {
 
             while(!_terminated) {
                 if (_producer_streams.size() > 0) {
-
                     max_fd = 0;
                     FD_ZERO(&read_fds);
 
@@ -199,7 +198,7 @@ MomentumContext::MomentumContext() {
                                     parser >> consumer_mq_name;
 
                                     // create the consumer_mq for this consumer
-                                    consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR);
+                                    consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR | O_NONBLOCK);
                                     if (consumer_mq < 0) {
                                         if (_debug) {
                                             std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
@@ -306,7 +305,9 @@ bool MomentumContext::term() {
         
         for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
             if (mq_send(consumer_mq, message.c_str(), message.length(), 0) < 0) {
-                std::cerr << DEBUG_PREFIX << "Failed to notify term for stream: " << stream << std::endl;
+                if (errno != EWOULDBLOCK) {
+                    std::cerr << DEBUG_PREFIX << "Failed to notify term for stream: " << stream << std::endl;
+                }
             };
         }
 
