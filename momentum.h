@@ -38,6 +38,7 @@ static const char MESSAGE_TYPE_ACK = 4;
 static const char MESSAGE_TYPE_TERM = 5;
 
 struct Buffer {
+    uint8_t id;
     char shm_path[MAX_PATH_SIZE];
     int fd;
     size_t length;
@@ -64,6 +65,7 @@ public:
     volatile uint64_t _min_buffers = 1;
     volatile uint64_t _max_buffers = -1; // intentionally wrap
     volatile bool _debug = false;
+    // volatile bool _async = false;
 
 private:
 
@@ -82,10 +84,11 @@ private:
 
     std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
 
+    std::map<std::string, Buffer*> _first_buffer_by_stream;
     std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
-    std::mutex _buffer_by_shm_path_mutex;
     Buffer* _last_acquired_buffer = NULL;
+    std::mutex _mutex;
 
 
     // Buffer / SHM functions
@@ -107,9 +110,17 @@ private:
 
     // Utility functions
     uint64_t now() const;
-    bool lock_ex(const Buffer* buffer, bool block);
-    bool lock_sh(const Buffer* buffer, bool block);
-    bool lock_un(const Buffer* buffer);
+
+    template<class C>
+    bool has_key(C const& collection, const std::string& key);
+
+    template<class C>
+    bool is_empty(C const& collection);
+
+    template<class C>
+    C copy(C const& collection);
+
+    
 
 };
 
@@ -118,6 +129,7 @@ extern "C" {
     extern const uint8_t MOMENTUM_OPT_DEBUG = 0;
     extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 1;
     extern const uint8_t MOMENTUM_OPT_MAX_BUFFERS = 2;
+    // extern const uint8_t MOMENTUM_OPT_ASYNC = 3;
 
     // public interface
     MomentumContext* momentum_context();

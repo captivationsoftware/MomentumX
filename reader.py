@@ -19,9 +19,11 @@ lib.momentum_subscribed.restype = c_uint8
 
 @CFUNCTYPE(None, POINTER(c_uint8), c_size_t, c_size_t, c_uint64)
 def handle_message(data, data_length, buffer_length, msg_id):
-    # memory = cast(data, POINTER(c_uint8 * data_length))
-    # print(bytearray(memory.contents[:]).decode('utf8'))
+    memory = cast(data, POINTER(c_uint8 * data_length))
+    print(bytearray(memory.contents[:]).decode('utf8'))
     # time.sleep(1)
+
+    # return
     global now
     global bytes_received
     global messages_received
@@ -37,7 +39,7 @@ def handle_message(data, data_length, buffer_length, msg_id):
 
     last_msg_id = msg_id
 
-    threshold = 100
+    threshold = 10000
 
     if (messages_received % threshold == 0):
         elapsed = time.time() - now
