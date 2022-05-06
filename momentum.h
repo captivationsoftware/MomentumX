@@ -88,7 +88,9 @@ private:
     std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     Buffer* _last_acquired_buffer = NULL;
+
     std::mutex _mutex;
+
 
 
     // Buffer / SHM functions

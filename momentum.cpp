@@ -59,7 +59,7 @@ MomentumContext::MomentumContext() {
                         }
                     }
 
-                    int rc = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+                    int rc = pselect(max_fd + 1, &read_fds, NULL, NULL, NULL, NULL);
 
                     if (rc < 0) {
                         continue;
@@ -166,7 +166,7 @@ MomentumContext::MomentumContext() {
                         }
                     }
 
-                    int rc = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+                    int rc = pselect(max_fd + 1, &read_fds, NULL, NULL, NULL, NULL);
                     if (rc < 0) {
                         continue;
                     }
