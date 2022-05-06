@@ -131,7 +131,7 @@ MomentumContext::MomentumContext() {
                                     flock(buffer->fd, LOCK_UN | LOCK_NB);
 
                                     std::string ack_message(MESSAGE_TYPE_ACK + MESSAGE_DELIM + stream + MESSAGE_DELIM + buffer_shm_path);
-                                    mq_send(_producer_mq_by_stream[stream], ack_message.c_str(), ack_message.length(), 0);
+                                    send(_producer_mq_by_stream[stream], ack_message);
                                     
                                     break;
                             }            
@@ -306,11 +306,12 @@ bool MomentumContext::term() {
         );
         
         for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
-            if (mq_send(consumer_mq, term_message.c_str(), term_message.length(), 2) < 0) {
+            if (!force_send(consumer_mq, term_message)) {
                 if (_debug) {
+                    std::perror("FOo");
                     std::cerr << DEBUG_PREFIX << "Failed to notify term for stream: " << stream << std::endl;
                 }
-            };
+            }
         }
 
         mq_close(_producer_mq_by_stream[stream]);
@@ -328,6 +329,7 @@ bool MomentumContext::term() {
     }
 
     _terminated = true;
+
 
     return true;
 };
@@ -397,14 +399,8 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
         consumer_mq_name
     );
 
-    int rc = mq_send(
-        producer_mq, 
-        subscribe_message.c_str(), 
-        subscribe_message.length(), 
-        1
-    );
-
-    if (rc < 0) {
+    if (!force_send(producer_mq, subscribe_message, 1)) {
+        // we failed for a true failure condition, so cleanup and return false
         if (_debug) {
             std::cerr << DEBUG_PREFIX << "Failed to send subscribe message for stream: " << stream << std::endl;
         }
@@ -412,16 +408,15 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
         mq_close(producer_mq);
         mq_close(consumer_mq);
 
-        rc = mq_unlink(consumer_mq_name.c_str());
-        if (rc < 0) {
+        if (mq_unlink(consumer_mq_name.c_str()) < 0) {
             if (_debug) {        
                 std::cerr << DEBUG_PREFIX << "Failed to unlink consumer mq for stream: " << stream << std::endl;
             }
         }
-        
+
         return false;
-    };
-    
+    }
+
     // If we made it here, everything went well so cache references
     _producer_mq_by_stream[stream] = producer_mq;
     
@@ -469,33 +464,13 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
             to_mq_name(_pid, stream)
         );
 
-        int priority = 1;
-        while (true) {
-            int rc = mq_send(
-                _producer_mq_by_stream[stream], 
-                unsubscribe_message.c_str(), 
-                unsubscribe_message.length(), 
-                priority
-            );
-
-            if (rc < 0) {
-                if (_debug) {
-                    std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
-                }
-
-                // try again with higher priority if errno is EAGAIN (receieving queue full)
-                if (errno == EAGAIN) {
-                    priority++;
-                    continue;
-                } else {
-                    return false;
-                }
-            } else {
-                // Success!
-                break;
-            };
+        if (!force_send(_producer_mq_by_stream[stream], unsubscribe_message, 1)) {
+            // unexepected error occurred so we must return from this function
+            if (_debug) {
+                std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
+            }
+            return false;
         }
-        
     }
 
     mq_close(_producer_mq_by_stream[stream]);
@@ -577,7 +552,7 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
 
     // send the buffer
     for (const auto& consumer_mq : _consumer_mqs_by_stream[stream]) {
-        mq_send(consumer_mq, buffer_message.c_str(), buffer_message.length(), 0);
+        send(consumer_mq, buffer_message);
     }
     
     return true;
@@ -825,6 +800,23 @@ uint64_t MomentumContext::now() const {
     ).count();
 }
 
+bool MomentumContext::send(mqd_t mq, const std::string& message, int priority) {
+   return mq_send(mq, message.c_str(), message.length(), priority) > -1;
+}
+
+bool MomentumContext::force_send(mqd_t mq, const std::string& message, int priority) {
+    while (!send(mq, message, priority)) {
+        if (errno == EAGAIN) {
+            // recipient was busy, so try again with higher priority 
+            priority++;
+            usleep(1);
+        } else {
+            // an unexpected error occurred
+            return false;
+        }
+    }
+    return true;
+}
 
 void MomentumContext::shm_iter(std::function<void(std::string)> callback) {
     std::set<std::string> filenames;

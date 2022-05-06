@@ -109,18 +109,9 @@ private:
     void normalize_stream(std::string& stream);
 
     // Utility functions
-    uint64_t now() const;
-
-    template<class C>
-    bool has_key(C const& collection, const std::string& key);
-
-    template<class C>
-    bool is_empty(C const& collection);
-
-    template<class C>
-    C copy(C const& collection);
-
-    
+    uint64_t now() const;    
+    bool send(mqd_t mq, const std::string& message, int priority=1);
+    bool force_send(mqd_t mq, const std::string& message, int priority=1);
 
 };
 

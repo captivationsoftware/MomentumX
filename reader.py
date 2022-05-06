@@ -23,7 +23,7 @@ def handle_message(data, data_length, buffer_length, msg_id):
     print(bytearray(memory.contents[:]).decode('utf8'))
     # time.sleep(1)
 
-    # return
+    return
     global now
     global bytes_received
     global messages_received
