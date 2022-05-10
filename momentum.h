@@ -70,7 +70,8 @@ public:
 private:
 
     // State variables
-    std::atomic<bool>  _terminated{false};
+    std::atomic<bool>  _terminated{false};    
+    std::atomic<bool>  _terminating{false};
 
     pid_t _pid;
     uint64_t _msg_id = 0;
@@ -91,6 +92,7 @@ private:
 
     std::mutex _mutex;
 
+    std::thread _produce, _consume;
 
 
     // Buffer / SHM functions
@@ -114,7 +116,9 @@ private:
     uint64_t now() const;    
     bool send(mqd_t mq, const std::string& message, int priority=1);
     bool force_send(mqd_t mq, const std::string& message, int priority=1);
-
+    
+    template<typename L>
+    void with_lock(L lambda);
 };
 
 extern "C" {
