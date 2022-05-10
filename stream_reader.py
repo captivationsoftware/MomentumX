@@ -19,10 +19,6 @@ lib.momentum_subscribed.restype = c_uint8
 
 @CFUNCTYPE(None, POINTER(c_uint8), c_size_t, c_size_t, c_uint64)
 def handle_message(data, data_length, buffer_length, msg_id):
-    memory = cast(data, POINTER(c_uint8 * data_length))
-    print(bytearray(memory.contents[:]).decode('utf8'))
-
-    return
     global now
     global bytes_received
     global messages_received
@@ -49,13 +45,13 @@ def handle_message(data, data_length, buffer_length, msg_id):
         skip_count = 0
 
 
-stream = sys.argv[1].encode()
+STREAM = b'streamer'
 
-while lib.momentum_subscribe(context, stream, handle_message) == 0:
+while lib.momentum_subscribe(context, STREAM, handle_message) == 0:
     time.sleep(1)
 
 try:
-    while lib.momentum_subscribed(context, stream, handle_message):
+    while lib.momentum_subscribed(context, STREAM, handle_message):
         time.sleep(0.1)
 
 except KeyboardInterrupt:
