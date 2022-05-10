@@ -99,7 +99,8 @@ MomentumContext::MomentumContext() {
                                         std::string buffer_shm_path;
                                         size_t data_length, buffer_length;
                                         uint64_t ts, msg_id;
-                                        parser >> buffer_shm_path >> data_length >> buffer_length >> ts >> msg_id;
+                                        bool blocking;
+                                        parser >> buffer_shm_path >> data_length >> buffer_length >> ts >> msg_id >> blocking;
 
                                         Buffer* buffer;    
 
@@ -136,8 +137,10 @@ MomentumContext::MomentumContext() {
 
                                         flock(buffer->fd, LOCK_UN | LOCK_NB);
 
-                                        std::string ack_message(MESSAGE_TYPE_ACK + MESSAGE_DELIM + stream + MESSAGE_DELIM + buffer_shm_path);
-                                        send(_producer_mq_by_stream[stream], ack_message);
+                                        if (blocking) {
+                                            std::string ack_message(MESSAGE_TYPE_ACK + MESSAGE_DELIM + stream + MESSAGE_DELIM + buffer_shm_path);
+                                            send(_producer_mq_by_stream[stream], ack_message);
+                                        }
                                         
                                         break;
                                 }            
@@ -560,10 +563,13 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         std::to_string(length) + MESSAGE_DELIM + 
         std::to_string(buffer->length) + MESSAGE_DELIM + 
         std::to_string(ts) + MESSAGE_DELIM +
-        std::to_string(++_msg_id)
+        std::to_string(++_msg_id) + MESSAGE_DELIM +
+        std::to_string(_blocking)
     );
     
-    // _acks_by_shm_path[buffer->shm_path] = _consumer_mqs_by_stream[stream].size();
+    if (_blocking) {
+        // _acks_by_shm_path[buffer->shm_path] = _consumer_mqs_by_stream[stream].size();
+    }
 
     // send the buffer
     for (const auto& consumer_mq : _consumer_mqs_by_stream[stream]) {
@@ -991,9 +997,8 @@ bool momentum_configure(MomentumContext* ctx, uint8_t option, const void* value)
         ctx->_min_buffers = (uint64_t) value;
     } else if (option == MOMENTUM_OPT_DEBUG) {
         ctx->_debug = (bool) value;
-    } 
-    // else if (option == MOMENTUM_OPT_ASYNC) {
-    //     ctx->_async = (bool) value;
-    // }
+    } else if (option == MOMENTUM_OPT_BLOCKING) {
+        ctx->_blocking = (bool) value;
+    }
     return true;
 }

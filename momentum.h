@@ -65,7 +65,7 @@ public:
     volatile uint64_t _min_buffers = 1;
     volatile uint64_t _max_buffers = -1; // intentionally wrap
     volatile bool _debug = false;
-    // volatile bool _async = false;
+    volatile bool _blocking = false;
 
 private:
 
@@ -126,7 +126,7 @@ extern "C" {
     extern const uint8_t MOMENTUM_OPT_DEBUG = 0;
     extern const uint8_t MOMENTUM_OPT_MIN_BUFFERS = 1;
     extern const uint8_t MOMENTUM_OPT_MAX_BUFFERS = 2;
-    // extern const uint8_t MOMENTUM_OPT_ASYNC = 3;
+    extern const uint8_t MOMENTUM_OPT_BLOCKING = 3;
 
     // public interface
     MomentumContext* momentum_context();
