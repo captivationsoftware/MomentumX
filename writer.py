@@ -22,16 +22,16 @@ i = 0
 try:
     stream = sys.argv[1].encode('utf8')
     while True:
-        # data = str(i).encode()
-        # data_len = len(data)
-        # lib.momentum_send_data(context, stream, data, data_len, 0)
-        # i += 1
+        data = str(i).encode()
+        data_len = len(data)
+        lib.momentum_send_data(context, stream, data, data_len, 0)
+        i += 1
 
         # data[0] = str(i).encode()
-        buffer = lib.momentum_acquire_buffer(context, stream, data_length)
+        # buffer = lib.momentum_acquire_buffer(context, stream, data_length)
 
-        if (buffer):
-            lib.momentum_send_buffer(context, buffer, data_length, 0)
+        # if (buffer):
+        #     lib.momentum_send_buffer(context, buffer, data_length, 0)
 
 
 except KeyboardInterrupt:

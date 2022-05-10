@@ -74,7 +74,8 @@ private:
     std::atomic<bool>  _terminating{false};
 
     pid_t _pid;
-    uint64_t _msg_id = 0;
+    long long int _message_id = 0;
+    long long int _last_message_id = -1;
 
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
@@ -94,6 +95,7 @@ private:
 
     std::thread _produce, _consume;
 
+    std::map<std::string, size_t> _pending_acks_by_shm_path;
 
     // Buffer / SHM functions
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
