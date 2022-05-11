@@ -1,13 +1,13 @@
 CC = g++
 
-CFLAGS = -std=c++11 -g -Wall -c 
+CFLAGS = -std=c++11 -g -Wall -c -fPIC
 
 LIBS = -lrt 
 
 all: libmomentum.so
 
 momentum.o: momentum.cpp momentum.h
-	$(CC) $(CFLAGS) -fPIC -o momentum.o momentum.cpp
+	$(CC) $(CFLAGS) -o momentum.o momentum.cpp
 
 
 libmomentum.so: momentum.o

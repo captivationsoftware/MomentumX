@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <mqueue.h>
+#include <condition_variable>
 
 typedef const void (*callback_t)(uint8_t* , size_t, size_t, uint64_t);
 
@@ -82,6 +83,7 @@ private:
 
     std::map<std::string, mqd_t> _producer_mq_by_stream;
     std::map<std::string, std::vector<mqd_t>> _consumer_mqs_by_stream;
+    std::map<mqd_t, pid_t> _pid_by_consumer_mq;
     std::map<std::string, mqd_t> _mq_by_mq_name;
 
     std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
@@ -91,11 +93,12 @@ private:
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     Buffer* _last_acquired_buffer = NULL;
 
-    std::mutex _mutex;
+    std::map<pid_t, std::set<long long int>> _message_ids_pending_by_pid;
+    std::mutex _mutex, _subscription_mutex, _ack_mutex;
+    std::condition_variable _consumer_availability, _acks;
 
     std::thread _produce, _consume;
 
-    std::map<std::string, size_t> _pending_acks_by_shm_path;
 
     // Buffer / SHM functions
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
@@ -119,8 +122,8 @@ private:
     bool send(mqd_t mq, const std::string& message, int priority=1);
     bool force_send(mqd_t mq, const std::string& message, int priority=1);
     
-    template<typename L>
-    void with_lock(L lambda);
+    template<typename Func>
+    void with_lock(const Func& func);
 };
 
 extern "C" {
