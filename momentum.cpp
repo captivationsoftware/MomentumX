@@ -434,6 +434,13 @@ bool MomentumContext::is_stream_available(std::string stream) {
     }
 }
 
+std::queue<Buffer*>& MomentumContext::get_buffers_by_stream(const std::string& stream) {
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        return _buffers_by_stream[stream];
+    }
+}
+
 bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return false;
 
@@ -1203,3 +1210,6 @@ size_t momentum_get_buffer_length(Buffer* buffer) {
     return buffer->length;
 }
 
+size_t momentum_get_stream_buffer_count(MomentumContext* ctx, const char* stream) {
+    return ctx->get_buffers_by_stream(std::string(stream)).size();
+}

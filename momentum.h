@@ -65,7 +65,9 @@ public:
     bool send_string(std::string stream, const char* data, size_t length, uint64_t ts=0);
     Buffer* acquire_buffer(std::string stream, size_t length);
     bool release_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
-    
+    std::queue<Buffer*>& get_buffers_by_stream(const std::string& stream);
+
+    // getter / setters for options    
     bool get_debug();
     void set_debug(bool value);
     size_t get_min_buffers();
@@ -168,6 +170,8 @@ extern "C" {
     uint8_t* momentum_get_buffer_address(Buffer* buffer);
     size_t momentum_get_buffer_length(Buffer* buffer);
 
+    size_t momentum_get_stream_buffer_count(MomentumContext* ctx, const char* stream);
 }
+
 
 #endif

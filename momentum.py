@@ -68,13 +68,16 @@ lib.momentum_get_buffer_address.restype = ctypes.POINTER(ctypes.c_uint8)
 lib.momentum_get_buffer_length.argtypes = (ctypes.c_void_p,)
 lib.momentum_get_buffer_length.restype = ctypes.c_size_t
 
+lib.momentum_get_stream_buffer_count.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
+lib.momentum_get_stream_buffer_count.restype = ctypes.c_size_t
+
 
 class Context:
 
     # Constructor
     def __init__(self):
         self._context = lib.momentum_context()
-        self._callback_by_id = {}
+        self._callback_by_id_by_stream = {}
 
     # Destructor
     def __del__(self):
@@ -136,66 +139,83 @@ class Context:
     
     def is_subscribed(self, stream, callback):
         callback_id = id(callback)
-        if not callback_id in self._callback_by_id:
+        if not stream in self._callback_by_id_by_stream:
+            return False
+        elif not callback_id in self._callback_by_id_by_stream[stream]:
             return False
         else:
             return bool(
                 lib.momentum_is_subscribed(
                     self._context, 
                     stream.encode() if isinstance(stream, str) else stream, 
-                    self._callback_by_id[callback_id]
+                    self._callback_by_id_by_stream[stream][callback_id]
                 )
             )
 
-    def subscribe(self, stream, callback):
+    def try_subscribe(self, stream, callback):
         if not self.is_stream_available:
             raise Exception(f'Stream "{stream}" not available')
 
         callback_id = id(callback)
 
-        if callback_id in self._callback_by_id:
-            return False
+        if stream in self._callback_by_id_by_stream and callback_id in self._callback_by_id_by_stream[stream]:
+            return True
 
         @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_size_t, ctypes.c_longlong)
         def wrapped_callback(data, data_length, buffer_length, message_id):
             memory = ctypes.cast(data, ctypes.POINTER(ctypes.c_char * data_length))
             callback(memory.contents[:], data_length, buffer_length, message_id)
 
-        self._callback_by_id[callback_id] = wrapped_callback
-
-        return bool(
+        success = bool(
             lib.momentum_subscribe(
                 self._context, 
                 stream.encode() if isinstance(stream, str) else stream,
-                self._callback_by_id[callback_id]
-            )
+                wrapped_callback            )
         )
+        
+        if success:
+            if stream not in self._callback_by_id_by_stream:
+                self._callback_by_id_by_stream[stream] = {}
+
+            self._callback_by_id_by_stream[stream][callback_id] = wrapped_callback
+
+
+        return success
 
     def unsubscribe(self, stream, callback):
         callback_id = id(callback)
 
-        if not callback_id in self._callback_by_id:
+        if not stream in self._callback_by_id_by_stream:
+            return False
+        
+        elif not callback_id in self._callback_by_id_by_stream[stream]:
             return False
 
-        unsubscribed = bool(
+        success = bool(
             lib.momentum_unsubscribe(
                 self._context, 
                 stream.encode() if isinstance(stream, str) else stream,
-                self._callback_by_id[callback_id]
+                self._callback_by_id_by_stream[stream][callback_id]
             )
         )
 
-        if (unsubscribed):
-            del self._callback_by_id[callback_id]
+        if success:
+            del self._callback_by_id_by_stream[stream][callback_id]
+
+            if len(self._callback_by_id_by_stream[stream]) == 0:
+                del self._callback_by_id_by_stream[stream]
         
-        return unsubscribed
+        return success
 
 
-    def wait_subscribe(self, stream, callback):
-        while not self.is_stream_available(stream):
+    def subscribe(self, stream, callback):
+        if self.is_subscribed(stream, callback):
+            return False
+
+        while not self.try_subscribe(stream, callback):
             time.sleep(1)
 
-        return self.subscribe(stream, callback)
+        return True
 
     def send_string(self, stream, data, data_length = -1, ts = 0):
         if (data_length == -1):
@@ -209,6 +229,12 @@ class Context:
                 data_length, 
                 ts
             )
+        )
+
+    def stream_buffer_count(self, stream):
+        return lib.momentum_get_stream_buffer_count(
+            self._context, 
+            stream.encode() if isinstance(stream, str) else stream,
         )
 
     def acquire_buffer(self, stream, buffer_length):
