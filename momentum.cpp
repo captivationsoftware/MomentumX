@@ -617,11 +617,11 @@ bool MomentumContext::send_string(std::string stream, const char* data, size_t l
 
     memcpy(buffer->address, data, length);
     
-    return send_buffer(buffer, length, ts);
+    return release_buffer(buffer, length, ts);
 }
 
 
-bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
+bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     if (_terminated) return false;
     
     if (buffer == NULL) return false;
@@ -632,9 +632,7 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
 
     // update buffer modify (write) time
     set_shm_time(buffer->shm_path, 0, ts);
-    
-    release_buffer(buffer);
-        
+
     std::string stream = stream_from_shm_path(buffer->shm_path);
 
     long long message_id = _message_id = _message_id + 1;
@@ -649,6 +647,10 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         std::to_string(message_id) + MESSAGE_DELIM +
         std::to_string(_blocking)
     );
+
+    // unlock the buffer prior to sending
+    flock(buffer->fd, LOCK_UN | (_blocking ? 0 : LOCK_NB));
+        
 
     std::set<pid_t> consumer_pids;
     std::vector<mqd_t> consumer_mqs;
@@ -665,7 +667,6 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         }
         consumer_mqs = _consumer_mqs_by_stream[stream];
     }
-
     // send the buffer to any and all consumers for this stream
     for (const auto& consumer_mq : consumer_mqs) {
         if (_blocking) {
@@ -825,14 +826,6 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     }
 
     return buffer;
-}
-
-bool MomentumContext::release_buffer(Buffer* buffer) {
-    if (!_terminated) {
-        flock(buffer->fd, LOCK_UN | (_blocking ? 0 : LOCK_NB));
-        return true;
-    } 
-    return false;
 }
 
 bool MomentumContext::get_debug() {
@@ -1190,20 +1183,16 @@ bool momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t c
     return ctx->unsubscribe(std::string(stream), callback);
 }
 
+bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts) {
+    return ctx->send_string(std::string(stream), data, length, ts ? ts : 0);
+}
+
 Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length) {
     return ctx->acquire_buffer(std::string(stream), length);
 }
 
-bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer) {
-    return ctx->release_buffer(buffer);
-}
-
-bool momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, uint64_t ts) {
-    return ctx->send_buffer(buffer, length, ts ? ts : 0);
-}
-
-bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts) {
-    return ctx->send_string(std::string(stream), data, length, ts ? ts : 0);
+bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, uint64_t ts) {
+    return ctx->release_buffer(buffer, length, ts ? ts : 0);
 }
 
 uint8_t* momentum_get_buffer_address(Buffer* buffer) {

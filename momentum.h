@@ -63,9 +63,8 @@ public:
     bool subscribe(std::string stream, callback_t callback);
     bool unsubscribe(std::string stream, callback_t callback, bool notify=true);
     bool send_string(std::string stream, const char* data, size_t length, uint64_t ts=0);
-    bool send_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
     Buffer* acquire_buffer(std::string stream, size_t length);
-    bool release_buffer(Buffer* buffer);
+    bool release_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
     
     bool get_debug();
     void set_debug(bool value);
@@ -90,7 +89,6 @@ private:
     std::atomic<size_t> _max_buffers{std::numeric_limits<size_t>::max()};
     std::atomic<long long int> _last_message_id{-1};
     std::atomic<long long int> _message_id{0};
-
 
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
@@ -163,10 +161,10 @@ extern "C" {
     bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback);
     bool momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback);
     
-    Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length);
-    bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer);
-    bool momentum_send_buffer(MomentumContext* ctx, Buffer*  buffer, size_t data_length, uint64_t ts);
     bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts);
+    
+    Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length);
+    bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer, size_t data_length, uint64_t ts);
     uint8_t* momentum_get_buffer_address(Buffer* buffer);
     size_t momentum_get_buffer_length(Buffer* buffer);
 

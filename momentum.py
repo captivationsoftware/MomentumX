@@ -59,12 +59,8 @@ lib.momentum_send_string.restype = ctypes.c_bool
 lib.momentum_acquire_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,)
 lib.momentum_acquire_buffer.restype = ctypes.c_void_p
 
-lib.momentum_release_buffer.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.momentum_release_buffer.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint64,)
 lib.momentum_release_buffer.restype = ctypes.c_bool
-
-lib.momentum_send_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint64,)
-lib.momentum_send_buffer.restype = ctypes.c_bool
-
 
 lib.momentum_get_buffer_address.argtypes = (ctypes.c_void_p,)
 lib.momentum_get_buffer_address.restype = ctypes.POINTER(ctypes.c_uint8)
@@ -94,14 +90,7 @@ class Context:
         self.term()
 
     # Properties
-    @property
-    def is_terminated(self):
-        return bool(lib.momentum_is_terminated(self._context))
-
-    @property
-    def is_subscribed(self, stream, callback):
-        return bool(lib.momentum_is_terminated(self._context, stream, callback))
-
+    
     @property
     def debug(self):
         return lib.momentum_get_debug(self._context)
@@ -133,6 +122,9 @@ class Context:
     @max_buffers.setter
     def max_buffers(self, value):
         return lib.momentum_set_max_buffers(self._context, value)
+
+    def is_terminated(self):
+        return bool(lib.momentum_is_terminated(self._context))
 
     def is_stream_available(self, stream):
         return bool(
@@ -219,10 +211,20 @@ class Context:
             )
         )
 
-    # bool send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts=0);
-    # bool send_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
-    # Buffer* acquire_buffer(std::string stream, size_t length);
-    # bool release_buffer(Buffer* buffer);
+    def acquire_buffer(self, stream, buffer_length):
+        return lib.momentum_acquire_buffer(
+            self._context, 
+            stream.encode() if isinstance(stream, str) else stream,
+            buffer_length
+        )
+
+    def release_buffer(self, buffer, data_length, ts = 0):
+        return lib.momentum_release_buffer(
+            self._context, 
+            buffer,
+            data_length,
+            ts
+        )
 
     def term(self):
         return bool(lib.momentum_term(self._context))
