@@ -15,7 +15,7 @@ def handle_message(data, data_length, buffer_length, msg_id):
     memory = cast(data, POINTER(c_uint8 * data_length))
     print(bytearray(memory.contents[:]).decode('utf8'))
 
-STREAM = b'incrementer'
+STREAM = b'momentum://incrementer'
 
 while lib.momentum_subscribe(context, STREAM, handle_message) == 0:
     time.sleep(1)

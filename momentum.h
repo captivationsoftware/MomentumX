@@ -16,7 +16,6 @@
 
 typedef const void (*callback_t)(uint8_t* , size_t, size_t, uint64_t);
 
-
 static const std::string PATH_DELIM = "_";
 static const std::string MESSAGE_DELIM = " ";
 static const std::string NAMESPACE = "momentum";
@@ -37,6 +36,11 @@ static const char MESSAGE_TYPE_UNSUBSCRIBE = 2;
 static const char MESSAGE_TYPE_BUFFER = 3;
 static const char MESSAGE_TYPE_ACK = 4;
 static const char MESSAGE_TYPE_TERM = 5;
+
+static const struct timespec MESSAGE_TIMEOUT {
+    0,
+    1000
+};
 
 struct Buffer {
     uint8_t id;
@@ -63,20 +67,20 @@ public:
     bool release_buffer(Buffer* buffer);
 
     // public options
-    volatile uint64_t _min_buffers = 1;
-    volatile uint64_t _max_buffers = -1; // intentionally wrap
-    volatile bool _debug = false;
-    volatile bool _blocking = false;
+    volatile std::atomic<uint64_t> _min_buffers{1};
+    volatile std::atomic<long long int> _max_buffers{0x7FFFFFFFFFFFFFFF};
+    volatile std::atomic<bool> _debug{false};
+    volatile std::atomic<bool> _blocking{false};
 
 private:
 
     // State variables
+    pid_t _pid;
+
     std::atomic<bool>  _terminated{false};    
     std::atomic<bool>  _terminating{false};
-
-    pid_t _pid;
-    long long int _message_id = 0;
-    long long int _last_message_id = -1;
+    std::atomic<long long int> _last_message_id{-1};
+    std::atomic<long long int> _message_id{0};
 
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
@@ -91,14 +95,13 @@ private:
     std::map<std::string, Buffer*> _first_buffer_by_stream;
     std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
-    Buffer* _last_acquired_buffer = NULL;
+    std::map<std::string, Buffer*> _last_acquired_buffer_by_stream;
 
     std::map<pid_t, std::set<long long int>> _message_ids_pending_by_pid;
-    std::mutex _mutex, _subscription_mutex, _ack_mutex;
+    std::mutex _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
     std::condition_variable _consumer_availability, _acks;
 
-    std::thread _produce, _consume;
-
+    std::thread _message_handler;
 
     // Buffer / SHM functions
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
@@ -122,8 +125,6 @@ private:
     bool send(mqd_t mq, const std::string& message, int priority=1);
     bool force_send(mqd_t mq, const std::string& message, int priority=1);
     
-    template<typename Func>
-    void with_lock(const Func& func);
 };
 
 extern "C" {

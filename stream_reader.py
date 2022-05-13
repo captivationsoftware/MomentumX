@@ -45,7 +45,7 @@ def handle_message(data, data_length, buffer_length, msg_id):
         skip_count = 0
 
 
-STREAM = b'streamer'
+STREAM = b'momentum://streamer'
 
 while lib.momentum_subscribe(context, STREAM, handle_message) == 0:
     time.sleep(1)

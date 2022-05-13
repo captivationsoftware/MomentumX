@@ -37,276 +37,276 @@ MomentumContext::MomentumContext() {
 
     if (fork() != 0) {
 
-        _consume = std::thread([&] {
-            size_t bytes_received;
+        _message_handler = std::thread([&] {
+            int bytes_received;
             char message_buffer[MAX_MESSAGE_SIZE];
             fd_set read_fds;
             mqd_t max_fd;
-
-            struct timespec timeout {
-                0,
-                1000
-            };
 
             while(!_terminating && !_terminated) {
-                if (_consumer_streams.size() > 0) {
-                    with_lock([&] {
+                
+                // build our set of read fds
+                max_fd = 0;
+                FD_ZERO(&read_fds);
+                
+                // add all consumer mqs to the list of read fds...
+                std::set<mqd_t> all_fds;
+
+                { 
+                    std::lock_guard<std::mutex> lock(_consumer_mutex);
+                    
+                    for (auto const& consumer_stream : _consumer_streams) {
+                        for (auto const& consumer_fd : _consumer_mqs_by_stream[consumer_stream]) {
+                            all_fds.insert(consumer_fd);
+
+                            FD_SET(consumer_fd, &read_fds);
                         
-                        max_fd = 0;
-                        FD_ZERO(&read_fds);
-                        
-                        for (auto const& stream : _consumer_streams) {
-                            for (auto const& consumer_fd : _consumer_mqs_by_stream[stream]) {
-                                FD_SET(consumer_fd, &read_fds);
-
-                                if (consumer_fd > max_fd) {
-                                    max_fd = consumer_fd;
-                                }
+                            if (consumer_fd > max_fd) {
+                                max_fd = consumer_fd;
                             }
                         }
-
-                        if (pselect(max_fd + 1, &read_fds, NULL, NULL, &timeout, NULL) < 0) {
-                            return;
-                        }
-
-                        for (auto const& stream : _consumer_streams) {
-                            for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
-                            
-                                bytes_received = mq_receive(consumer_mq, message_buffer, sizeof(message_buffer), 0);
-
-                                // we may have exited while blocking, so if so, return
-                                if (_terminated || _terminating) break;
-
-                                if (bytes_received < 0) {
-                                    return;
-                                }
-
-                                uint8_t type;
-                                std::string stream;
-
-                                std::stringstream parser(std::string(message_buffer).substr(0, bytes_received));
-                                parser >> type >> stream;
-
-                                switch(type) {
-                                    case MESSAGE_TYPE_TERM:
-                                        for (auto const& callback : _callbacks_by_stream[stream]) {
-                                            unsubscribe(stream, callback, false);
-                                        }
-                                        break;
-
-                                    case MESSAGE_TYPE_BUFFER:
-                                        std::string buffer_shm_path;
-                                        size_t data_length, buffer_length;
-                                        uint64_t ts;
-                                        long long int message_id;
-                                        bool blocking;
-                                        parser >> buffer_shm_path >> data_length >> buffer_length >> ts >> message_id >> blocking;
-
-                                        if (message_id <= _last_message_id) {
-                                            return;
-                                        }
-                                        _last_message_id = message_id;
-
-                                        Buffer* buffer;    
-
-                                        if (_buffer_by_shm_path.count(buffer_shm_path) == 0) {
-                                            buffer = allocate_buffer(buffer_shm_path, buffer_length, O_RDWR);
-                                        } else {
-                                            buffer = _buffer_by_shm_path[buffer_shm_path];
-                                            if (buffer->length < buffer_length) {
-                                                resize_buffer(buffer, buffer_length);
-                                            }
-                                        }
-                                        
-                                        // with the file locked, do a quick validity check to ensure the buffer has the same
-                                        // modified time as was provided in the message
-                                        uint64_t buffer_write_ts;
-                                        get_shm_time(buffer_shm_path, NULL, &buffer_write_ts);
-
-                                        bool buffer_unlinked = buffer_write_ts == 0;
-
-                                        if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
-                                            return;
-                                        }
-
-                                        // if we made it here, we were able to access the buffer!
-                                        
-                                        // if the producer who sent this message is in blocking mode, send them the ack
-                                        if (blocking) {
-                                            std::string ack_message(
-                                                MESSAGE_TYPE_ACK + MESSAGE_DELIM + 
-                                                stream + MESSAGE_DELIM + 
-                                                std::to_string(message_id) + MESSAGE_DELIM + 
-                                                std::to_string(_pid)
-                                            );
-                                            force_send(_producer_mq_by_stream[stream], ack_message);
-                                        }
-
-                                        if (buffer_unlinked || ts == buffer_write_ts) {
-                                            // update buffer access (read) time
-                                            set_shm_time(buffer_shm_path, now(), 0);
-
-                                            for (auto const& callback : _callbacks_by_stream[stream]) {
-                                                callback(buffer->address, data_length, buffer_length, message_id);  
-                                            }
-                                        } else {
-                                            // too late
-                                        }
-
-                                        flock(buffer->fd, LOCK_UN | LOCK_NB);
-                                        
-                                        break;
-                                }            
-
-                            }
-                        }
-                    });
-                } else {
-                    if (usleep(1) < 0) {
-                        return;
-                    };
-                }
-            }
-        });
-        
-        _produce = std::thread([&] {
-
-            size_t bytes_received;
-            char message_buffer[MAX_MESSAGE_SIZE];
-            fd_set read_fds;
-            mqd_t max_fd;
-
-            struct timespec timeout {
-                0,
-                1000
-            };
-
-            while(!_terminated && !_terminating) {
-                if (_producer_streams.size() > 0) {
-                    with_lock([&] {
-                        max_fd = 0;
-                        FD_ZERO(&read_fds);
-
-                        for (auto const& producer_stream : _producer_streams) {
-                            mqd_t producer_fd = _producer_mq_by_stream[producer_stream];
-                            FD_SET(producer_fd, &read_fds);
-                            if (producer_fd > max_fd) {
-                                max_fd = producer_fd;
-                            }
-                        }
-
-                        if (pselect(max_fd + 1, &read_fds, NULL, NULL, &timeout, NULL) < 0) {
-                            return;
-                        }
-
-                        for (auto const& producer_stream : _producer_streams) {
-                            mqd_t producer_mq = _producer_mq_by_stream[producer_stream];
-                            if (FD_ISSET(producer_mq, &read_fds)) {
-                                bytes_received = mq_receive(producer_mq, message_buffer, sizeof(message_buffer), NULL);
-
-                                // we may have been terminated while awaiting, so exit if that's the case
-                                if (_terminated || _terminating) break;
-                                
-                                if (bytes_received < 0) {
-                                    return;
-                                }
-
-                                uint8_t type;
-                                std::string stream;
-
-                                std::stringstream parser(std::string(message_buffer).substr(0, bytes_received));
-                                parser >> type >> stream;
-
-                                std::string consumer_mq_name;
-                                mqd_t consumer_mq;
-                                pid_t pid;
-
-                                switch (type) {
-                                    case MESSAGE_TYPE_SUBSCRIBE:
-                                        parser >> consumer_mq_name >> pid;
-
-                                        // create the consumer_mq for this consumer
-                                        consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR | O_NONBLOCK);
-                                        if (consumer_mq < 0) {
-                                            if (_debug) {
-                                                std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
-                                            }
-                                        } else {
-                                            std::unique_lock<std::mutex> lock(_subscription_mutex);
-
-                                            _mq_by_mq_name[consumer_mq_name] = consumer_mq;
-                                            _pid_by_consumer_mq[consumer_mq] = pid;
-                                            _consumer_mqs_by_stream[stream].push_back(consumer_mq);
-                                            if (_debug) {
-                                                std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
-                                            }
-                                        }    
-
-                                        _consumer_availability.notify_all();
-                                        
-                                        // unlink the consumer file so that it does not dangle around after all instances are closed
-                                        mq_unlink(consumer_mq_name.c_str());
-
-                                        break;
-
-                                    case MESSAGE_TYPE_UNSUBSCRIBE:
-                                        parser >> consumer_mq_name >> pid;
-                                        
-                                        if (_mq_by_mq_name.count(consumer_mq_name) > 0) {
-                                            {
-                                                std::unique_lock<std::mutex> lock(_subscription_mutex);
-                                                consumer_mq = _mq_by_mq_name[consumer_mq_name];
-                                                mq_close(consumer_mq);
-                                                _mq_by_mq_name.erase(consumer_mq_name);
-                                                _pid_by_consumer_mq.erase(consumer_mq);
-
-                                                _consumer_mqs_by_stream[stream].erase(
-                                                    std::remove(
-                                                        _consumer_mqs_by_stream[stream].begin(),
-                                                        _consumer_mqs_by_stream[stream].end(),
-                                                        consumer_mq
-                                                    ),
-                                                    _consumer_mqs_by_stream[stream].end()
-                                                );
-
-                                                if (_consumer_mqs_by_stream[stream].size() == 0) {
-                                                    _consumer_mqs_by_stream.erase(stream);
-                                                }
-                                            }
-                                            {
-                                                std::unique_lock<std::mutex> lock(_ack_mutex);
-                                                _message_ids_pending_by_pid.erase(pid);
-                                            }
-
-                                            _consumer_availability.notify_all();
-                                            _acks.notify_all();
-
-                                            if (_debug) {
-                                                std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
-                                            }
-                                        }
-
-                                        break;
-
-                                    case MESSAGE_TYPE_ACK:
-                                        long long int message_id;
-                                        parser >> message_id >> pid;
-                                
-                                        std::unique_lock<std::mutex> lock(_ack_mutex);
-                                        _message_ids_pending_by_pid[pid].erase(message_id);
-                                        _acks.notify_all();
-
-                                        break;
-                                }
-                            }
-                        }
-                    });
-                } else {
-                    if (usleep(1) < 0) {
-                        return;
                     }
                 }
-            }
+
+                // add all producer mqs to the list of read fds...
+                {
+                    std::lock_guard<std::mutex> lock(_producer_mutex);
+
+                    for (auto const& producer_stream : _producer_streams) {
+                        mqd_t producer_fd = _producer_mq_by_stream[producer_stream];
+                        all_fds.insert(producer_fd);
+
+                        FD_SET(producer_fd, &read_fds);
+                        
+                        if (producer_fd > max_fd) {
+                            max_fd = producer_fd;
+                        }
+                    }
+                }
+
+                if (all_fds.size() == 0) {
+                    usleep(1);
+                    continue;
+                }
+
+                if (pselect(max_fd + 1, &read_fds, NULL, NULL, &MESSAGE_TIMEOUT, NULL) < 0) {
+                    continue;
+                }
+
+                for (auto const& fd : all_fds) {
+                    if (!FD_ISSET(fd, &read_fds)) {
+                        continue;
+                    }                
+
+                    bytes_received = mq_receive(fd, message_buffer, sizeof(message_buffer), 0);
+
+                    if (bytes_received < 0) {
+                        continue;
+                    }
+
+                    std::stringstream parser(std::string(message_buffer).substr(0, bytes_received));
+                    
+                    // parse message variables
+                    uint8_t type;
+                    std::string stream;
+                    parser >> type >> stream;
+
+                    switch(type) {
+                        case MESSAGE_TYPE_TERM:
+                            {
+                                std::vector<callback_t> callbacks;
+                                {
+                                    std::lock_guard<std::mutex> lock(_consumer_mutex);
+                                    callbacks = _callbacks_by_stream[stream];
+                                }
+
+                                for (auto const& callback : callbacks) {
+                                    unsubscribe(stream, callback, false);
+                                }
+                            }
+
+                            break;
+
+                        case MESSAGE_TYPE_BUFFER:
+                            {
+                                // parse out buffer message variables
+                                std::string buffer_shm_path;
+                                size_t data_length, buffer_length;
+                                uint64_t ts;
+                                long long int message_id;
+                                bool blocking;
+
+                                parser >> buffer_shm_path >> data_length >> buffer_length >> ts >> message_id >> blocking;
+
+                                if (message_id <= _last_message_id) {
+                                    return;
+                                }
+                                _last_message_id = message_id;
+
+                                Buffer* buffer;    
+                                bool is_new_buffer;
+
+                                { 
+                                    std::lock_guard<std::mutex> lock(_buffer_mutex);
+                                    is_new_buffer = _buffer_by_shm_path.count(buffer_shm_path) == 0;
+                                }
+
+                                if (is_new_buffer) {
+                                    buffer = allocate_buffer(buffer_shm_path, buffer_length, O_RDWR);
+                                } else {
+                                    { 
+                                        std::lock_guard<std::mutex> lock(_buffer_mutex); 
+                                        buffer = _buffer_by_shm_path[buffer_shm_path];
+                                    }
+
+                                    if (buffer->length < buffer_length) {
+                                        resize_buffer(buffer, buffer_length);
+                                    }
+                                }
+                                
+                                // with the file locked, do a quick validity check to ensure the buffer has the same
+                                // modified time as was provided in the message
+                                uint64_t buffer_write_ts;
+                                get_shm_time(buffer_shm_path, NULL, &buffer_write_ts);
+
+                                bool buffer_unlinked = buffer_write_ts == 0;
+                            
+                                // if the producer who sent this message is in blocking mode, send them the ack
+                                if (blocking) {
+                                    std::lock_guard<std::mutex> lock(_producer_mutex);
+                                    
+                                    std::string ack_message(
+                                        MESSAGE_TYPE_ACK + MESSAGE_DELIM + 
+                                        stream + MESSAGE_DELIM + 
+                                        std::to_string(message_id) + MESSAGE_DELIM + 
+                                        std::to_string(_pid)
+                                    );
+
+                                    if (!force_send(_producer_mq_by_stream[stream], ack_message)) {
+                                        std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
+                                    }
+                                }
+
+
+                                if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
+                                    continue;
+                                }
+
+                                // if we made it here, we were able to access the buffer!
+                                
+                                if (buffer_unlinked || ts == buffer_write_ts) {
+                                    // update buffer access (read) time
+                                    set_shm_time(buffer_shm_path, now(), 0);
+                                    
+                                    std::lock_guard<std::mutex> lock(_consumer_mutex);
+                                    for (auto const& callback : _callbacks_by_stream[stream]) {
+                                        callback(buffer->address, data_length, buffer_length, message_id);  
+                                    }
+                                } else {
+                                    // too late
+                                }
+
+                                if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
+                                    std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
+                                }
+
+                            }
+
+                            break;
+                    
+                        case MESSAGE_TYPE_SUBSCRIBE:
+                            {
+                                // parse subscribe variables
+                                std::string consumer_mq_name;
+                                pid_t pid;
+                                parser >> consumer_mq_name >> pid;
+
+                                // create the consumer_mq for this consumer
+                                mqd_t consumer_mq;
+                                consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR | O_NONBLOCK);
+                                if (consumer_mq < 0) {
+                                    if (_debug) {
+                                        std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
+                                    }
+                                } else {
+                                    std::unique_lock<std::mutex> lock(_consumer_mutex);
+
+                                    _mq_by_mq_name[consumer_mq_name] = consumer_mq;
+                                    _pid_by_consumer_mq[consumer_mq] = pid;
+                                    _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+                                    if (_debug) {
+                                        std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
+                                    }
+                                }    
+
+                                _consumer_availability.notify_all();
+                                
+                                // unlink the consumer file so that it does not dangle around after all instances are closed
+                                mq_unlink(consumer_mq_name.c_str());
+                            }    
+                            break;
+
+                        case MESSAGE_TYPE_UNSUBSCRIBE:
+                            {
+                                // parse unsubscribe variables
+                                std::string consumer_mq_name;
+                                pid_t pid;
+                                parser >> consumer_mq_name >> pid;
+                                
+                                mqd_t consumer_mq;
+                                if (_mq_by_mq_name.count(consumer_mq_name) > 0) {
+                                    {
+                                        std::unique_lock<std::mutex> lock(_consumer_mutex);
+                                        consumer_mq = _mq_by_mq_name[consumer_mq_name];
+                                        mq_close(consumer_mq);
+                                        _mq_by_mq_name.erase(consumer_mq_name);
+                                        _pid_by_consumer_mq.erase(consumer_mq);
+
+                                        _consumer_mqs_by_stream[stream].erase(
+                                            std::remove(
+                                                _consumer_mqs_by_stream[stream].begin(),
+                                                _consumer_mqs_by_stream[stream].end(),
+                                                consumer_mq
+                                            ),
+                                            _consumer_mqs_by_stream[stream].end()
+                                        );
+
+                                        if (_consumer_mqs_by_stream[stream].size() == 0) {
+                                            _consumer_mqs_by_stream.erase(stream);
+                                        }
+                                    }
+                                    {
+                                        std::unique_lock<std::mutex> lock(_ack_mutex);
+                                        _message_ids_pending_by_pid.erase(pid);
+                                    }
+
+                                    _consumer_availability.notify_all();
+                                    _acks.notify_all();
+
+                                    if (_debug) {
+                                        std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
+                                    }
+                                }
+                            }
+
+                            break;
+
+                        case MESSAGE_TYPE_ACK:
+                            {
+                                // parse ack variables
+                                long long int message_id;
+                                pid_t pid;
+                                parser >> message_id >> pid;
+
+                                std::unique_lock<std::mutex> lock(_ack_mutex);
+                                _message_ids_pending_by_pid[pid].erase(message_id);
+                            }
+
+                            _acks.notify_all();
+                            break;
+                    }
+                }
+            }   
         });
 
         contexts.push_back(this);
@@ -341,8 +341,7 @@ bool MomentumContext::term() {
 
     _terminating = true;
 
-    _consume.join();
-    _produce.join();
+    _message_handler.join();
 
     // for every stream we are consuming, issue an unsubscribe
     for (auto const& stream : _consumer_streams) {
@@ -400,12 +399,15 @@ bool MomentumContext::is_subscribed(std::string stream, callback_t callback) {
         return false;
     }
 
-    if (_callbacks_by_stream.count(stream) > 0) {
-        return std::find(
-            _callbacks_by_stream[stream].begin(),
-            _callbacks_by_stream[stream].end(),
-            callback
-        ) != _callbacks_by_stream[stream].end();
+    { 
+        std::lock_guard<std::mutex> lock(_consumer_mutex);
+        if (_callbacks_by_stream.count(stream) > 0) {
+            return std::find(
+                _callbacks_by_stream[stream].begin(),
+                _callbacks_by_stream[stream].end(),
+                callback
+            ) != _callbacks_by_stream[stream].end();
+        }
     }
 
     return false;
@@ -472,23 +474,31 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
 
         return false;
     }
-
-    // If we made it here, everything went well so cache references
-    _producer_mq_by_stream[stream] = producer_mq;
     
-    if (_consumer_mqs_by_stream.count(stream) == 0) {
-        _consumer_mqs_by_stream[stream] = std::vector<mqd_t>();
+    // If we made it here, everything went well so cache references
+
+    {
+        std::unique_lock<std::mutex> lock(_consumer_mutex);
+
+        if (_consumer_mqs_by_stream.count(stream) == 0) {
+            _consumer_mqs_by_stream[stream] = std::vector<mqd_t>();
+        }
+        _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+
+
+        if (!_callbacks_by_stream.count(stream)) {
+            _callbacks_by_stream[stream] = std::vector<callback_t>();
+        }
+        _callbacks_by_stream[stream].push_back(callback);
+    
+        _consumer_streams.insert(stream);
     }
-    _consumer_mqs_by_stream[stream].push_back(consumer_mq);
 
-
-    if (!_callbacks_by_stream.count(stream)) {
-        _callbacks_by_stream[stream] = std::vector<callback_t>();
+    {
+        std::unique_lock<std::mutex> lock(_producer_mutex);
+        _producer_mq_by_stream[stream] = producer_mq;
     }
-    _callbacks_by_stream[stream].push_back(callback);
-   
-    _consumer_streams.insert(stream);
-
+    
     if (_debug) {
         std::cout << DEBUG_PREFIX << "Subscribed to stream: " << stream << std::endl;
     }
@@ -508,47 +518,58 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
     } 
 
     // exit early if we are not subscribed to this stream
-    if (_consumer_streams.count(stream) == 0) {
-        return false;
-    }
+    {
 
-    if (notify) {
-        // first notify the producer that we're exiting
-        std::string unsubscribe_message(
-            MESSAGE_TYPE_UNSUBSCRIBE + MESSAGE_DELIM + 
-            stream + MESSAGE_DELIM + 
-            to_mq_name(_pid, stream) + MESSAGE_DELIM +
-            std::to_string(_pid)
-        );
-
-        if (!force_send(_producer_mq_by_stream[stream], unsubscribe_message, 1)) {
-            // unexepected error occurred so we must return from this function
-            if (_debug) {
-                std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
-            }
+        std::lock_guard<std::mutex> lock(_consumer_mutex);
+        if (_consumer_streams.count(stream) == 0) {
             return false;
         }
     }
 
-    mq_close(_producer_mq_by_stream[stream]);
-    _producer_mq_by_stream.erase(stream);
+    {
+        std::unique_lock<std::mutex> lock(_producer_mutex);
 
-    for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
-        mq_close(consumer_mq);
+        if (notify) {
+            // first notify the producer that we're exiting
+            std::string unsubscribe_message(
+                MESSAGE_TYPE_UNSUBSCRIBE + MESSAGE_DELIM + 
+                stream + MESSAGE_DELIM + 
+                to_mq_name(_pid, stream) + MESSAGE_DELIM +
+                std::to_string(_pid)
+            );
+
+            if (!force_send(_producer_mq_by_stream[stream], unsubscribe_message, 1)) {
+                // unexepected error occurred so we must return from this function
+                if (_debug) {
+                    std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
+                }
+                return false;
+            }
+        }
+
+        mq_close(_producer_mq_by_stream[stream]);
+        _producer_mq_by_stream.erase(stream);
     }
-    _consumer_mqs_by_stream.erase(stream);
-    
-    _consumer_streams.erase(stream);
 
-    if (_callbacks_by_stream.count(stream)) {
-        _callbacks_by_stream[stream].erase(
-            std::remove(
-                _callbacks_by_stream[stream].begin(), 
-                _callbacks_by_stream[stream].end(), 
-                callback
-            ), 
-            _callbacks_by_stream[stream].end()
-        );
+    { 
+        std::lock_guard<std::mutex> lock(_consumer_mutex);
+        for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
+            mq_close(consumer_mq);
+        }
+        _consumer_mqs_by_stream.erase(stream);
+        
+        _consumer_streams.erase(stream);
+
+        if (_callbacks_by_stream.count(stream)) {
+            _callbacks_by_stream[stream].erase(
+                std::remove(
+                    _callbacks_by_stream[stream].begin(), 
+                    _callbacks_by_stream[stream].end(), 
+                    callback
+                ), 
+                _callbacks_by_stream[stream].end()
+            );
+        }
     }
 
     if (_debug) {
@@ -595,6 +616,8 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         
     std::string stream = stream_from_shm_path(buffer->shm_path);
 
+    long long message_id = _message_id = _message_id + 1;
+
     std::string buffer_message(
         MESSAGE_TYPE_BUFFER + MESSAGE_DELIM + 
         stream + MESSAGE_DELIM + 
@@ -602,48 +625,63 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         std::to_string(length) + MESSAGE_DELIM + 
         std::to_string(buffer->length) + MESSAGE_DELIM + 
         std::to_string(ts) + MESSAGE_DELIM +
-        std::to_string(++_message_id) + MESSAGE_DELIM +
+        std::to_string(message_id) + MESSAGE_DELIM +
         std::to_string(_blocking)
     );
 
     std::set<pid_t> consumer_pids;
     std::vector<mqd_t> consumer_mqs;
 
-    if (_blocking) {
-        // when blocking, wait for a consumer to come available
-        std::unique_lock<std::mutex> lock(_subscription_mutex);
-        _consumer_availability.wait(lock, [&] { return _consumer_mqs_by_stream[stream].size() > 0; });
-        consumer_mqs = _consumer_mqs_by_stream[stream];
-    } else {
-        // otherwise run with the consumers we have in this instant
+    {
+        std::unique_lock<std::mutex> lock(_consumer_mutex);
+        if (_blocking) {
+            _consumer_availability.wait(
+                lock,
+                [&] { 
+                    return _consumer_mqs_by_stream[stream].size() > 0; 
+                }
+            );
+        }
         consumer_mqs = _consumer_mqs_by_stream[stream];
     }
 
     // send the buffer to any and all consumers for this stream
     for (const auto& consumer_mq : consumer_mqs) {
-        if (send(consumer_mq, buffer_message)) {
-            // if blocking, add this message to our list of expected acks
-            if (_blocking) {
-                pid_t consumer_pid;
-                {
-                    std::lock_guard<std::mutex> lock(_subscription_mutex);
-                    consumer_pid = _pid_by_consumer_mq.count(consumer_mq) > 0 ? _pid_by_consumer_mq[consumer_mq] : 0;
-                    if (consumer_pid == 0) {
-                        continue;
-                    } else {
-                        consumer_pids.insert(consumer_pid);
-                    }
-                }
-                {
-                    std::unique_lock<std::mutex> lock(_ack_mutex);
-                    _message_ids_pending_by_pid[consumer_pid].insert(_message_id);
+        if (_blocking) {
+            pid_t consumer_pid;
+            {
+                std::lock_guard<std::mutex> lock(_consumer_mutex);
+                consumer_pid = _pid_by_consumer_mq.count(consumer_mq) > 0 ? _pid_by_consumer_mq[consumer_mq] : 0;
+                if (consumer_pid == 0) {
+                    continue;
+                } else {
+                    consumer_pids.insert(consumer_pid);
                 }
             }
+
+            {
+                std::unique_lock<std::mutex> lock(_ack_mutex);
+                _message_ids_pending_by_pid[consumer_pid].insert(message_id);
+            }
+
+            if (!force_send(consumer_mq, buffer_message)) {
+                {
+                    // send failed, so remove this message from the list of pending
+                    std::unique_lock<std::mutex> lock(_ack_mutex);
+                    _message_ids_pending_by_pid[consumer_pid].erase(message_id);
+                }
+
+                std::cerr << DEBUG_PREFIX << "Failed to send buffer message to consumer" << std::endl;
+                return false;
+            }
+        } else {
+            send(consumer_mq, buffer_message);
         } 
     }
 
     // if blocking, wait for acknowledgement prior to returning
     if (_blocking) {
+        // waiting for acknowledgement
         std::unique_lock<std::mutex> lock(_ack_mutex);
         _acks.wait(lock, [&] { 
             bool all_acknowledged = true;
@@ -653,20 +691,20 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
                     // consumer exited, so consider it acknowledged
                     all_acknowledged &= true;
                 } else { 
-                    bool message_acknowledged = _message_ids_pending_by_pid[consumer_pid].find(_message_id) == _message_ids_pending_by_pid[consumer_pid].end();
+                    bool message_acknowledged = _message_ids_pending_by_pid[consumer_pid].find(message_id) == _message_ids_pending_by_pid[consumer_pid].end();
                     all_acknowledged &= message_acknowledged;
                 }
             }
 
             return all_acknowledged;
-         });
+        });
     } 
-
     return true;
 }
 
 Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     if (_terminated) return NULL;
+
 
     normalize_stream(stream);
     if (!is_valid_stream(stream)) {
@@ -676,52 +714,46 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         return NULL;
     };
 
-    if (_producer_mq_by_stream.count(stream) == 0) {
-        struct mq_attr attrs;
-        memset(&attrs, 0, sizeof(attrs));
-        attrs.mq_maxmsg = 10;
-        attrs.mq_msgsize = MAX_MESSAGE_SIZE;
+    {
+        std::lock_guard<std::mutex> lock(_producer_mutex);
+        if (_producer_mq_by_stream.count(stream) == 0) {
+            struct mq_attr attrs;
+            memset(&attrs, 0, sizeof(attrs));
+            attrs.mq_maxmsg = 10;
+            attrs.mq_msgsize = MAX_MESSAGE_SIZE;
 
-        std::string producer_mq_name = to_mq_name(0, stream);
-        mq_unlink(producer_mq_name.c_str());
-        mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK, MQ_MODE, &attrs);
-        if (producer_mq < 0) {
-            if (_debug) {
-                std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
+            std::string producer_mq_name = to_mq_name(0, stream);
+            mq_unlink(producer_mq_name.c_str());
+            mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK, MQ_MODE, &attrs);
+            if (producer_mq < 0) {
+                if (_debug) {
+                    std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
+                }
+                return false;
             }
-            return false;
+
+            _producer_mq_by_stream[stream] = producer_mq;        
         }
 
-        _producer_mq_by_stream[stream] = producer_mq;        
+        _producer_streams.insert(stream);
     }
-
-    _producer_streams.insert(stream);
-
-
-    if (_buffers_by_stream.count(stream) == 0) {
-        _buffers_by_stream[stream] = std::queue<Buffer*>();
-    }
-
 
     Buffer* buffer = NULL;
-
-    if (_buffers_by_stream.count(stream) == 0) {
-        _buffers_by_stream[stream] = std::queue<Buffer*>();
-    }
-
-    // First, see if we found a free buffer within our existing resources
-    if (_buffers_by_stream.count(stream) > 0) {
+    bool below_minimum_buffers;
+    
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+    
         size_t visit_count = 0;
 
         // find the next buffer to use
         while (visit_count++ < _buffers_by_stream[stream].size()) {
-
             // pull a candidate buffer, rotating the queue in the process
             Buffer* candidate_buffer = _buffers_by_stream[stream].front();
             _buffers_by_stream[stream].pop();
             _buffers_by_stream[stream].push(candidate_buffer);
 
-            if (candidate_buffer != _last_acquired_buffer) {
+            if (candidate_buffer != _last_acquired_buffer_by_stream[stream]) {
                 // found a buffer that is different than the last iteration...
                 if (flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
                     // and we were also able to set the exclusive lock... 
@@ -730,13 +762,13 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
                 }
             }
         }
-    } 
+        below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
+    }
 
     // If we don't have enough buffers, then create them...
-    bool below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
 
     if (buffer == NULL || below_minimum_buffers) {
-        size_t allocations_required = below_minimum_buffers ? _min_buffers : 1;
+        size_t allocations_required = below_minimum_buffers ? _min_buffers.load(std::memory_order_relaxed) : 1;
 
         Buffer* first_buffer = NULL;
         int id = 1; // start buffer count at 1
@@ -746,7 +778,10 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
             
             if (buffer != NULL) {
                 allocations_required--;
-                _buffers_by_stream[stream].push(buffer);
+                {
+                    std::lock_guard<std::mutex> lock(_buffer_mutex);
+                    _buffers_by_stream[stream].push(buffer);
+                }
                 
                 // Since we may create numerous buffers, make note of this first buffer to 
                 // maintain some semblance of sequential ordering.
@@ -763,14 +798,17 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         resize_buffer(buffer, length, true);
     }
 
-    _last_acquired_buffer = buffer;
+    { 
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        _last_acquired_buffer_by_stream[stream] = buffer;
+    }
 
     return buffer;
 }
 
 bool MomentumContext::release_buffer(Buffer* buffer) {
     if (!_terminated) {
-        flock(buffer->fd, LOCK_UN | LOCK_NB);
+        flock(buffer->fd, LOCK_UN | (_blocking ? 0 : LOCK_NB));
         return true;
     } 
     return false;
@@ -798,7 +836,10 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
 
     resize_buffer(buffer, length, (flags & O_CREAT) == O_CREAT);
 
-    _buffer_by_shm_path[shm_path] = buffer;
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        _buffer_by_shm_path[shm_path] = buffer;
+    }
 
     return buffer;
 }
@@ -839,7 +880,10 @@ void MomentumContext::deallocate_buffer(Buffer* buffer) {
     munmap(buffer->address, buffer->length);
     close(buffer->fd);
 
-    _buffer_by_shm_path.erase(buffer->shm_path);
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        _buffer_by_shm_path.erase(buffer->shm_path);
+    }
 
     delete buffer;
 }
@@ -921,12 +965,6 @@ bool MomentumContext::force_send(mqd_t mq, const std::string& message, int prior
         }
     }
     return true;
-}
-
-template<typename Func>
-void MomentumContext::with_lock(const Func& func) {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return func();
 }
 
 void MomentumContext::shm_iter(std::function<void(std::string)> callback) {

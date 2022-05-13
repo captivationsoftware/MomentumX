@@ -12,13 +12,14 @@ lib.momentum_configure(context, BLOCKING, True)
 
 lib.momentum_send_data.argtypes = (c_void_p, c_char_p, c_char_p, c_size_t, c_uint64,)
 
-STREAM = b'incrementer'
+STREAM = b'momentum://incrementer'
 
 try:
     i = 0
     while True:
         data = str(i).encode()
         data_len = len(data)
+        print(i)
         lib.momentum_send_data(context, STREAM, data, data_len, 0)
         i += 1
 

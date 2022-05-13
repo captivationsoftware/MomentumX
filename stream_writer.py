@@ -11,7 +11,7 @@ lib.momentum_configure(context, DEBUG, True)
 
 data_length = int(100e6)
 
-STREAM = b'streamer'
+STREAM = b'momentum://streamer'
 
 i = 0
 try:
@@ -20,7 +20,6 @@ try:
 
         if (buffer):
             lib.momentum_send_buffer(context, buffer, data_length, 0)
-
 
 except KeyboardInterrupt:
     lib.momentum_term(context)
