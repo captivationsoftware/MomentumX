@@ -413,6 +413,27 @@ bool MomentumContext::is_subscribed(std::string stream, callback_t callback) {
     return false;
 }
 
+bool MomentumContext::is_stream_available(std::string stream) {
+    if (_terminated) return false;
+
+    normalize_stream(stream); 
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return false;
+    }
+
+    // Attempt to open the producer mq  
+    std::string producer_mq_name = to_mq_name(0, stream);
+    mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDONLY | O_NONBLOCK);
+    if (producer_mq < 0) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
 bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return false;
 
@@ -579,7 +600,7 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
     return true;
 }
 
-bool MomentumContext::send_data(std::string stream, uint8_t* data, size_t length, uint64_t ts) {
+bool MomentumContext::send_string(std::string stream, const char* data, size_t length, uint64_t ts) {
     if (_terminated) return false;
 
     normalize_stream(stream);
@@ -813,6 +834,52 @@ bool MomentumContext::release_buffer(Buffer* buffer) {
     } 
     return false;
 }
+
+bool MomentumContext::get_debug() {
+    return _debug;
+}
+
+void MomentumContext::set_debug(bool value) {
+    _debug = value;
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Option 'debug' set to value: " << value << std::endl;
+    }
+}
+
+size_t MomentumContext::get_min_buffers() {
+    return _min_buffers;
+}
+
+void MomentumContext::set_min_buffers(size_t value) {
+    _min_buffers = value;
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Option 'min_buffers' set to value: " << value << std::endl;
+    }
+}
+
+size_t MomentumContext::get_max_buffers() {
+    return _max_buffers;
+}
+
+void MomentumContext::set_max_buffers(size_t value) {
+    _max_buffers = value;
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Option 'max_buffers' set to value: " << value << std::endl;
+    }
+}
+
+bool MomentumContext::get_blocking() {
+    return _blocking;
+}
+
+void MomentumContext::set_blocking(bool value) {
+    _blocking = value;
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Option 'blocking' set to value: " << value << std::endl;
+    }
+}
+
+// BEGIN PRIVATE METHODS
 
 Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t length, int flags) {
     if (_terminated) return NULL;
@@ -1058,6 +1125,38 @@ MomentumContext* momentum_context() {
     return ctx;
 }
 
+bool momentum_get_debug(MomentumContext* ctx) {
+    return ctx->get_debug();
+}
+
+void momentum_set_debug(MomentumContext* ctx, bool value) {
+    ctx->set_debug(value);
+}
+
+size_t momentum_get_min_buffers(MomentumContext* ctx) {
+    return ctx->get_min_buffers();
+}
+
+void momentum_set_min_buffers(MomentumContext* ctx, size_t value) {
+    ctx->set_min_buffers(value);
+}
+
+size_t momentum_get_max_buffers(MomentumContext* ctx) {
+    return ctx->get_max_buffers();
+}
+
+void momentum_set_max_buffers(MomentumContext* ctx, size_t value) {
+    ctx->set_max_buffers(value);
+}
+
+bool momentum_get_blocking(MomentumContext* ctx) {
+    return ctx->get_blocking();
+}
+
+void momentum_set_blocking(MomentumContext* ctx, bool value) {
+    ctx->set_blocking(value);
+}
+
 bool momentum_term(MomentumContext* ctx) {
     return ctx->term();
 }
@@ -1075,7 +1174,11 @@ bool momentum_destroy(MomentumContext* ctx) {
     }
 }
 
-bool momentum_subscribed(MomentumContext* ctx, const char* stream, callback_t callback) {
+bool momentum_is_stream_available(MomentumContext* ctx, const char* stream) {
+    return ctx->is_stream_available(std::string(stream));
+}
+
+bool momentum_is_subscribed(MomentumContext* ctx, const char* stream, callback_t callback) {
     return ctx->is_subscribed(std::string(stream), callback);
 }
 
@@ -1099,8 +1202,8 @@ bool momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, u
     return ctx->send_buffer(buffer, length, ts ? ts : 0);
 }
 
-bool momentum_send_data(MomentumContext* ctx, const char* stream, uint8_t* data, size_t length, uint64_t ts) {
-    return ctx->send_data(std::string(stream), data, length, ts ? ts : 0);
+bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts) {
+    return ctx->send_string(std::string(stream), data, length, ts ? ts : 0);
 }
 
 uint8_t* momentum_get_buffer_address(Buffer* buffer) {
@@ -1111,13 +1214,3 @@ size_t momentum_get_buffer_length(Buffer* buffer) {
     return buffer->length;
 }
 
-bool momentum_configure(MomentumContext* ctx, uint8_t option, const void* value) {
-    if (option == MOMENTUM_OPT_MIN_BUFFERS) {
-        ctx->_min_buffers = (uint64_t) value;
-    } else if (option == MOMENTUM_OPT_DEBUG) {
-        ctx->_debug = (bool) value;
-    } else if (option == MOMENTUM_OPT_BLOCKING) {
-        ctx->_blocking = (bool) value;
-    }
-    return true;
-}
