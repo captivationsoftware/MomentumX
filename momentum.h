@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <list>
 #include <queue>
 #include <mutex>
 #include <atomic>
@@ -100,8 +101,7 @@ private:
 
     std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
 
-    std::map<std::string, Buffer*> _first_buffer_by_stream;
-    std::map<std::string, std::deque<Buffer*>> _buffers_by_stream;
+    std::map<std::string, std::list<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     std::map<std::string, Buffer*> _last_acquired_buffer_by_stream;
 

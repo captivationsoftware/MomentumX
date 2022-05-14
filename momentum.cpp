@@ -564,6 +564,17 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
         }
     }
 
+    // deallocate the buffers we've allocated for this stream 
+    std::list<Buffer*> buffers;
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        buffers = _buffers_by_stream[stream];
+    }   
+
+    for (auto const& buffer : buffers) {
+        deallocate_buffer(buffer);
+    }
+
     {
         std::unique_lock<std::mutex> lock(_producer_mutex);
 
@@ -812,10 +823,6 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
             
             if (buffer != NULL) {
                 allocations_required--;
-                {
-                    std::lock_guard<std::mutex> lock(_buffer_mutex);
-                    _buffers_by_stream[stream].push_back(buffer);
-                }
                 
                 // Since we may create numerous buffers, make note of this first buffer to 
                 // maintain some semblance of sequential ordering.
@@ -889,6 +896,8 @@ void MomentumContext::set_blocking(bool value) {
 Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t length, int flags) {
     if (_terminated) return NULL;
 
+    std::string stream = stream_from_shm_path(shm_path);
+
     int fd = shm_open(shm_path.c_str(), flags, S_IRWXU);
     if (fd < 0) {
         if (errno == EEXIST) {
@@ -915,6 +924,7 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
     {
         std::lock_guard<std::mutex> lock(_buffer_mutex);
         _buffer_by_shm_path[shm_path] = buffer;
+        _buffers_by_stream[stream].push_back(buffer);
     }
 
 
@@ -959,20 +969,27 @@ void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate
 }
 
 void MomentumContext::deallocate_buffer(Buffer* buffer) {
-    munmap(buffer->address, buffer->length);
-    close(buffer->fd);
+    std::string stream = stream_from_shm_path(buffer->shm_path);
 
-    if (_debug) {
-        std::cout << DEBUG_PREFIX << "Deallocated shm file: " << buffer->shm_path << std::endl;
-    }
+    std::lock_guard<std::mutex> lock(_buffer_mutex);
 
-    {
-        std::lock_guard<std::mutex> lock(_buffer_mutex);
+    if (_buffer_by_shm_path.count(buffer->shm_path) > 0) {
+        munmap(buffer->address, buffer->length);
+        close(buffer->fd);
+
         _buffer_by_shm_path.erase(buffer->shm_path);
+        _buffers_by_stream[stream].remove(buffer);
+
+        if (_last_acquired_buffer_by_stream[stream] == buffer) {
+            _last_acquired_buffer_by_stream[stream] = NULL;
+        }
+
+        if (_debug) {
+            std::cout << DEBUG_PREFIX << "Deallocated shm file: " << buffer->shm_path << std::endl;
+        }
+    
+        delete buffer;
     }
-
-    delete buffer;
-
 }
 
 bool MomentumContext::notify_buffer(const mqd_t& consumer_mq, Buffer* buffer, std::string stream, size_t length, uint64_t ts, long long int message_id, bool force) {
