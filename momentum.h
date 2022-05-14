@@ -37,6 +37,7 @@ static const char MESSAGE_TYPE_UNSUBSCRIBE = 2;
 static const char MESSAGE_TYPE_BUFFER = 3;
 static const char MESSAGE_TYPE_ACK = 4;
 static const char MESSAGE_TYPE_TERM = 5;
+static const char ADMIN_MESSAGE_ID = -1;
 
 static const struct timespec MESSAGE_TIMEOUT {
     0,
@@ -65,7 +66,6 @@ public:
     bool send_string(std::string stream, const char* data, size_t length, uint64_t ts=0);
     Buffer* acquire_buffer(std::string stream, size_t length);
     bool release_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
-    std::queue<Buffer*>& get_buffers_by_stream(const std::string& stream);
 
     // getter / setters for options    
     bool get_debug();
@@ -89,8 +89,6 @@ private:
     std::atomic<bool>  _terminating{false};
     std::atomic<size_t> _min_buffers{1};
     std::atomic<size_t> _max_buffers{std::numeric_limits<size_t>::max()};
-    std::atomic<long long int> _last_message_id{-1};
-    std::atomic<long long int> _message_id{0};
 
     std::set<std::string> _producer_streams;
     std::set<std::string> _consumer_streams;
@@ -103,12 +101,14 @@ private:
     std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
 
     std::map<std::string, Buffer*> _first_buffer_by_stream;
-    std::map<std::string, std::queue<Buffer*>> _buffers_by_stream;
+    std::map<std::string, std::deque<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     std::map<std::string, Buffer*> _last_acquired_buffer_by_stream;
 
+    std::map<std::string, long long int> _message_id_by_stream;
+    std::map<std::string, long long int> _last_message_id_by_stream;
     std::map<pid_t, std::set<long long int>> _message_ids_pending_by_pid;
-    std::mutex _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
+    std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
     std::condition_variable _consumer_availability, _acks;
 
     std::thread _message_handler;
@@ -117,6 +117,7 @@ private:
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
     void resize_buffer(Buffer* buffer, size_t length, bool truncate=false);
     void deallocate_buffer(Buffer* buffer);
+    bool notify_buffer(const mqd_t& consumer_mq, Buffer* buffer, std::string stream, size_t data_length, uint64_t ts, long long int message_id, bool force);
     std::string to_shm_path(pid_t pid, const std::string& stream, uint64_t id) const;
     void shm_iter(const std::function<void(std::string)> callback);
     void get_shm_time(const std::string& shm_path, uint64_t* read_ts, uint64_t* write_ts);
@@ -169,8 +170,6 @@ extern "C" {
     bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer, size_t data_length, uint64_t ts);
     uint8_t* momentum_get_buffer_address(Buffer* buffer);
     size_t momentum_get_buffer_length(Buffer* buffer);
-
-    size_t momentum_get_stream_buffer_count(MomentumContext* ctx, const char* stream);
 }
 
 

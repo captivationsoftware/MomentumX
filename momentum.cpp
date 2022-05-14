@@ -138,10 +138,16 @@ MomentumContext::MomentumContext() {
 
                                 parser >> buffer_shm_path >> data_length >> buffer_length >> ts >> message_id >> blocking;
 
-                                if (message_id <= _last_message_id) {
-                                    return;
+                                if (message_id != ADMIN_MESSAGE_ID) { 
+                                    std::lock_guard<std::mutex> lock(_message_mutex);
+                                    if (message_id <= _last_message_id_by_stream[stream]) {
+                                        if (_debug) {
+                                            std::cout << DEBUG_PREFIX << "Received stale/duplicate message id: " << message_id << std::endl;
+                                        }
+                                        continue;
+                                    }
+                                    _last_message_id_by_stream[stream] = message_id;
                                 }
-                                _last_message_id = message_id;
 
                                 Buffer* buffer;    
                                 bool is_new_buffer;
@@ -229,14 +235,25 @@ MomentumContext::MomentumContext() {
                                         std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
                                     }
                                 } else {
-                                    std::unique_lock<std::mutex> lock(_consumer_mutex);
+                                    {
+                                        std::unique_lock<std::mutex> lock(_consumer_mutex);
 
-                                    _mq_by_mq_name[consumer_mq_name] = consumer_mq;
-                                    _pid_by_consumer_mq[consumer_mq] = pid;
-                                    _consumer_mqs_by_stream[stream].push_back(consumer_mq);
-                                    if (_debug) {
-                                        std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
+                                        _mq_by_mq_name[consumer_mq_name] = consumer_mq;
+                                        _pid_by_consumer_mq[consumer_mq] = pid;
+                                        _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+                                        if (_debug) {
+                                            std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
+                                        }
                                     }
+
+                                    {
+                                        // send the list of buffers to the consumer on subscribe
+                                        std::lock_guard<std::mutex> lock(_buffer_mutex);
+                                        for (auto const& buffer : _buffers_by_stream[stream]) {
+                                            notify_buffer(consumer_mq, buffer, stream, 0, 0, ADMIN_MESSAGE_ID, false);
+                                        }                                        
+                                    }
+
                                 }    
 
                                 _consumer_availability.notify_all();
@@ -434,13 +451,6 @@ bool MomentumContext::is_stream_available(std::string stream) {
     }
 }
 
-std::queue<Buffer*>& MomentumContext::get_buffers_by_stream(const std::string& stream) {
-    {
-        std::lock_guard<std::mutex> lock(_buffer_mutex);
-        return _buffers_by_stream[stream];
-    }
-}
-
 bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     if (_terminated) return false;
 
@@ -465,7 +475,7 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     // ...and then open our own consumer mq
     struct mq_attr attrs;
     memset(&attrs, 0, sizeof(attrs));
-    attrs.mq_maxmsg = 10;
+    attrs.mq_maxmsg = 1;
     attrs.mq_msgsize = MAX_MESSAGE_SIZE;
     std::string consumer_mq_name = to_mq_name(_pid, stream);
     mqd_t consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR | O_CREAT | O_NONBLOCK, MQ_MODE, &attrs);
@@ -642,19 +652,6 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
 
     std::string stream = stream_from_shm_path(buffer->shm_path);
 
-    long long message_id = _message_id = _message_id + 1;
-
-    std::string buffer_message(
-        MESSAGE_TYPE_BUFFER + MESSAGE_DELIM + 
-        stream + MESSAGE_DELIM + 
-        buffer->shm_path + MESSAGE_DELIM + 
-        std::to_string(length) + MESSAGE_DELIM + 
-        std::to_string(buffer->length) + MESSAGE_DELIM + 
-        std::to_string(ts) + MESSAGE_DELIM +
-        std::to_string(message_id) + MESSAGE_DELIM +
-        std::to_string(_blocking)
-    );
-
     // unlock the buffer prior to sending
     flock(buffer->fd, LOCK_UN | (_blocking ? 0 : LOCK_NB));
         
@@ -674,7 +671,13 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
         }
         consumer_mqs = _consumer_mqs_by_stream[stream];
     }
-    // send the buffer to any and all consumers for this stream
+
+    long long int message_id;
+    {
+        std::lock_guard<std::mutex> lock(_message_mutex);
+        message_id = _message_id_by_stream[stream] = _message_id_by_stream[stream] + 1;
+    } 
+
     for (const auto& consumer_mq : consumer_mqs) {
         if (_blocking) {
             pid_t consumer_pid;
@@ -693,7 +696,7 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
                 _message_ids_pending_by_pid[consumer_pid].insert(message_id);
             }
 
-            if (!force_send(consumer_mq, buffer_message)) {
+            if (!notify_buffer(consumer_mq, buffer, stream, length, ts, message_id, _blocking)) {
                 {
                     // send failed, so remove this message from the list of pending
                     std::unique_lock<std::mutex> lock(_ack_mutex);
@@ -704,7 +707,7 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
                 return false;
             }
         } else {
-            send(consumer_mq, buffer_message);
+            notify_buffer(consumer_mq, buffer, stream, length, ts, message_id, _blocking);
         } 
     }
 
@@ -728,8 +731,10 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
             return all_acknowledged;
         });
     } 
+
     return true;
 }
+
 
 Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
     if (_terminated) return NULL;
@@ -748,7 +753,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         if (_producer_mq_by_stream.count(stream) == 0) {
             struct mq_attr attrs;
             memset(&attrs, 0, sizeof(attrs));
-            attrs.mq_maxmsg = 10;
+            attrs.mq_maxmsg = 1;
             attrs.mq_msgsize = MAX_MESSAGE_SIZE;
 
             std::string producer_mq_name = to_mq_name(0, stream);
@@ -779,8 +784,8 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         while (visit_count++ < _buffers_by_stream[stream].size()) {
             // pull a candidate buffer, rotating the queue in the process
             Buffer* candidate_buffer = _buffers_by_stream[stream].front();
-            _buffers_by_stream[stream].pop();
-            _buffers_by_stream[stream].push(candidate_buffer);
+            _buffers_by_stream[stream].pop_front();
+            _buffers_by_stream[stream].push_back(candidate_buffer);
 
             if (candidate_buffer != _last_acquired_buffer_by_stream[stream]) {
                 // found a buffer that is different than the last iteration...
@@ -809,7 +814,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
                 allocations_required--;
                 {
                     std::lock_guard<std::mutex> lock(_buffer_mutex);
-                    _buffers_by_stream[stream].push(buffer);
+                    _buffers_by_stream[stream].push_back(buffer);
                 }
                 
                 // Since we may create numerous buffers, make note of this first buffer to 
@@ -901,12 +906,17 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
     buffer->fd = fd;
     strcpy(buffer->shm_path, shm_path.c_str());
 
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Allocated and mapped shm file: " << buffer->shm_path << std::endl;
+    }
+
     resize_buffer(buffer, length, (flags & O_CREAT) == O_CREAT);
 
     {
         std::lock_guard<std::mutex> lock(_buffer_mutex);
         _buffer_by_shm_path[shm_path] = buffer;
     }
+
 
     return buffer;
 }
@@ -933,6 +943,7 @@ void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate
         } else {
             buffer->address = (uint8_t* ) mremap(buffer->address, buffer->length, length_required, MREMAP_MAYMOVE);
         }
+
         if (buffer->address == MAP_FAILED) {
             if (_debug) {
                 std::cerr << DEBUG_PREFIX << "Failed to mmap shared memory file: " << buffer->shm_path << std::endl;
@@ -941,11 +952,19 @@ void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate
             buffer->length = length_required;
         }
     }
+
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Resized shm file: " << buffer->shm_path << std::endl;
+    }
 }
 
 void MomentumContext::deallocate_buffer(Buffer* buffer) {
     munmap(buffer->address, buffer->length);
     close(buffer->fd);
+
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Deallocated shm file: " << buffer->shm_path << std::endl;
+    }
 
     {
         std::lock_guard<std::mutex> lock(_buffer_mutex);
@@ -953,6 +972,27 @@ void MomentumContext::deallocate_buffer(Buffer* buffer) {
     }
 
     delete buffer;
+
+}
+
+bool MomentumContext::notify_buffer(const mqd_t& consumer_mq, Buffer* buffer, std::string stream, size_t length, uint64_t ts, long long int message_id, bool force) {
+    // send the buffer to any and all consumers for this stream
+    std::string buffer_message(
+        MESSAGE_TYPE_BUFFER + MESSAGE_DELIM + 
+        stream + MESSAGE_DELIM + 
+        buffer->shm_path + MESSAGE_DELIM + 
+        std::to_string(length) + MESSAGE_DELIM + 
+        std::to_string(buffer->length) + MESSAGE_DELIM + 
+        std::to_string(ts) + MESSAGE_DELIM +
+        std::to_string(message_id) + MESSAGE_DELIM +
+        std::to_string(_blocking)
+    );
+
+    if (force) {
+        return force_send(consumer_mq, buffer_message);
+    } else {
+        return send(consumer_mq, buffer_message);
+    }
 }
 
 
@@ -1208,8 +1248,4 @@ uint8_t* momentum_get_buffer_address(Buffer* buffer) {
 
 size_t momentum_get_buffer_length(Buffer* buffer) {
     return buffer->length;
-}
-
-size_t momentum_get_stream_buffer_count(MomentumContext* ctx, const char* stream) {
-    return ctx->get_buffers_by_stream(std::string(stream)).size();
 }

@@ -68,9 +68,6 @@ lib.momentum_get_buffer_address.restype = ctypes.POINTER(ctypes.c_uint8)
 lib.momentum_get_buffer_length.argtypes = (ctypes.c_void_p,)
 lib.momentum_get_buffer_length.restype = ctypes.c_size_t
 
-lib.momentum_get_stream_buffer_count.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_get_stream_buffer_count.restype = ctypes.c_size_t
-
 
 class Context:
 
@@ -229,12 +226,6 @@ class Context:
                 data_length, 
                 ts
             )
-        )
-
-    def stream_buffer_count(self, stream):
-        return lib.momentum_get_stream_buffer_count(
-            self._context, 
-            stream.encode() if isinstance(stream, str) else stream,
         )
 
     def acquire_buffer(self, stream, buffer_length):
