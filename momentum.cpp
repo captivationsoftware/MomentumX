@@ -419,11 +419,12 @@ bool MomentumContext::is_subscribed(std::string stream, callback_t callback) {
     { 
         std::lock_guard<std::mutex> lock(_consumer_mutex);
         if (_callbacks_by_stream.count(stream) > 0) {
-            return std::find(
-                _callbacks_by_stream[stream].begin(),
-                _callbacks_by_stream[stream].end(),
-                callback
-            ) != _callbacks_by_stream[stream].end();
+            std::vector<callback_t>::iterator begin = _callbacks_by_stream[stream].begin();
+            std::vector<callback_t>::iterator end = _callbacks_by_stream[stream].end();
+
+            bool contains_callback = std::find(begin, end, callback) != end;
+            
+            return contains_callback;
         }
     }
 
@@ -609,7 +610,9 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
         
         _consumer_streams.erase(stream);
 
-        if (_callbacks_by_stream.count(stream)) {
+        if (_callbacks_by_stream.count(stream) > 0) {
+
+            std::cout << "pre delete:" <<  _callbacks_by_stream[stream].size() << std::endl;
             _callbacks_by_stream[stream].erase(
                 std::remove(
                     _callbacks_by_stream[stream].begin(), 
@@ -618,6 +621,8 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
                 ), 
                 _callbacks_by_stream[stream].end()
             );
+            std::cout << "post delete:" <<  _callbacks_by_stream[stream].size() << std::endl;
+            
         }
     }
 

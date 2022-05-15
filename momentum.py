@@ -155,29 +155,29 @@ class Context:
 
         callback_id = id(callback)
 
-        if stream in self._callback_by_id_by_stream and callback_id in self._callback_by_id_by_stream[stream]:
-            return True
+        if not self.is_subscribed(stream, callback):
 
-        @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_size_t, ctypes.c_longlong)
-        def wrapped_callback(data, data_length, buffer_length, message_id):
-            memory = ctypes.cast(data, ctypes.POINTER(ctypes.c_char * data_length))
-            callback(memory.contents[:], data_length, buffer_length, message_id)
+            @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_size_t, ctypes.c_longlong)
+            def wrapped_callback(data, data_length, buffer_length, message_id):
+                memory = ctypes.cast(data, ctypes.POINTER(ctypes.c_char * data_length))
+                callback(memory.contents[:], data_length, buffer_length, message_id)
 
-        success = bool(
-            lib.momentum_subscribe(
-                self._context, 
-                stream.encode() if isinstance(stream, str) else stream,
-                wrapped_callback            )
-        )
-        
-        if success:
-            if stream not in self._callback_by_id_by_stream:
-                self._callback_by_id_by_stream[stream] = {}
+            success = bool(
+                lib.momentum_subscribe(
+                    self._context, 
+                    stream.encode() if isinstance(stream, str) else stream,
+                    wrapped_callback            )
+            )
 
-            self._callback_by_id_by_stream[stream][callback_id] = wrapped_callback
+            if not success:
+                return False
 
+        if stream not in self._callback_by_id_by_stream:
+            self._callback_by_id_by_stream[stream] = {}
 
-        return success
+        self._callback_by_id_by_stream[stream][callback_id] = wrapped_callback
+
+        return True
 
     def unsubscribe(self, stream, callback):
         callback_id = id(callback)
@@ -207,7 +207,7 @@ class Context:
 
     def subscribe(self, stream, callback):
         if self.is_subscribed(stream, callback):
-            return False
+            return True
 
         while not self.try_subscribe(stream, callback):
             time.sleep(1)
