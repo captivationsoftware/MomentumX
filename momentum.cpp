@@ -155,9 +155,9 @@ MomentumContext::MomentumContext() {
                                 // add to queue
                                 { 
                                     std::lock_guard<std::mutex> lock(_message_mutex);
-                                    // _consumer_messages_by_stream[stream].remove_if([&](Message& m) { 
-                                    //     return strcmp(m.buffer_message.buffer_shm_path, buffer_shm_path.c_str()) == 0;
-                                    // });
+                                    _consumer_messages_by_stream[stream].remove_if([&](Message& m) { 
+                                        return strcmp(m.buffer_message.buffer_shm_path, buffer_shm_path.c_str()) == 0;
+                                    });
                                     _consumer_messages_by_stream[stream].push_back(message);
                                 }
                             }
@@ -208,11 +208,7 @@ MomentumContext::MomentumContext() {
                                         }
 
                                         if (message != NULL) {
-                                            if (_blocking) {
-                                                force_send(consumer_mq, message, sizeof(Message));
-                                            } else {
-                                                send(consumer_mq, message, sizeof(Message));
-                                            }
+                                            force_send(consumer_mq, message, sizeof(Message));
                                         }
                                     }
                                 }    
@@ -569,76 +565,82 @@ bool MomentumContext::read(std::string stream, callback_t callback) {
         return false;
     } 
 
-    Buffer* buffer;
+    Buffer* buffer = NULL;
+    bool has_next = true;
+    Message buffer_message;
+    while (has_next) {
+        { 
+            std::lock_guard<std::mutex> lock(_message_mutex);
+            if (_consumer_messages_by_stream[stream].size() == 0) {
+                return false;
+            }
 
-    { 
-        std::lock_guard<std::mutex> lock(_message_mutex);
-        if (_consumer_messages_by_stream.count(stream) == 0) {
-            return false;
-        }
-
-        Message buffer_message;
-        while (_consumer_messages_by_stream[stream].size() > 0) {
-            // pull a buffer message
             buffer_message = _consumer_messages_by_stream[stream].front();
             _consumer_messages_by_stream[stream].pop_front();
 
-            {
-                std::lock_guard<std::mutex> lock(_buffer_mutex);
-                buffer = _buffer_by_shm_path[buffer_message.buffer_message.buffer_shm_path];
-            }
+            has_next = _consumer_messages_by_stream[stream].size() > 0;
+        }
 
-            // attempt to acquire the lock on this buffer
-            if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
-                // could not acquire, skip to next message
-                continue;
-            }
+        {
+            std::lock_guard<std::mutex> lock(_buffer_mutex);
+            buffer = _buffer_by_shm_path[buffer_message.buffer_message.buffer_shm_path];
+        }
+            
+        // attempt to acquire the lock on this buffer
+        if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
+            // could not acquire, skip to next message
+            buffer = NULL;
+            continue;
+        }
 
-            // Ensure the buffer has the same has the same modified time as was provided in the message
-            uint64_t buffer_write_ts;
-            get_shm_time(buffer->shm_path, NULL, &buffer_write_ts);
-            if (buffer_message.buffer_message.ts != buffer_write_ts) {
-                // this message is old, so continue to the next
-                flock(buffer->fd, LOCK_UN | LOCK_NB);
-                continue; 
-            }
+        // Ensure the buffer has the same has the same modified time as was provided in the message
+        uint64_t buffer_write_ts;
+        get_shm_time(buffer->shm_path, NULL, &buffer_write_ts);
+        if (buffer_message.buffer_message.ts != buffer_write_ts) {
+            // this message is old, so unlock and continue to the next
+            flock(buffer->fd, LOCK_UN | LOCK_NB);
+            buffer = NULL;
+            continue; 
+        }
 
-            // if we made it here, we were able to access the buffer!
+        // if we made it here, we were able to access the buffer!
+        break;
+    }
 
-            // update buffer access (read) time
-            set_shm_time(buffer->shm_path, now(), 0);
+    if (buffer == NULL) {
+        return false;
+    }
 
-            // invoke the callback function
-            callback(
-                buffer->address, 
-                buffer_message.buffer_message.data_length, 
-                buffer_message.buffer_message.ts, 
-                buffer_message.buffer_message.id
-            );  
+    // update buffer access (read) time
+    set_shm_time(buffer->shm_path, now(), 0);
 
-            if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
-                std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
-            }
+    // invoke the callback function
+    callback(
+        buffer->address, 
+        buffer_message.buffer_message.data_length, 
+        buffer_message.buffer_message.ts, 
+        buffer_message.buffer_message.id
+    );  
 
-            // if the producer who sent this message is in blocking mode, send them the ack
-            if (buffer_message.buffer_message.blocking) {
-                std::lock_guard<std::mutex> lock(_producer_mutex);
-                
-                Message ack_message;
-                ack_message.type = Message::ACK_MESSAGE;
-                ack_message.ack_message.id = buffer_message.buffer_message.id;
-                ack_message.ack_message.pid = _pid;
+    if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
+        std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
+    }
 
-                if (!force_send(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
-                    std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
-                }
-            }
+    // if the producer who sent this message is in blocking mode, send them the ack
+    if (buffer_message.buffer_message.blocking) {
+        std::lock_guard<std::mutex> lock(_producer_mutex);
+        
+        Message ack_message;
+        ack_message.type = Message::ACK_MESSAGE;
+        ack_message.ack_message.id = buffer_message.buffer_message.id;
+        ack_message.ack_message.pid = _pid;
 
-            return true;
+        if (!force_send(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
+            std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
         }
     }
 
-    return false;
+    return true;
 }
 
 
@@ -753,7 +755,7 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
                 return false;
             }
         } else {
-            send(consumer_mq, message, sizeof(Message));
+            force_send(consumer_mq, message, sizeof(Message));
         } 
     }
 
@@ -1094,7 +1096,6 @@ bool MomentumContext::force_send(mqd_t mq, Message* message, size_t length, int 
         if (errno == EAGAIN) {
             // recipient was busy, so try again with higher priority 
             priority++;
-            std::cout << "Trying again for message " << message->type <<  " with priority " << priority << std::endl;
             if (usleep(1) < 0) {
                 return false;
             }
