@@ -190,17 +190,20 @@ MomentumContext::MomentumContext() {
                                         }
                                     }
 
+                                    std::list<Buffer*> buffers;
                                     {
                                         // send the list of buffers to the consumer on subscribe
                                         std::lock_guard<std::mutex> buffer_lock(_buffer_mutex);
-                                        for (auto const& buffer : _buffers_by_stream[stream]) {
-                                            std::unique_lock<std::mutex> message_lock(_message_mutex);
-                                            if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
-                                                Message* message = _producer_message_by_shm_path[buffer->shm_path];
-                                                force_send(consumer_mq, message, sizeof(Message));
-                                            }
-                                        }                                        
+                                        buffers = _buffers_by_stream[stream];
                                     }
+
+                                    for (auto const& buffer : buffers) {
+                                        std::unique_lock<std::mutex> message_lock(_message_mutex);
+                                        if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
+                                            Message* message = _producer_message_by_shm_path[buffer->shm_path];
+                                            force_send(consumer_mq, message, sizeof(Message));
+                                        }
+                                    }                                        
                                 }    
 
                                 _consumer_availability.notify_all();

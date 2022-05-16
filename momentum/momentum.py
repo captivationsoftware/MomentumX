@@ -178,8 +178,8 @@ class Context:
         return True
 
     def read(self, stream, func):
-        if not self.is_subscribed(stream):
-            raise Exception(f'Not subscribed to stream "{stream}"')
+        # if not self.is_subscribed(stream):
+        #     raise Exception(f'Not subscribed to stream "{stream}"')
 
         func_id = id(func)
 
@@ -187,16 +187,16 @@ class Context:
             @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
             def wrapped_func(data_address, data_length, ts, iteration):
                 # data_pointer = ctypes.cast(data_address, ctypes.POINTER(ctypes.c_uint8 * data_length))
-                # data = bytearray(data_pointer.contents[:])
-                data = None
-                func(data, data_length, ts, iteration)
-            
+                # data = bytearray(data_pointer.contents[:data_length])
+                # func(memoryview(data), data_length, ts, iteration)
+                func(None, data_length, ts, iteration)
+
             self._wrapped_funcs_by_id[func_id] = wrapped_func
 
         return bool(
             lib.momentum_read(
                 self._context,
-                stream.encode() if isinstance(stream, str) else stream,
+                stream, #stream.encode() if isinstance(stream, str) else stream,
                 self._wrapped_funcs_by_id[func_id]
             )
         )
