@@ -169,13 +169,13 @@ class Context:
                     wrapped_callback            )
             )
 
-            if not success:
+            if success:
+                if stream not in self._callback_by_id_by_stream:
+                    self._callback_by_id_by_stream[stream] = {}
+
+                self._callback_by_id_by_stream[stream][callback_id] = wrapped_callback
+            else:
                 return False
-
-        if stream not in self._callback_by_id_by_stream:
-            self._callback_by_id_by_stream[stream] = {}
-
-        self._callback_by_id_by_stream[stream][callback_id] = wrapped_callback
 
         return True
 

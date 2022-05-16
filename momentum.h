@@ -19,7 +19,6 @@
 typedef const void (*callback_t)(uint8_t* , size_t, size_t, uint64_t);
 
 static const std::string PATH_DELIM = "_";
-static const std::string MESSAGE_DELIM = " ";
 static const std::string NAMESPACE = "momentum";
 static const std::string DEBUG_PREFIX = "[" + NAMESPACE + "]: ";
 static const std::string PROTOCOL = NAMESPACE + "://";
@@ -31,13 +30,6 @@ static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for 
 static const uint64_t NANOS_PER_SECOND = 1000000000;
 static const mode_t MQ_MODE = 0644;
 
-static const size_t MAX_MESSAGE_SIZE = 1024;
-
-static const char MESSAGE_TYPE_SUBSCRIBE = 1;
-static const char MESSAGE_TYPE_UNSUBSCRIBE = 2;
-static const char MESSAGE_TYPE_BUFFER = 3;
-static const char MESSAGE_TYPE_ACK = 4;
-static const char MESSAGE_TYPE_TERM = 5;
 static const char ADMIN_MESSAGE_ID = -1;
 
 static const struct timespec MESSAGE_TIMEOUT {
@@ -51,6 +43,32 @@ struct Buffer {
     int fd;
     size_t length;
     uint8_t* address;
+};
+
+struct Message {
+    enum{SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, BUFFER_MESSAGE, ACK_MESSAGE, TERM_MESSAGE} type;
+    union { 
+        struct {
+            char stream[MAX_STREAM_SIZE];
+            pid_t pid;
+        } subscription_message;
+        struct {
+            char stream[MAX_STREAM_SIZE];
+        } term_message;
+        struct {
+            char stream[MAX_STREAM_SIZE];
+            long long int id;
+            char buffer_shm_path[MAX_PATH_SIZE];
+            size_t buffer_length;
+            size_t data_length;
+            uint64_t ts;
+            bool blocking;
+        } buffer_message;
+        struct {
+            long long int id;
+            pid_t pid;
+        } ack_message;
+    };
 };
 
 class MomentumContext {
@@ -107,6 +125,7 @@ private:
 
     std::map<std::string, long long int> _message_id_by_stream;
     std::map<std::string, long long int> _last_message_id_by_stream;
+    std::map<std::string, Message*> _last_message_by_shm_path;
     std::map<pid_t, std::set<long long int>> _message_ids_pending_by_pid;
     std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
     std::condition_variable _consumer_availability, _acks;
@@ -117,7 +136,6 @@ private:
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
     void resize_buffer(Buffer* buffer, size_t length, bool truncate=false);
     void deallocate_buffer(Buffer* buffer);
-    bool notify_buffer(const mqd_t& consumer_mq, Buffer* buffer, std::string stream, size_t data_length, uint64_t ts, long long int message_id, bool force);
     std::string to_shm_path(pid_t pid, const std::string& stream, uint64_t id) const;
     void shm_iter(const std::function<void(std::string)> callback);
     void get_shm_time(const std::string& shm_path, uint64_t* read_ts, uint64_t* write_ts);
@@ -133,8 +151,8 @@ private:
 
     // Utility functions
     uint64_t now() const;    
-    bool send(mqd_t mq, const std::string& message, int priority=1);
-    bool force_send(mqd_t mq, const std::string& message, int priority=1);
+    bool send(mqd_t mq, Message* message, size_t length, int priority=1);
+    bool force_send(mqd_t mq, Message* message, size_t length, int priority=1);
     
 };
 
