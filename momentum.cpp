@@ -107,15 +107,7 @@ MomentumContext::MomentumContext() {
                         case Message::TERM_MESSAGE:
                             {
                                 std::string stream(message.term_message.stream);
-                                std::vector<callback_t> callbacks;
-                                {
-                                    std::lock_guard<std::mutex> lock(_consumer_mutex);
-                                    callbacks = _callbacks_by_stream[stream];
-                                }
-
-                                for (auto const& callback : callbacks) {
-                                    unsubscribe(stream, callback, false);
-                                }
+                                unsubscribe(stream, false);
                             }
 
                             break;
@@ -126,21 +118,16 @@ MomentumContext::MomentumContext() {
                                 std::string stream(message.buffer_message.stream);
                                 std::string buffer_shm_path(message.buffer_message.buffer_shm_path);
                                 size_t buffer_length = message.buffer_message.buffer_length;
-                                size_t data_length = message.buffer_message.data_length; 
-                                uint64_t ts = message.buffer_message.ts;
                                 long long int message_id = message.buffer_message.id;
-                                bool blocking = message.buffer_message.blocking;
-
-                                if (message_id != ADMIN_MESSAGE_ID) { 
-                                    std::lock_guard<std::mutex> lock(_message_mutex);
-                                    if (message_id <= _last_message_id_by_stream[stream]) {
-                                        if (_debug) {
-                                            std::cout << DEBUG_PREFIX << "Received stale/duplicate message id: " << message_id << std::endl;
-                                        }
-                                        continue;
+                                
+                                std::lock_guard<std::mutex> lock(_message_mutex);
+                                if (message_id <= _last_message_id_by_stream[stream]) {
+                                    if (_debug) {
+                                        std::cout << DEBUG_PREFIX << "Received stale/duplicate message id: " << message_id << std::endl;
                                     }
-                                    _last_message_id_by_stream[stream] = message_id;
+                                    continue;
                                 }
+                                _last_message_id_by_stream[stream] = message_id;
 
                                 Buffer* buffer;    
                                 bool is_new_buffer;
@@ -163,50 +150,11 @@ MomentumContext::MomentumContext() {
                                     }
                                 }
                                 
-                                // with the file locked, do a quick validity check to ensure the buffer has the same
-                                // modified time as was provided in the message
-                                uint64_t buffer_write_ts;
-                                get_shm_time(buffer_shm_path, NULL, &buffer_write_ts);
-
-                                bool buffer_unlinked = buffer_write_ts == 0;
-                            
-                                // if the producer who sent this message is in blocking mode, send them the ack
-                                if (blocking) {
-                                    std::lock_guard<std::mutex> lock(_producer_mutex);
-                                    
-                                    Message message;
-                                    message.type = Message::ACK_MESSAGE;
-                                    message.ack_message.id = message_id;
-                                    message.ack_message.pid = _pid;
-
-                                    if (!force_send(_producer_mq_by_stream[stream], &message, sizeof(Message))) {
-                                        std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
-                                    }
-                                }
-
-
-                                if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
-                                    continue;
-                                }
-
-                                // if we made it here, we were able to access the buffer!
-                                
-                                if (buffer_unlinked || ts == buffer_write_ts) {
-                                    // update buffer access (read) time
-                                    set_shm_time(buffer_shm_path, now(), 0);
-                                    
+                                // add to queue
+                                { 
                                     std::lock_guard<std::mutex> lock(_consumer_mutex);
-                                    for (auto const& callback : _callbacks_by_stream[stream]) {
-                                        callback(buffer->address, data_length, buffer_length, message_id);  
-                                    }
-                                } else {
-                                    // too late
+                                    _consumer_messages_by_stream[stream].push_back(message);
                                 }
-
-                                if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
-                                    std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
-                                }
-
                             }
 
                             break;
@@ -242,13 +190,9 @@ MomentumContext::MomentumContext() {
                                         std::lock_guard<std::mutex> buffer_lock(_buffer_mutex);
                                         for (auto const& buffer : _buffers_by_stream[stream]) {
                                             std::unique_lock<std::mutex> message_lock(_message_mutex);
-                                            if (_last_message_by_shm_path.count(buffer->shm_path) > 0) {
-                                                Message* message = _last_message_by_shm_path[buffer->shm_path];
-                                                if (_blocking) {
-                                                    force_send(consumer_mq, message, sizeof(Message));
-                                                } else {
-                                                    send(consumer_mq, message, sizeof(Message));
-                                                }
+                                            if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
+                                                Message* message = _producer_message_by_shm_path[buffer->shm_path];
+                                                force_send(consumer_mq, message, sizeof(Message));
                                             }
                                         }                                        
                                     }
@@ -358,9 +302,7 @@ bool MomentumContext::term() {
 
     // for every stream we are consuming, issue an unsubscribe
     for (auto const& stream : _consumer_streams) {
-        for (auto const& callback : _callbacks_by_stream[stream]) {
-            unsubscribe(stream, callback);
-        }
+        unsubscribe(stream);
     }
     
     // for every stream we are producing, notify the consumers that we are terminating
@@ -399,32 +341,6 @@ bool MomentumContext::term() {
     return true;
 };
 
-bool MomentumContext::is_subscribed(std::string stream, callback_t callback) {
-    if (_terminated) return false;
-
-    normalize_stream(stream); 
-    if (!is_valid_stream(stream)) {
-        if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
-        }
-        return false;
-    }
-
-    { 
-        std::lock_guard<std::mutex> lock(_consumer_mutex);
-        if (_callbacks_by_stream.count(stream) > 0) {
-            std::vector<callback_t>::iterator begin = _callbacks_by_stream[stream].begin();
-            std::vector<callback_t>::iterator end = _callbacks_by_stream[stream].end();
-
-            bool contains_callback = std::find(begin, end, callback) != end;
-            
-            return contains_callback;
-        }
-    }
-
-    return false;
-}
-
 bool MomentumContext::is_stream_available(std::string stream) {
     if (_terminated) return false;
 
@@ -446,7 +362,24 @@ bool MomentumContext::is_stream_available(std::string stream) {
     }
 }
 
-bool MomentumContext::subscribe(std::string stream, callback_t callback) {
+
+bool MomentumContext::is_subscribed(std::string stream) {
+    if (_terminated) return false;
+
+    normalize_stream(stream); 
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
+        }
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(_consumer_mutex);
+    bool contains_stream = std::find(_consumer_streams.begin(), _consumer_streams.end(), stream) != _consumer_streams.end();
+    return contains_stream;
+}
+
+bool MomentumContext::subscribe(std::string stream) {
     if (_terminated) return false;
 
     normalize_stream(stream); 
@@ -515,12 +448,6 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
         }
         _consumer_mqs_by_stream[stream].push_back(consumer_mq);
 
-
-        if (!_callbacks_by_stream.count(stream)) {
-            _callbacks_by_stream[stream] = std::vector<callback_t>();
-        }
-        _callbacks_by_stream[stream].push_back(callback);
-    
         _consumer_streams.insert(stream);
     }
 
@@ -536,7 +463,7 @@ bool MomentumContext::subscribe(std::string stream, callback_t callback) {
     return true;
 }
 
-bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool notify) {
+bool MomentumContext::unsubscribe(std::string stream, bool notify) {
     if (_terminated) return false; // only disallow terminated if we are truly terminated (i.e. not terminating)
 
     normalize_stream(stream);
@@ -596,19 +523,13 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
             mq_close(consumer_mq);
         }
         _consumer_mqs_by_stream.erase(stream);
-        
+        _consumer_messages_by_stream.erase(stream);
         _consumer_streams.erase(stream);
+    }
 
-        if (_callbacks_by_stream.count(stream) > 0) {
-            _callbacks_by_stream[stream].erase(
-                std::remove(
-                    _callbacks_by_stream[stream].begin(), 
-                    _callbacks_by_stream[stream].end(), 
-                    callback
-                ), 
-                _callbacks_by_stream[stream].end()
-            );
-        }
+    {
+        std::lock_guard<std::mutex> lock(_message_mutex); 
+        _last_message_id_by_stream.erase(stream);
     }
 
     if (_debug) {
@@ -617,6 +538,79 @@ bool MomentumContext::unsubscribe(std::string stream, callback_t callback, bool 
 
     return true;
 }
+
+bool MomentumContext::read(std::string stream, callback_t callback) {
+    Buffer* buffer;
+
+    { 
+        std::lock_guard<std::mutex> lock(_consumer_mutex);
+        if (_consumer_messages_by_stream.count(stream) == 0) {
+            return false;
+        }
+
+        Message buffer_message;
+        while (_consumer_messages_by_stream[stream].size() > 0) {
+            // pull a buffer message
+            buffer_message = _consumer_messages_by_stream[stream].front();
+            _consumer_messages_by_stream[stream].pop_front();
+
+            {
+                std::lock_guard<std::mutex> lock(_buffer_mutex);
+                buffer = _buffer_by_shm_path[buffer_message.buffer_message.buffer_shm_path];
+            }
+
+            // Ensure the buffer has the same has the same modified time as was provided in the message
+            uint64_t buffer_write_ts;
+            get_shm_time(buffer->shm_path, NULL, &buffer_write_ts);
+            if (buffer_message.buffer_message.ts != buffer_write_ts) {
+                // this message is old, so continue to the next
+                continue; 
+            }
+
+            // attempt to acquire the lock on this buffer
+            if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
+                // could not acquire, skip to next message
+                continue;
+            }
+
+            // if we made it here, we were able to access the buffer!
+
+            // update buffer access (read) time
+            set_shm_time(buffer->shm_path, now(), 0);
+
+            // invoke the callback function
+            callback(
+                buffer->address, 
+                buffer_message.buffer_message.data_length, 
+                buffer_message.buffer_message.ts, 
+                buffer_message.buffer_message.id
+            );  
+
+            if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
+                std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
+            }
+
+            // if the producer who sent this message is in blocking mode, send them the ack
+            if (buffer_message. buffer_message.blocking) {
+                std::lock_guard<std::mutex> lock(_producer_mutex);
+                
+                Message ack_message;
+                ack_message.type = Message::ACK_MESSAGE;
+                ack_message.ack_message.id = buffer_message.buffer_message.id;
+                ack_message.ack_message.pid = _pid;
+
+                if (!force_send(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
+                    std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
 
 bool MomentumContext::send_string(std::string stream, const char* data, size_t length, uint64_t ts) {
     if (_terminated) return false;
@@ -693,10 +687,10 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
     // index this message by buffer shm path
     {
         std::lock_guard<std::mutex> lock(_message_mutex);
-        if (_last_message_by_shm_path.count(buffer->shm_path) > 0) {
-            delete _last_message_by_shm_path[buffer->shm_path];
+        if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
+            delete _producer_message_by_shm_path[buffer->shm_path];
         }
-        _last_message_by_shm_path[buffer->shm_path] = message;
+        _producer_message_by_shm_path[buffer->shm_path] = message;
     }
 
     // send our message to each consumer
@@ -729,7 +723,7 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
                 return false;
             }
         } else {
-            send(consumer_mq, message, sizeof(Message));
+            force_send(consumer_mq, message, sizeof(Message));
         } 
     }
 
@@ -1225,16 +1219,20 @@ bool momentum_is_stream_available(MomentumContext* ctx, const char* stream) {
     return ctx->is_stream_available(std::string(stream));
 }
 
-bool momentum_is_subscribed(MomentumContext* ctx, const char* stream, callback_t callback) {
-    return ctx->is_subscribed(std::string(stream), callback);
+bool momentum_is_subscribed(MomentumContext* ctx, const char* stream) {
+    return ctx->is_subscribed(std::string(stream));
 }
 
-bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
-    return ctx->subscribe(std::string(stream), callback);
+bool momentum_subscribe(MomentumContext* ctx, const char* stream) {
+    return ctx->subscribe(std::string(stream));
 }
 
-bool momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback) {
-    return ctx->unsubscribe(std::string(stream), callback);
+bool momentum_unsubscribe(MomentumContext* ctx, const char* stream) {
+    return ctx->unsubscribe(std::string(stream));
+}
+
+bool momentum_read(MomentumContext* ctx, const char* stream, callback_t callback) {
+    return ctx->read(std::string(stream), callback);
 }
 
 bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts) {

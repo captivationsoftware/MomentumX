@@ -44,14 +44,17 @@ lib.momentum_is_terminated_restype = ctypes.c_bool
 lib.momentum_is_stream_available.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
 lib.momentum_is_stream_available_restype = ctypes.c_bool
 
-lib.momentum_is_subscribed.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p,)
+lib.momentum_is_subscribed.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
 lib.momentum_is_subscribed_restype = ctypes.c_bool
 
-lib.momentum_subscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p,)
+lib.momentum_subscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
 lib.momentum_subscribe_restype = ctypes.c_bool
 
-lib.momentum_unsubscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p,)
+lib.momentum_unsubscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
 lib.momentum_unsubscribe_restype = ctypes.c_bool
+
+lib.momentum_read.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p,)
+lib.momentum_read.restype = ctypes.c_bool
 
 lib.momentum_send_string.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint64,)
 lib.momentum_send_string.restype = ctypes.c_bool
@@ -74,7 +77,6 @@ class Context:
     # Constructor
     def __init__(self):
         self._context = lib.momentum_context()
-        self._callback_by_id_by_stream = {}
 
     # Destructor
     def __del__(self):
@@ -134,85 +136,63 @@ class Context:
             )
         )
     
-    def is_subscribed(self, stream, callback):
-        callback_id = id(callback)
-        if not stream in self._callback_by_id_by_stream:
-            return False
-        elif not callback_id in self._callback_by_id_by_stream[stream]:
-            return False
-        else:
-            return bool(
-                lib.momentum_is_subscribed(
-                    self._context, 
-                    stream.encode() if isinstance(stream, str) else stream, 
-                    self._callback_by_id_by_stream[stream][callback_id]
-                )
-            )
-
-    def try_subscribe(self, stream, callback):
-        if not self.is_stream_available:
-            raise Exception(f'Stream "{stream}" not available')
-
-        callback_id = id(callback)
-
-        if not self.is_subscribed(stream, callback):
-
-            @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_size_t, ctypes.c_longlong)
-            def wrapped_callback(data, data_length, buffer_length, message_id):
-                memory = ctypes.cast(data, ctypes.POINTER(ctypes.c_char * data_length))
-                callback(memory.contents[:], data_length, buffer_length, message_id)
-
-            success = bool(
-                lib.momentum_subscribe(
-                    self._context, 
-                    stream.encode() if isinstance(stream, str) else stream,
-                    wrapped_callback            )
-            )
-
-            if success:
-                if stream not in self._callback_by_id_by_stream:
-                    self._callback_by_id_by_stream[stream] = {}
-
-                self._callback_by_id_by_stream[stream][callback_id] = wrapped_callback
-            else:
-                return False
-
-        return True
-
-    def unsubscribe(self, stream, callback):
-        callback_id = id(callback)
-
-        if not stream in self._callback_by_id_by_stream:
-            return False
-        
-        elif not callback_id in self._callback_by_id_by_stream[stream]:
-            return False
-
-        success = bool(
-            lib.momentum_unsubscribe(
+    def is_subscribed(self, stream):
+        return bool(
+            lib.momentum_is_subscribed(
                 self._context, 
-                stream.encode() if isinstance(stream, str) else stream,
-                self._callback_by_id_by_stream[stream][callback_id]
+                stream.encode() if isinstance(stream, str) else stream
             )
         )
 
-        if success:
-            del self._callback_by_id_by_stream[stream][callback_id]
+    def unsubscribe(self, stream):
+        return bool(
+            lib.momentum_unsubscribe(
+                self._context, 
+                stream.encode() if isinstance(stream, str) else stream
+            )
+        )
 
-            if len(self._callback_by_id_by_stream[stream]) == 0:
-                del self._callback_by_id_by_stream[stream]
-        
-        return success
+    def try_subscribe(self, stream):
+        if not self.is_stream_available:
+            raise Exception(f'Stream "{stream}" not available')
 
+        if not self.is_subscribed(stream):
+            return bool(
+                lib.momentum_subscribe(
+                    self._context, 
+                    stream.encode() if isinstance(stream, str) else stream
+                )
+            )
 
-    def subscribe(self, stream, callback):
-        if self.is_subscribed(stream, callback):
+        return True
+
+    def subscribe(self, stream):
+        if self.is_subscribed(stream):
             return True
 
-        while not self.try_subscribe(stream, callback):
+        while not self.try_subscribe(stream):
             time.sleep(1)
 
         return True
+
+    def read(self, stream, func):
+        if not self.is_subscribed(stream):
+            raise Exception(f'Not subscribed to stream "{stream}"')
+
+        @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
+        def wrapped_func(data_address, data_length, ts, iteration):
+            data_pointer = ctypes.cast(data_address, ctypes.POINTER(ctypes.c_uint8 * data_length))
+            data = bytearray(data_pointer.contents[:])
+            func(data, ts, iteration)
+
+        return bool(
+            lib.momentum_read(
+                self._context,
+                stream.encode() if isinstance(stream, str) else stream,
+                wrapped_func
+            )
+        )
+
 
     def send_string(self, stream, data, data_length = -1, ts = 0):
         if (data_length == -1):

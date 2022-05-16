@@ -16,7 +16,7 @@
 #include <condition_variable>
 #include <cstdint>
 
-typedef const void (*callback_t)(uint8_t* , size_t, size_t, uint64_t);
+typedef const void (*callback_t)(uint8_t*, size_t, uint64_t, long long int);
 
 static const std::string PATH_DELIM = "_";
 static const std::string NAMESPACE = "momentum";
@@ -29,8 +29,6 @@ static const size_t MAX_STREAM_SIZE = 128; // 32 chars for stream name, and 11 f
 static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for the leading slash
 static const uint64_t NANOS_PER_SECOND = 1000000000;
 static const mode_t MQ_MODE = 0644;
-
-static const char ADMIN_MESSAGE_ID = -1;
 
 static const struct timespec MESSAGE_TIMEOUT {
     0,
@@ -79,9 +77,10 @@ public:
     bool is_terminated() const;
     bool term();
     bool is_stream_available(std::string stream);
-    bool is_subscribed(std::string stream, callback_t callback);
-    bool subscribe(std::string stream, callback_t callback);
-    bool unsubscribe(std::string stream, callback_t callback, bool notify=true);
+    bool is_subscribed(std::string stream);
+    bool subscribe(std::string stream);
+    bool unsubscribe(std::string stream, bool notify=true);
+    bool read(std::string stream, callback_t callback);
     bool send_string(std::string stream, const char* data, size_t length, uint64_t ts=0);
     Buffer* acquire_buffer(std::string stream, size_t length);
     bool release_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
@@ -117,15 +116,14 @@ private:
     std::map<mqd_t, pid_t> _pid_by_consumer_mq;
     std::map<std::string, mqd_t> _mq_by_mq_name;
 
-    std::map<std::string, std::vector<callback_t>> _callbacks_by_stream;
-
     std::map<std::string, std::list<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     std::map<std::string, Buffer*> _last_acquired_buffer_by_stream;
 
     std::map<std::string, long long int> _message_id_by_stream;
     std::map<std::string, long long int> _last_message_id_by_stream;
-    std::map<std::string, Message*> _last_message_by_shm_path;
+    std::map<std::string, Message*> _producer_message_by_shm_path;
+    std::map<std::string, std::list<Message>> _consumer_messages_by_stream;
     std::map<pid_t, std::set<long long int>> _message_ids_pending_by_pid;
     std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
     std::condition_variable _consumer_availability, _acks;
@@ -178,10 +176,12 @@ extern "C" {
 
     bool momentum_is_stream_available(MomentumContext* ctx, const char* stream);
 
-    bool momentum_is_subscribed(MomentumContext* ctx, const char* stream, callback_t callback);
-    bool momentum_subscribe(MomentumContext* ctx, const char* stream, callback_t callback);
-    bool momentum_unsubscribe(MomentumContext* ctx, const char* stream, callback_t callback);
+    bool momentum_is_subscribed(MomentumContext* ctx, const char* stream);
+    bool momentum_subscribe(MomentumContext* ctx, const char* stream);
+    bool momentum_unsubscribe(MomentumContext* ctx, const char* stream);
     
+    bool momentum_read(MomentumContext* ctx, const char* stream, callback_t callback);
+
     bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts);
     
     Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length);
