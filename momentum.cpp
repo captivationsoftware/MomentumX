@@ -197,13 +197,24 @@ MomentumContext::MomentumContext() {
                                         buffers = _buffers_by_stream[stream];
                                     }
 
+
+                                    Message* message = NULL;
                                     for (auto const& buffer : buffers) {
-                                        std::unique_lock<std::mutex> message_lock(_message_mutex);
-                                        if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
-                                            Message* message = _producer_message_by_shm_path[buffer->shm_path];
-                                            force_send(consumer_mq, message, sizeof(Message));
+                                        {
+                                            std::unique_lock<std::mutex> message_lock(_message_mutex);
+                                            if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
+                                                message = _producer_message_by_shm_path[buffer->shm_path];
+                                            }
                                         }
-                                    }                                        
+
+                                        if (message != NULL) {
+                                            if (_blocking) {
+                                                force_send(consumer_mq, message, sizeof(Message));
+                                            } else {
+                                                send(consumer_mq, message, sizeof(Message));
+                                            }
+                                        }
+                                    }
                                 }    
 
                                 _consumer_availability.notify_all();
@@ -742,7 +753,7 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
                 return false;
             }
         } else {
-            force_send(consumer_mq, message, sizeof(Message));
+            send(consumer_mq, message, sizeof(Message));
         } 
     }
 
@@ -1083,6 +1094,7 @@ bool MomentumContext::force_send(mqd_t mq, Message* message, size_t length, int 
         if (errno == EAGAIN) {
             // recipient was busy, so try again with higher priority 
             priority++;
+            std::cout << "Trying again for message " << message->type <<  " with priority " << priority << std::endl;
             if (usleep(1) < 0) {
                 return false;
             }

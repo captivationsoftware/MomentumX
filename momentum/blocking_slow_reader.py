@@ -5,7 +5,7 @@ import time
 from momentum import Context
 
 def on_read(data, data_length, ts, iteration):
-    print(data)
+    print(data[:data_length])
     time.sleep(1)
 
 STREAM = b'momentum://incrementer'
