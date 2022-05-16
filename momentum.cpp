@@ -120,14 +120,16 @@ MomentumContext::MomentumContext() {
                                 size_t buffer_length = message.buffer_message.buffer_length;
                                 long long int message_id = message.buffer_message.id;
                                 
-                                std::lock_guard<std::mutex> lock(_message_mutex);
-                                if (message_id <= _last_message_id_by_stream[stream]) {
-                                    if (_debug) {
-                                        std::cout << DEBUG_PREFIX << "Received stale/duplicate message id: " << message_id << std::endl;
+                                {
+                                    std::lock_guard<std::mutex> lock(_message_mutex);
+                                    if (message_id <= _last_message_id_by_stream[stream]) {
+                                        if (_debug) {
+                                            std::cout << DEBUG_PREFIX << "Received stale/duplicate message id: " << message_id << std::endl;
+                                        }
+                                        continue;
                                     }
-                                    continue;
+                                    _last_message_id_by_stream[stream] = message_id;
                                 }
-                                _last_message_id_by_stream[stream] = message_id;
 
                                 Buffer* buffer;    
                                 bool is_new_buffer;
@@ -149,10 +151,13 @@ MomentumContext::MomentumContext() {
                                         resize_buffer(buffer, buffer_length);
                                     }
                                 }
-                                
+
                                 // add to queue
                                 { 
-                                    std::lock_guard<std::mutex> lock(_consumer_mutex);
+                                    std::lock_guard<std::mutex> lock(_message_mutex);
+                                    // _consumer_messages_by_stream[stream].remove_if([&](Message& m) { 
+                                    //     return strcmp(m.buffer_message.buffer_shm_path, buffer_shm_path.c_str()) == 0;
+                                    // });
                                     _consumer_messages_by_stream[stream].push_back(message);
                                 }
                             }
@@ -403,7 +408,7 @@ bool MomentumContext::subscribe(std::string stream) {
     // ...and then open our own consumer mq
     struct mq_attr attrs;
     memset(&attrs, 0, sizeof(mq_attr));
-    attrs.mq_maxmsg = 1;
+    attrs.mq_maxmsg = 10;
     attrs.mq_msgsize = sizeof(Message);
     std::string consumer_mq_name = to_mq_name(_pid, stream);
     mqd_t consumer_mq = mq_open(consumer_mq_name.c_str(), O_RDWR | O_CREAT | O_NONBLOCK, MQ_MODE, &attrs);
@@ -523,13 +528,13 @@ bool MomentumContext::unsubscribe(std::string stream, bool notify) {
             mq_close(consumer_mq);
         }
         _consumer_mqs_by_stream.erase(stream);
-        _consumer_messages_by_stream.erase(stream);
         _consumer_streams.erase(stream);
     }
 
     {
         std::lock_guard<std::mutex> lock(_message_mutex); 
         _last_message_id_by_stream.erase(stream);
+        _consumer_messages_by_stream.erase(stream);
     }
 
     if (_debug) {
@@ -540,10 +545,20 @@ bool MomentumContext::unsubscribe(std::string stream, bool notify) {
 }
 
 bool MomentumContext::read(std::string stream, callback_t callback) {
+    if (_terminated) return false; // only disallow terminated if we are truly terminated (i.e. not terminating)
+
+    normalize_stream(stream);
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream " << stream << std::endl;
+        }
+        return false;
+    } 
+
     Buffer* buffer;
 
     { 
-        std::lock_guard<std::mutex> lock(_consumer_mutex);
+        std::lock_guard<std::mutex> lock(_message_mutex);
         if (_consumer_messages_by_stream.count(stream) == 0) {
             return false;
         }
@@ -559,18 +574,19 @@ bool MomentumContext::read(std::string stream, callback_t callback) {
                 buffer = _buffer_by_shm_path[buffer_message.buffer_message.buffer_shm_path];
             }
 
+            // attempt to acquire the lock on this buffer
+            if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
+                // could not acquire, skip to next message
+                continue;
+            }
+
             // Ensure the buffer has the same has the same modified time as was provided in the message
             uint64_t buffer_write_ts;
             get_shm_time(buffer->shm_path, NULL, &buffer_write_ts);
             if (buffer_message.buffer_message.ts != buffer_write_ts) {
                 // this message is old, so continue to the next
+                flock(buffer->fd, LOCK_UN | LOCK_NB);
                 continue; 
-            }
-
-            // attempt to acquire the lock on this buffer
-            if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
-                // could not acquire, skip to next message
-                continue;
             }
 
             // if we made it here, we were able to access the buffer!
@@ -591,7 +607,7 @@ bool MomentumContext::read(std::string stream, callback_t callback) {
             }
 
             // if the producer who sent this message is in blocking mode, send them the ack
-            if (buffer_message. buffer_message.blocking) {
+            if (buffer_message.buffer_message.blocking) {
                 std::lock_guard<std::mutex> lock(_producer_mutex);
                 
                 Message ack_message;
@@ -769,7 +785,7 @@ Buffer* MomentumContext::acquire_buffer(std::string stream, size_t length) {
         if (_producer_mq_by_stream.count(stream) == 0) {
             struct mq_attr attrs;
             memset(&attrs, 0, sizeof(mq_attr));
-            attrs.mq_maxmsg = 1;
+            attrs.mq_maxmsg = 10;
             attrs.mq_msgsize = sizeof(Message);
 
             std::string producer_mq_name = to_mq_name(0, stream);
