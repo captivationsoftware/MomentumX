@@ -213,8 +213,6 @@ MomentumContext::MomentumContext() {
                                     }
                                 }    
 
-                                _consumer_availability.notify_all();
-                                
                                 // unlink the consumer file so that it does not dangle around after all instances are closed
                                 mq_unlink(consumer_mq_name.c_str());
                             }    
@@ -254,7 +252,6 @@ MomentumContext::MomentumContext() {
                                         _message_ids_pending_by_pid.erase(pid);
                                     }
 
-                                    _consumer_availability.notify_all();
                                     _acks.notify_all();
 
                                     if (_debug) {
@@ -687,16 +684,12 @@ bool MomentumContext::release_buffer(Buffer* buffer, size_t length, uint64_t ts)
     std::vector<mqd_t> consumer_mqs;
 
     {
-        std::unique_lock<std::mutex> lock(_consumer_mutex);
-        if (_blocking) {
-            _consumer_availability.wait(
-                lock,
-                [&] { 
-                    return _consumer_mqs_by_stream[stream].size() > 0; 
-                }
-            );
-        }
+        std::lock_guard<std::mutex> lock(_consumer_mutex);
         consumer_mqs = _consumer_mqs_by_stream[stream];
+    }
+
+    if (consumer_mqs.size() == 0) {
+        return false;
     }
 
     long long int message_id;

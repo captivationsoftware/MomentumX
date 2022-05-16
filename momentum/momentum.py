@@ -199,8 +199,11 @@ class Context:
             )
         )
 
-
     def send_string(self, stream, data, data_length = -1, ts = 0):
+        while not self.try_send_string(stream, data, data_length, ts):
+            time.sleep(1)
+
+    def try_send_string(self, stream, data, data_length = -1, ts = 0):
         if (data_length == -1):
             data_length = len(data)
 
@@ -221,7 +224,12 @@ class Context:
             buffer_length
         )
 
+
     def release_buffer(self, buffer, data_length, ts = 0):
+        while not self.try_release_buffer(buffer, data_length, ts):
+            time.sleep(1)
+
+    def try_release_buffer(self, buffer, data_length, ts = 0):
         return lib.momentum_release_buffer(
             self._context, 
             buffer,
