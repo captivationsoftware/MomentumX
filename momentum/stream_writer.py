@@ -20,7 +20,7 @@ try:
         buffer = context.acquire_buffer(STREAM, data_length)
 
         if (buffer):
-            context.release_buffer(buffer, data_length, 0)
+            context.try_release_buffer(buffer, data_length, 0)
             messages_sent += 1
             bytes_sent += data_length
 
