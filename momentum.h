@@ -60,7 +60,7 @@ struct Message {
             size_t buffer_length;
             size_t data_length;
             uint64_t ts;
-            bool blocking;
+            bool sync;
         } buffer_message;
         struct {
             long long int id;
@@ -80,10 +80,9 @@ public:
     bool is_subscribed(std::string stream);
     bool subscribe(std::string stream);
     bool unsubscribe(std::string stream, bool notify=true);
-    bool read(std::string stream, callback_t callback);
-    bool send_string(std::string stream, const char* data, size_t length, uint64_t ts=0);
-    Buffer* acquire_buffer(std::string stream, size_t length);
-    bool release_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
+    Buffer* next_buffer(std::string stream, size_t length);
+    bool receive_buffer(std::string stream, callback_t callback);
+    bool send_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
 
     // getter / setters for options    
     bool get_debug();
@@ -92,8 +91,8 @@ public:
     void set_min_buffers(size_t value);
     size_t get_max_buffers();
     void set_max_buffers(size_t value);
-    bool get_blocking();
-    void set_blocking(bool value);
+    bool get_sync();
+    void set_sync(bool value);
     
 
 private:
@@ -102,7 +101,7 @@ private:
     pid_t _pid;
 
     std::atomic<bool> _debug{false};
-    std::atomic<bool> _blocking{false};
+    std::atomic<bool> _sync{false};
     std::atomic<bool>  _terminated{false};    
     std::atomic<bool>  _terminating{false};
     std::atomic<size_t> _min_buffers{1};
@@ -149,8 +148,8 @@ private:
 
     // Utility functions
     uint64_t now() const;    
-    bool send(mqd_t mq, Message* message, size_t length, int priority=1);
-    bool force_send(mqd_t mq, Message* message, size_t length, int priority=1);
+    bool notify(mqd_t mq, Message* message, size_t length, int priority=1);
+    bool force_notify(mqd_t mq, Message* message, size_t length, int priority=1);
     
 };
 
@@ -167,8 +166,8 @@ extern "C" {
     size_t momentum_get_max_buffers(MomentumContext* ctx);
     void momentum_set_max_buffers(MomentumContext* ctx, size_t value);
     
-    bool momentum_get_blocking(MomentumContext* ctx);
-    void momentum_set_blocking(MomentumContext* ctx, bool value);
+    bool momentum_get_sync(MomentumContext* ctx);
+    void momentum_set_sync(MomentumContext* ctx, bool value);
     
     bool momentum_term(MomentumContext* ctx);
     bool momentum_is_terminated(MomentumContext* ctx);
@@ -180,12 +179,10 @@ extern "C" {
     bool momentum_subscribe(MomentumContext* ctx, const char* stream);
     bool momentum_unsubscribe(MomentumContext* ctx, const char* stream);
     
-    bool momentum_read(MomentumContext* ctx, const char* stream, callback_t callback);
+    Buffer* momentum_next_buffer(MomentumContext* ctx, const char* stream, size_t length);
+    bool momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t data_length, uint64_t ts);
+    bool momentum_receive_buffer(MomentumContext* ctx, const char* stream, callback_t callback);
 
-    bool momentum_send_string(MomentumContext* ctx, const char* stream, const char* data, size_t length, uint64_t ts);
-    
-    Buffer* momentum_acquire_buffer(MomentumContext* ctx, const char* stream, size_t length);
-    bool momentum_release_buffer(MomentumContext* ctx, Buffer* buffer, size_t data_length, uint64_t ts);
     uint8_t* momentum_get_buffer_address(Buffer* buffer);
     size_t momentum_get_buffer_length(Buffer* buffer);
 }

@@ -1,9 +1,10 @@
 import ctypes
 import time
+import sys
 
 # C API mappings
 
-lib = ctypes.cdll.LoadLibrary("./libmomentum.so")
+lib = ctypes.cdll.LoadLibrary("../libmomentum.so")
 
 lib.momentum_context.argtypes = ()
 lib.momentum_context_restype = ctypes.c_void_p
@@ -26,11 +27,11 @@ lib.momentum_get_max_buffers.restype = ctypes.c_size_t
 lib.momentum_set_max_buffers.argtypes = (ctypes.c_void_p, ctypes.c_size_t,)
 lib.momentum_set_max_buffers.restype = None
 
-lib.momentum_get_blocking.argtypes = (ctypes.c_void_p,)
-lib.momentum_get_blocking.restype = ctypes.c_bool
+lib.momentum_get_sync.argtypes = (ctypes.c_void_p,)
+lib.momentum_get_sync.restype = ctypes.c_bool
 
-lib.momentum_set_blocking.argtypes = (ctypes.c_void_p, ctypes.c_bool,)
-lib.momentum_set_blocking.restype = None
+lib.momentum_set_sync.argtypes = (ctypes.c_void_p, ctypes.c_bool,)
+lib.momentum_set_sync.restype = None
 
 lib.momentum_term.argtypes = (ctypes.c_void_p,)
 lib.momentum_term_restype = ctypes.c_bool
@@ -53,17 +54,14 @@ lib.momentum_subscribe_restype = ctypes.c_bool
 lib.momentum_unsubscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
 lib.momentum_unsubscribe_restype = ctypes.c_bool
 
-lib.momentum_read.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p,)
-lib.momentum_read.restype = ctypes.c_bool
+lib.momentum_next_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,)
+lib.momentum_next_buffer.restype = ctypes.c_void_p
 
-lib.momentum_send_string.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint64,)
-lib.momentum_send_string.restype = ctypes.c_bool
+lib.momentum_send_buffer.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint64,)
+lib.momentum_send_buffer.restype = ctypes.c_bool
 
-lib.momentum_acquire_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,)
-lib.momentum_acquire_buffer.restype = ctypes.c_void_p
-
-lib.momentum_release_buffer.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint64,)
-lib.momentum_release_buffer.restype = ctypes.c_bool
+lib.momentum_receive_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p,)
+lib.momentum_receive_buffer.restype = ctypes.c_bool
 
 lib.momentum_get_buffer_address.argtypes = (ctypes.c_void_p,)
 lib.momentum_get_buffer_address.restype = ctypes.POINTER(ctypes.c_uint8)
@@ -77,9 +75,9 @@ class Context:
     # Constructor
     def __init__(self):
         self._context = lib.momentum_context()
-
-        self._wrapped_funcs_by_id = {}
-
+        self._wrapped_receive_buffer_by_id = {}
+        self._wrapped_receive_string_by_id = {}
+        
     # Destructor
     def __del__(self):
         self.term()
@@ -104,12 +102,12 @@ class Context:
         return lib.momentum_set_debug(self._context, value)
         
     @property
-    def blocking(self):
-        return lib.momentum_get_blocking(self._context)
+    def sync(self):
+        return lib.momentum_get_sync(self._context)
 
-    @blocking.setter
-    def blocking(self, value):
-        return lib.momentum_set_blocking(self._context, value)
+    @sync.setter
+    def sync(self, value):
+        return lib.momentum_set_sync(self._context, value)
         
     @property
     def min_buffers(self):
@@ -154,93 +152,181 @@ class Context:
             )
         )
 
-    def try_subscribe(self, stream):
+    def subscribe(self, stream, timeout=0, retry_interval=0.1):
         if not self.is_stream_available:
             raise Exception(f'Stream "{stream}" not available')
 
-        if not self.is_subscribed(stream):
-            return bool(
+        stream = stream.encode() if isinstance(stream, str) else stream
+
+        retry_interval = max(0.001, retry_interval)
+        attempts = max(1, int(timeout / retry_interval))
+
+        for _ in range(attempts):
+            if bool(
                 lib.momentum_subscribe(
-                    self._context, 
-                    stream.encode() if isinstance(stream, str) else stream
+                    self._context,
+                    stream
                 )
+            ):
+                return True
+            else:
+                time.sleep(retry_interval)    
+        
+        return False
+
+    def next_buffer(self, stream, buffer_length, timeout=0, retry_interval=0.01):
+        return Buffer(
+            lib.momentum_next_buffer(
+                self._context, 
+                stream.encode() if isinstance(stream, str) else stream,
+                int(buffer_length)
             )
+        )
 
-        return True
-
-    def subscribe(self, stream):
-        if self.is_subscribed(stream):
-            return True
-
-        while not self.try_subscribe(stream):
-            time.sleep(1)
-
-        return True
-
-    def read(self, stream, func):
+    def receive_buffer(self, stream, func, timeout=0, retry_interval=0.01):
         if not self.is_subscribed(stream):
             raise Exception(f'Not subscribed to stream "{stream}"')
 
+        stream = stream.encode() if isinstance(stream, str) else stream
+
         func_id = id(func)
 
-        if func_id not in self._wrapped_funcs_by_id:
+        if func_id not in self._wrapped_receive_buffer_by_id:
             @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
             def wrapped_func(data_address, data_length, ts, iteration):
-                data_pointer = ctypes.cast(data_address, ctypes.POINTER(ctypes.c_uint8 * data_length))
-                func(data_pointer.contents, data_length, ts, iteration)
+                func(Buffer(data_address), data_length, ts, iteration)
 
-            self._wrapped_funcs_by_id[func_id] = wrapped_func
+            self._wrapped_receive_buffer_by_id[func_id] = wrapped_func
 
-        return bool(
-            lib.momentum_read(
-                self._context,
-                stream.encode() if isinstance(stream, str) else stream,
-                self._wrapped_funcs_by_id[func_id]
-            )
-        )
+        retry_interval = max(0.001, retry_interval)
+        attempts = max(1, int(timeout / retry_interval))
 
-    def send_string(self, stream, data, data_length = -1, ts = 0):
-        while not self.try_send_string(stream, data, data_length, ts):
-            time.sleep(1)
-
-    def try_send_string(self, stream, data, data_length = -1, ts = 0):
-        if (data_length == -1):
-            data_length = len(data)
-
-        return bool(
-            lib.momentum_send_string(
-                self._context, 
-                stream.encode() if isinstance(stream, str) else stream,
-                data.encode() if isinstance(data, str) else data, 
-                data_length, 
-                ts
-            )
-        )
-
-    def acquire_buffer(self, stream, buffer_length):
-        return lib.momentum_acquire_buffer(
-            self._context, 
-            stream.encode() if isinstance(stream, str) else stream,
-            buffer_length
-        )
+        for _ in range(attempts):
+            if bool(
+                lib.momentum_receive_buffer(
+                    self._context,
+                    stream.encode() if isinstance(stream, str) else stream,
+                    self._wrapped_receive_buffer_by_id[func_id]
+                )
+            ):
+                return True
+            else:
+                time.sleep(retry_interval)    
+        
+        return False
 
 
-    def release_buffer(self, buffer, data_length, ts = 0):
-        while not self.try_release_buffer(buffer, data_length, ts):
-            time.sleep(1)
+    def receive_string(self, stream, func, timeout=0, retry_interval=0.01):
+        func_id = id(func)
 
-    def try_release_buffer(self, buffer, data_length, ts = 0):
-        return lib.momentum_release_buffer(
-            self._context, 
-            buffer,
-            data_length,
-            ts
-        )
+        if func_id not in self._wrapped_receive_string_by_id:
+            @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
+            def wrapped_func(data_address, data_length, ts, iteration):
+                string = Buffer(data_address).read(data_length)
+                func(string, ts, iteration)
+
+            self._wrapped_receive_string_by_id[func_id] = wrapped_func
+
+        return self.receive_buffer(stream, self._wrapped_receive_string_by_id[func_id], timeout, retry_interval)
+
+
+    def send_buffer(self, buffer, data_length, ts = 0, timeout=0, retry_interval=0.01):
+        retry_interval = max(0.001, retry_interval)
+        attempts = max(1, int(timeout / retry_interval))
+
+        for _ in range(attempts):
+            if bool(
+                lib.momentum_send_buffer(
+                    self._context, 
+                    buffer.by_ref(),
+                    data_length,
+                    ts
+                )
+            ):
+                return True
+            else:
+                time.sleep(retry_interval)    
+        
+        return False
+
+
+    def send_string(self, stream, data, ts=0, timeout=0, retry_interval=0.01):
+        data_length = len(data)
+
+        buffer = self.next_buffer(stream, data_length)
+        
+        buffer.write(data.encode() if isinstance(data, str) else data, data_length)        
+
+        return self.send_buffer(buffer, data_length, ts, timeout, retry_interval)
+
 
     def term(self):
         return bool(lib.momentum_term(self._context))
+
 
     def destroy(self):
         return_value = lib.momentum_destroy(self._context) 
         self._context = None
         return bool(return_value)
+
+
+class Buffer:
+
+    def __init__(self, pointer):
+        if pointer is None:
+            raise Exception("Null buffer pointer")
+
+        try:
+                self._pointer = pointer
+                self._data_address = lib.momentum_get_buffer_address(pointer)
+                self._length = lib.momentum_get_buffer_length(pointer)
+                self._memory = ctypes.cast(self._data_address, ctypes.POINTER(ctypes.c_uint8 * self._length))
+        except:
+            raise Exception("Buffer instantiation failed")
+
+
+    def by_ref(self):
+        return self._pointer
+
+
+    @property
+    def length(self):
+        return self._length
+
+
+    def read(self, *indices):
+        if len(indices) == 0:
+            from_index = 0
+            to_index = self.length
+        elif len(indices) == 1:
+            from_index = 0
+            to_index = indices[0]
+        elif len(indices == 2):
+            from_index = indices[0]
+            to_index = indices[2]
+        else:
+            raise Exception("Can accept at most 2 index arguments")
+
+        if (to_index > self.length):
+            raise Exception("End index must not exceed buffer length")
+
+        try:
+            return bytes(self._memory.contents[from_index:to_index])
+        except:
+            raise Exception("Read failed")
+
+
+    def write(self, data_bytes, data_length):
+        if (data_length > self.length):
+            raise Exception("Data length must not exceed buffer length")
+
+        if not isinstance(data_bytes, (bytes, bytearray,)):
+            raise Exception("Data bytes argument must be bytes-like")
+
+        try:
+            for i in range(data_length):
+                self._memory.contents[i] = data_bytes[i]
+        except:
+            raise Exception("Write failed")
+
+    

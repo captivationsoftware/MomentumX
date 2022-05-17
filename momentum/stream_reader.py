@@ -11,7 +11,7 @@ messages_received = 0
 last_iteration = 0
 skip_count = 0
 
-def on_read(data, data_length, ts, iteration):
+def on_read(buffer, data_length, ts, iteration):
     global now
     global bytes_received
     global messages_received
@@ -46,6 +46,6 @@ context.subscribe(STREAM)
 
 try:
     while True:
-        context.read(STREAM, on_read)
+        context.receive_buffer(STREAM, on_read)
 except KeyboardInterrupt:
     context.term()
