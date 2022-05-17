@@ -4,7 +4,7 @@ import sys
 
 # C API mappings
 
-lib = ctypes.cdll.LoadLibrary("../libmomentum.so")
+lib = ctypes.cdll.LoadLibrary("./libmomentum.so")
 
 lib.momentum_context.argtypes = ()
 lib.momentum_context_restype = ctypes.c_void_p
@@ -153,7 +153,7 @@ class Context:
         )
 
     def subscribe(self, stream, timeout=0, retry_interval=0.1):
-        if not self.is_stream_available:
+        if not self.is_stream_available(stream):
             raise Exception(f'Stream "{stream}" not available')
 
         stream = stream.encode() if isinstance(stream, str) else stream
@@ -192,7 +192,7 @@ class Context:
         func_id = id(func)
 
         if func_id not in self._wrapped_receive_buffer_by_id:
-            @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
+            @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64)
             def wrapped_func(buffer_pointer, data_length, ts, iteration):
                 func(Buffer(buffer_pointer), data_length, ts, iteration)
 
@@ -205,7 +205,7 @@ class Context:
             if bool(
                 lib.momentum_receive_buffer(
                     self._context,
-                    stream.encode() if isinstance(stream, str) else stream,
+                    stream,
                     self._wrapped_receive_buffer_by_id[func_id]
                 )
             ):
@@ -277,10 +277,10 @@ class Buffer:
             raise Exception("Null buffer pointer")
 
         try:
-                self._pointer = pointer
-                self._data_address = lib.momentum_get_buffer_address(pointer)
-                self._length = lib.momentum_get_buffer_length(pointer)
-                self._memory = ctypes.cast(self._data_address, ctypes.POINTER(ctypes.c_uint8 * self._length))
+            self._pointer = pointer
+            self._data_address = lib.momentum_get_buffer_address(pointer)
+            self._length = lib.momentum_get_buffer_length(pointer)
+            self._memory = ctypes.cast(self._data_address, ctypes.POINTER(ctypes.c_uint8 * self._length))
         except:
             raise Exception("Buffer instantiation failed")
 

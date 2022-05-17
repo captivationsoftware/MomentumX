@@ -54,7 +54,7 @@ struct Message {
         } term_message;
         struct {
             char stream[MAX_STREAM_SIZE];
-            long long int id;
+            uint64_t iteration;
             char buffer_shm_path[MAX_PATH_SIZE];
             size_t buffer_length;
             size_t data_length;
@@ -62,7 +62,7 @@ struct Message {
             bool sync;
         } buffer_message;
         struct {
-            long long int id;
+            uint64_t iteration;
             pid_t pid;
         } ack_message;
     };
@@ -120,11 +120,11 @@ private:
     std::map<std::string, Buffer*> _buffer_by_shm_path;
     std::map<std::string, Buffer*> _last_acquired_buffer_by_stream;
 
-    std::map<std::string, long long int> _message_id_by_stream;
-    std::map<std::string, long long int> _last_message_id_by_stream;
+    std::map<std::string, uint64_t> _iteration_by_stream;
+    std::map<std::string, uint64_t> _last_iteration_by_stream;
     std::map<std::string, Message*> _producer_message_by_shm_path;
     std::map<std::string, std::list<Message>> _consumer_messages_by_stream;
-    std::map<pid_t, std::set<long long int>> _message_ids_pending_by_pid;
+    std::map<pid_t, std::set<uint64_t>> _iterations_pending_by_pid;
     std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
     std::condition_variable _consumer_availability, _acks;
 

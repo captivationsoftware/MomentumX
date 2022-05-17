@@ -2,8 +2,8 @@ from ctypes import *
 
 from momentum import Context
 
-def on_read(data, ts, iteration):
-    print(data)
+def on_read(string, ts, iteration):
+    print(string)
 
 STREAM = b'momentum://incrementer'
 

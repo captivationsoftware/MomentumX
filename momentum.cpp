@@ -118,17 +118,17 @@ MomentumContext::MomentumContext() {
                                 std::string stream(message.buffer_message.stream);
                                 std::string buffer_shm_path(message.buffer_message.buffer_shm_path);
                                 size_t buffer_length = message.buffer_message.buffer_length;
-                                long long int message_id = message.buffer_message.id;
+                                uint64_t iteration = message.buffer_message.iteration;
                                 
                                 {
                                     std::lock_guard<std::mutex> lock(_message_mutex);
-                                    if (message_id <= _last_message_id_by_stream[stream]) {
+                                    if (iteration <= _last_iteration_by_stream[stream]) {
                                         if (_debug) {
-                                            std::cout << DEBUG_PREFIX << "Received stale/duplicate message id: " << message_id << std::endl;
+                                            std::cout << DEBUG_PREFIX << "Received stale / duplicate message for iteration: " << iteration << std::endl;
                                         }
                                         continue;
                                     }
-                                    _last_message_id_by_stream[stream] = message_id;
+                                    _last_iteration_by_stream[stream] = iteration;
                                 }
 
                                 Buffer* buffer;    
@@ -249,7 +249,7 @@ MomentumContext::MomentumContext() {
                                     }
                                     {
                                         std::unique_lock<std::mutex> lock(_ack_mutex);
-                                        _message_ids_pending_by_pid.erase(pid);
+                                        _iterations_pending_by_pid.erase(pid);
                                     }
 
                                     _acks.notify_all();
@@ -265,10 +265,10 @@ MomentumContext::MomentumContext() {
                         case Message::ACK_MESSAGE:
                             {
                                 pid_t pid = message.ack_message.pid;
-                                long long int message_id = message.ack_message.id;
+                                uint64_t iteration = message.ack_message.iteration;
 
                                 std::unique_lock<std::mutex> lock(_ack_mutex);
-                                _message_ids_pending_by_pid[pid].erase(message_id);
+                                _iterations_pending_by_pid[pid].erase(iteration);
                             }
 
                             _acks.notify_all();
@@ -547,7 +547,7 @@ bool MomentumContext::unsubscribe(std::string stream, bool notify) {
 
     {
         std::lock_guard<std::mutex> lock(_message_mutex); 
-        _last_message_id_by_stream.erase(stream);
+        _last_iteration_by_stream.erase(stream);
         _consumer_messages_by_stream.erase(stream);
     }
 
@@ -623,7 +623,7 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
         buffer, 
         buffer_message.buffer_message.data_length, 
         buffer_message.buffer_message.ts, 
-        buffer_message.buffer_message.id
+        buffer_message.buffer_message.iteration
     );  
 
     if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
@@ -636,7 +636,7 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
         
         Message ack_message;
         ack_message.type = Message::ACK_MESSAGE;
-        ack_message.ack_message.id = buffer_message.buffer_message.id;
+        ack_message.ack_message.iteration = buffer_message.buffer_message.iteration;
         ack_message.ack_message.pid = _pid;
 
         if (!force_notify(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
@@ -673,17 +673,21 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         std::lock_guard<std::mutex> lock(_consumer_mutex);
         consumer_mqs = _consumer_mqs_by_stream[stream];
     }
+
+    if (consumer_mqs.size() == 0) {
+        return false;
+    }
     
-    long long int message_id;
+    uint64_t iteration;
     {
         std::lock_guard<std::mutex> lock(_message_mutex);
-        message_id = _message_id_by_stream[stream] = _message_id_by_stream[stream] + 1;
+        iteration = _iteration_by_stream[stream] = _iteration_by_stream[stream] + 1;
     } 
 
     // create the buffer message
     Message* message = new Message();
     message->type = Message::BUFFER_MESSAGE;
-    message->buffer_message.id = message_id;
+    message->buffer_message.iteration = iteration;
     message->buffer_message.buffer_length = buffer->length;
     message->buffer_message.data_length = length;
     message->buffer_message.ts = ts;
@@ -716,14 +720,14 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
 
             {
                 std::unique_lock<std::mutex> lock(_ack_mutex);
-                _message_ids_pending_by_pid[consumer_pid].insert(message_id);
+                _iterations_pending_by_pid[consumer_pid].insert(iteration);
             }
             
             if (!force_notify(consumer_mq, message, sizeof(Message))) {
                 {
                     // send failed, so remove this message from the list of pending
                     std::unique_lock<std::mutex> lock(_ack_mutex);
-                    _message_ids_pending_by_pid[consumer_pid].erase(message_id);
+                    _iterations_pending_by_pid[consumer_pid].erase(iteration);
                 }
 
                 std::cerr << DEBUG_PREFIX << "Failed to send buffer message to consumer" << std::endl;
@@ -742,11 +746,11 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
             bool all_acknowledged = true;
 
             for (auto const& consumer_pid : consumer_pids) {
-                if (_message_ids_pending_by_pid.count(consumer_pid) == 0) {
+                if (_iterations_pending_by_pid.count(consumer_pid) == 0) {
                     // consumer exited, so consider it acknowledged
                     all_acknowledged &= true;
                 } else { 
-                    bool message_acknowledged = _message_ids_pending_by_pid[consumer_pid].find(message_id) == _message_ids_pending_by_pid[consumer_pid].end();
+                    bool message_acknowledged = _iterations_pending_by_pid[consumer_pid].find(iteration) == _iterations_pending_by_pid[consumer_pid].end();
                     all_acknowledged &= message_acknowledged;
                 }
             }
