@@ -16,7 +16,6 @@
 #include <condition_variable>
 #include <cstdint>
 
-typedef const void (*callback_t)(uint8_t*, size_t, uint64_t, long long int);
 
 static const std::string PATH_DELIM = "_";
 static const std::string NAMESPACE = "momentum";
@@ -68,6 +67,8 @@ struct Message {
         } ack_message;
     };
 };
+
+typedef const void (*callback_t)(Buffer*, size_t, uint64_t, long long int);
 
 class MomentumContext {
 

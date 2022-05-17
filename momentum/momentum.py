@@ -193,8 +193,8 @@ class Context:
 
         if func_id not in self._wrapped_receive_buffer_by_id:
             @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
-            def wrapped_func(data_address, data_length, ts, iteration):
-                func(Buffer(data_address), data_length, ts, iteration)
+            def wrapped_func(buffer_pointer, data_length, ts, iteration):
+                func(Buffer(buffer_pointer), data_length, ts, iteration)
 
             self._wrapped_receive_buffer_by_id[func_id] = wrapped_func
 
@@ -220,13 +220,13 @@ class Context:
         func_id = id(func)
 
         if func_id not in self._wrapped_receive_string_by_id:
-            @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_longlong)
-            def wrapped_func(data_address, data_length, ts, iteration):
-                string = Buffer(data_address).read(data_length)
+    
+            def wrapped_func(buffer, data_length, ts, iteration):
+                string = buffer.read(data_length)
                 func(string, ts, iteration)
-
+    
             self._wrapped_receive_string_by_id[func_id] = wrapped_func
-
+        
         return self.receive_buffer(stream, self._wrapped_receive_string_by_id[func_id], timeout, retry_interval)
 
 

@@ -620,7 +620,7 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
 
     // invoke the callback function
     callback(
-        buffer->address, 
+        buffer, 
         buffer_message.buffer_message.data_length, 
         buffer_message.buffer_message.ts, 
         buffer_message.buffer_message.id
@@ -976,7 +976,7 @@ void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate
     }
 
     if (_debug) {
-        std::cout << DEBUG_PREFIX << "Resized shm file: " << buffer->shm_path << std::endl;
+        std::cout << DEBUG_PREFIX << "Resized shm file: " << buffer->shm_path << " " << buffer->length << std::endl;
     }
 }
 
