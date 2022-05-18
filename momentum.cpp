@@ -696,10 +696,6 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         consumer_mqs = _consumer_mqs_by_stream[stream];
     }
 
-    if (consumer_mqs.size() == 0) {
-        return false;
-    }
-    
     uint64_t iteration;
     {
         std::lock_guard<std::mutex> lock(_message_mutex);
@@ -765,6 +761,13 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         // waiting for acknowledgement
         std::unique_lock<std::mutex> lock(_ack_mutex);
         _acks.wait(lock, [&] { 
+            {
+                std::lock_guard<std::mutex> consumer_lock(_consumer_mutex);
+                if (_consumer_mqs_by_stream[stream].size() == 0) {
+                    return false;
+                }
+            }
+
             bool all_acknowledged = true;
 
             for (auto const& consumer_pid : consumer_pids) {

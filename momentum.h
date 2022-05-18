@@ -79,6 +79,7 @@ public:
     bool term();
     bool is_stream_available(std::string stream);
     bool is_subscribed(std::string stream);
+    size_t subscriber_count(std::string stream);
     bool subscribe(std::string stream);
     bool unsubscribe(std::string stream, bool notify=true);
     Buffer* next_buffer(std::string stream, size_t length);
@@ -176,6 +177,7 @@ extern "C" {
     bool momentum_destroy(MomentumContext* ctx);
 
     bool momentum_is_stream_available(MomentumContext* ctx, const char* stream);
+    bool momentum_subscriber_count(MomentumContext* ctx, const char* stream);
 
     bool momentum_is_subscribed(MomentumContext* ctx, const char* stream);
     bool momentum_subscribe(MomentumContext* ctx, const char* stream);

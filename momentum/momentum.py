@@ -194,7 +194,10 @@ class Context:
         if func_id not in self._wrapped_receive_buffer_by_id:
             @ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64)
             def wrapped_func(buffer_pointer, data_length, ts, iteration):
-                func(Buffer(buffer_pointer), data_length, ts, iteration)
+                try:
+                    func(Buffer(buffer_pointer), data_length, ts, iteration)
+                except KeyboardInterrupt:
+                    self.term()
 
             self._wrapped_receive_buffer_by_id[func_id] = wrapped_func
 
