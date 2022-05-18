@@ -174,7 +174,7 @@ class Context:
         
         return False
 
-    def next_buffer(self, stream, buffer_length, timeout=0, retry_interval=0.01):
+    def next_buffer(self, stream, buffer_length, timeout=0, retry_interval=1e-6):
         return Buffer(
             lib.momentum_next_buffer(
                 self._context, 
@@ -183,7 +183,7 @@ class Context:
             )
         )
 
-    def receive_buffer(self, stream, func, timeout=0, retry_interval=0.01):
+    def receive_buffer(self, stream, func, timeout=0, retry_interval=1e-6):
         if not self.is_subscribed(stream):
             raise Exception(f'Not subscribed to stream "{stream}"')
 
@@ -216,7 +216,7 @@ class Context:
         return False
 
 
-    def receive_string(self, stream, func, timeout=0, retry_interval=0.01):
+    def receive_string(self, stream, func, timeout=0, retry_interval=1e-6):
         func_id = id(func)
 
         if func_id not in self._wrapped_receive_string_by_id:
@@ -230,7 +230,7 @@ class Context:
         return self.receive_buffer(stream, self._wrapped_receive_string_by_id[func_id], timeout, retry_interval)
 
 
-    def send_buffer(self, buffer, data_length, ts = 0, timeout=0, retry_interval=0.01):
+    def send_buffer(self, buffer, data_length, ts = 0, timeout=0, retry_interval=1e-6):
         retry_interval = max(0.001, retry_interval)
         attempts = max(1, int(timeout / retry_interval))
 
@@ -250,7 +250,7 @@ class Context:
         return False
 
 
-    def send_string(self, stream, data, ts=0, timeout=0, retry_interval=0.01):
+    def send_string(self, stream, data, ts=0, timeout=0, retry_interval=1e-6):
         data_length = len(data)
 
         buffer = self.next_buffer(stream, data_length)

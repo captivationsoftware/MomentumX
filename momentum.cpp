@@ -44,13 +44,12 @@ MomentumContext::MomentumContext() {
             mqd_t max_fd;
 
             while(!_terminating && !_terminated) {
-                
+
                 // build our set of read fds
                 max_fd = 0;
                 FD_ZERO(&read_fds);
                 
-                // add all consumer mqs to the list of read fds...
-                std::set<mqd_t> all_fds;
+                std::set<mqd_t> all_fds, consumer_streams, producer_streams;
 
                 { 
                     std::lock_guard<std::mutex> lock(_consumer_mutex);
@@ -97,7 +96,7 @@ MomentumContext::MomentumContext() {
                     if (!FD_ISSET(fd, &read_fds)) {
                         continue;
                     }                
-
+                    
                     bytes_received = mq_receive(fd, (char *) &message, sizeof(Message), 0);
                     if (bytes_received < 0) {
                         continue;
@@ -142,12 +141,14 @@ MomentumContext::MomentumContext() {
                                 if (is_new_buffer) {
                                     buffer = allocate_buffer(buffer_shm_path, buffer_length, O_RDWR);
                                 } else {
+                                    size_t current_buffer_length;
                                     { 
                                         std::lock_guard<std::mutex> lock(_buffer_mutex); 
                                         buffer = _buffer_by_shm_path[buffer_shm_path];
+                                        current_buffer_length = buffer->length;
                                     }
 
-                                    if (buffer->length < buffer_length) {
+                                    if (current_buffer_length < buffer_length) {
                                         resize_buffer(buffer, buffer_length);
                                     }
                                 }
@@ -200,10 +201,16 @@ MomentumContext::MomentumContext() {
 
                                     Message* message = NULL;
                                     for (auto const& buffer : buffers) {
+                                        std::string shm_path;
+                                        {
+                                            std::lock_guard<std::mutex> buffer_lock(_buffer_mutex);
+                                            shm_path = buffer->shm_path;
+                                        }
+
                                         {
                                             std::unique_lock<std::mutex> message_lock(_message_mutex);
-                                            if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
-                                                message = _producer_message_by_shm_path[buffer->shm_path];
+                                            if (_producer_message_by_shm_path.count(shm_path) > 0) {
+                                                message = _producer_message_by_shm_path[shm_path];
                                             }
                                         }
 
@@ -572,6 +579,9 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
     Buffer* buffer = NULL;
     bool has_next = true;
     Message buffer_message;
+    
+    int buffer_fd;
+    std::string buffer_shm_path;
     while (has_next) {
         { 
             std::lock_guard<std::mutex> lock(_message_mutex);
@@ -588,10 +598,13 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
         {
             std::lock_guard<std::mutex> lock(_buffer_mutex);
             buffer = _buffer_by_shm_path[buffer_message.buffer_message.buffer_shm_path];
+            buffer_fd = buffer->fd;
+            buffer_shm_path = buffer->shm_path;
         }
             
+
         // attempt to acquire the lock on this buffer
-        if (flock(buffer->fd, LOCK_SH | LOCK_NB) < 0) {
+        if (flock(buffer_fd, LOCK_SH | LOCK_NB) < 0) {
             // could not acquire, skip to next message
             buffer = NULL;
             continue;
@@ -599,10 +612,10 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
 
         // Ensure the buffer has the same has the same modified time as was provided in the message
         uint64_t buffer_write_ts;
-        get_shm_time(buffer->shm_path, NULL, &buffer_write_ts);
+        get_shm_time(buffer_shm_path, NULL, &buffer_write_ts);
         if (buffer_message.buffer_message.ts != buffer_write_ts) {
             // this message is old, so unlock and continue to the next
-            flock(buffer->fd, LOCK_UN | LOCK_NB);
+            flock(buffer_fd, LOCK_UN | LOCK_NB);
             buffer = NULL;
             continue; 
         }
@@ -616,7 +629,7 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
     }
 
     // update buffer access (read) time
-    set_shm_time(buffer->shm_path, now(), 0);
+    set_shm_time(buffer_shm_path, now(), 0);
 
     // invoke the callback function
     callback(
@@ -626,19 +639,18 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
         buffer_message.buffer_message.iteration
     );  
 
-    if (flock(buffer->fd, LOCK_UN | LOCK_NB) < 0) {
+    if (flock(buffer_fd, LOCK_UN | LOCK_NB) < 0) {
         std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
     }
 
     // if the producer who sent this message is in blocking mode, send them the ack
     if (buffer_message.buffer_message.sync) {
-        std::lock_guard<std::mutex> lock(_producer_mutex);
-        
         Message ack_message;
         ack_message.type = Message::ACK_MESSAGE;
         ack_message.ack_message.iteration = buffer_message.buffer_message.iteration;
         ack_message.ack_message.pid = _pid;
 
+        std::lock_guard<std::mutex> lock(_producer_mutex);
         if (!force_notify(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
             std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
         }
@@ -657,13 +669,23 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         ts = now();
     }
 
-    // update buffer modify (write) time
-    set_shm_time(buffer->shm_path, 0, ts);
+    std::string buffer_shm_path;
+    size_t buffer_length;
+    int buffer_fd;
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        buffer_shm_path = buffer->shm_path;
+        buffer_length = buffer->length;
+        buffer_fd = buffer->fd;
+    }
 
-    std::string stream = stream_from_shm_path(buffer->shm_path);
+    // update buffer modify (write) time
+    set_shm_time(buffer_shm_path, 0, ts);
+
+    std::string stream = stream_from_shm_path(buffer_shm_path);
 
     // unlock the buffer prior to sending
-    flock(buffer->fd, LOCK_UN | (_sync ? 0 : LOCK_NB));
+    flock(buffer_fd, LOCK_UN | (_sync ? 0 : LOCK_NB));
         
 
     std::set<pid_t> consumer_pids;
@@ -688,20 +710,20 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     Message* message = new Message();
     message->type = Message::BUFFER_MESSAGE;
     message->buffer_message.iteration = iteration;
-    message->buffer_message.buffer_length = buffer->length;
+    message->buffer_message.buffer_length = buffer_length;
     message->buffer_message.data_length = length;
     message->buffer_message.ts = ts;
     message->buffer_message.sync = _sync;
     strcpy(message->buffer_message.stream, stream.c_str());
-    strcpy(message->buffer_message.buffer_shm_path, buffer->shm_path);
+    strcpy(message->buffer_message.buffer_shm_path, buffer_shm_path.c_str());
 
     // index this message by buffer shm path
     {
         std::lock_guard<std::mutex> lock(_message_mutex);
-        if (_producer_message_by_shm_path.count(buffer->shm_path) > 0) {
-            delete _producer_message_by_shm_path[buffer->shm_path];
+        if (_producer_message_by_shm_path.count(buffer_shm_path) > 0) {
+            delete _producer_message_by_shm_path[buffer_shm_path];
         }
-        _producer_message_by_shm_path[buffer->shm_path] = message;
+        _producer_message_by_shm_path[buffer_shm_path] = message;
     }
 
     // send our message to each consumer
@@ -775,61 +797,69 @@ Buffer* MomentumContext::next_buffer(std::string stream, size_t length) {
         return NULL;
     };
 
+    bool has_stream;
     {
         std::lock_guard<std::mutex> lock(_producer_mutex);
-        if (_producer_mq_by_stream.count(stream) == 0) {
-            struct mq_attr attrs;
-            memset(&attrs, 0, sizeof(mq_attr));
-            attrs.mq_maxmsg = 10;
-            attrs.mq_msgsize = sizeof(Message);
+        has_stream = _producer_mq_by_stream.count(stream) > 0;
+    }
 
-            std::string producer_mq_name = to_mq_name(0, stream);
-            mq_unlink(producer_mq_name.c_str());
-            mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK, MQ_MODE, &attrs);
-            if (producer_mq < 0) {
-                if (_debug) {
-                    std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
-                }
-                return false;
+    if (!has_stream) {
+        struct mq_attr attrs;
+        memset(&attrs, 0, sizeof(mq_attr));
+        attrs.mq_maxmsg = 10;
+        attrs.mq_msgsize = sizeof(Message);
+
+        std::string producer_mq_name = to_mq_name(0, stream);
+        mq_unlink(producer_mq_name.c_str());
+        mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK, MQ_MODE, &attrs);
+        if (producer_mq < 0) {
+            if (_debug) {
+                std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
             }
-
-            _producer_mq_by_stream[stream] = producer_mq;        
+            return false;
         }
 
-        _producer_streams.insert(stream);
+        {
+            std::lock_guard<std::mutex> lock(_producer_mutex);
+            _producer_mq_by_stream[stream] = producer_mq;        
+            _producer_streams.insert(stream);
+        }
     }
 
     Buffer* buffer = NULL;
     bool below_minimum_buffers;
     
+    size_t buffer_count;
     {
         std::lock_guard<std::mutex> lock(_buffer_mutex);
-    
-        size_t visit_count = 0;
-
-        // find the next buffer to use
-        while (visit_count++ < _buffers_by_stream[stream].size()) {
-            // pull a candidate buffer, rotating the queue in the process
-            Buffer* candidate_buffer = _buffers_by_stream[stream].front();
-            _buffers_by_stream[stream].pop_front();
-            _buffers_by_stream[stream].push_back(candidate_buffer);
-
-            if (candidate_buffer != _last_acquired_buffer_by_stream[stream]) {
-                // found a buffer that is different than the last iteration...
-                if (flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
-                    // and we were also able to set the exclusive lock... 
-                    buffer = candidate_buffer;
-                    break;
-                }
-            }
-        }
-        below_minimum_buffers = _buffers_by_stream[stream].size() < _min_buffers;
+        buffer_count = _buffers_by_stream[stream].size();
     }
 
-    // If we don't have enough buffers, then create them...
+    // find the next buffer to use
+    for (size_t i = 0; i < buffer_count; i++) {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        
+        // pull a candidate buffer, rotating the queue in the process
+        Buffer* candidate_buffer = _buffers_by_stream[stream].front();
+        _buffers_by_stream[stream].pop_front();
+        _buffers_by_stream[stream].push_back(candidate_buffer);
 
+        if (candidate_buffer != _last_acquired_buffer_by_stream[stream]) {
+            // found a buffer that is different than the last iteration...
+            if (flock(candidate_buffer->fd, LOCK_EX | LOCK_NB) > -1) {
+                // and we were also able to set the exclusive lock... 
+                buffer = candidate_buffer;
+                break;
+            }
+        }
+    }
+
+    
+
+    // If we don't have enough buffers, then create them...
+    below_minimum_buffers = buffer_count < _min_buffers;
     if (buffer == NULL || below_minimum_buffers) {
-        size_t allocations_required = below_minimum_buffers ? _min_buffers.load(std::memory_order_relaxed) : 1;
+        size_t allocations_required = below_minimum_buffers ? _min_buffers.load() : 1;
 
         Buffer* first_buffer = NULL;
         int id = 1; // start buffer count at 1
@@ -850,7 +880,14 @@ Buffer* MomentumContext::next_buffer(std::string stream, size_t length) {
 
         buffer = first_buffer;
 
-    } else if (length > buffer->length) {
+    }
+
+    size_t buffer_length;
+    {
+        std::lock_guard<std::mutex> lock(_buffer_mutex);
+        buffer_length = buffer->length;
+    }
+    if (length > buffer_length) {
         // buffer did exist but its undersized, so resize it
         resize_buffer(buffer, length, true);
     }
@@ -949,6 +986,8 @@ Buffer* MomentumContext::allocate_buffer(const std::string& shm_path, size_t len
 
 void MomentumContext::resize_buffer(Buffer* buffer, size_t length, bool truncate) {
     if (_terminated) return;
+
+    std::lock_guard<std::mutex> lock(_buffer_mutex);
 
     size_t length_required = ceil(length / (double) PAGE_SIZE)*  PAGE_SIZE;
     bool meets_length_requirement = buffer->length >= length_required;

@@ -68,7 +68,7 @@ struct Message {
     };
 };
 
-typedef const void (*callback_t)(Buffer*, size_t, uint64_t, long long int);
+typedef const void (*callback_t)(Buffer*, size_t, uint64_t, uint64_t);
 
 class MomentumContext {
 
@@ -124,6 +124,7 @@ private:
     std::map<std::string, uint64_t> _last_iteration_by_stream;
     std::map<std::string, Message*> _producer_message_by_shm_path;
     std::map<std::string, std::list<Message>> _consumer_messages_by_stream;
+    std::list<Message> _outbox;
     std::map<pid_t, std::set<uint64_t>> _iterations_pending_by_pid;
     std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
     std::condition_variable _consumer_availability, _acks;
