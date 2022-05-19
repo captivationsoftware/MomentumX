@@ -17,7 +17,7 @@
 #include <cstdint>
 
 
-static const std::string PATH_DELIM = "_";
+static const std::string PATH_DELIM = ".";
 static const std::string NAMESPACE = "momentum";
 static const std::string DEBUG_PREFIX = "[" + NAMESPACE + "]: ";
 static const std::string PROTOCOL = NAMESPACE + "://";
@@ -95,7 +95,9 @@ public:
     void set_max_buffers(size_t value);
     bool get_sync();
     void set_sync(bool value);
-    
+
+    std::condition_variable _acks;
+    std::atomic<bool>  _terminating{false};
 
 private:
 
@@ -105,7 +107,6 @@ private:
     std::atomic<bool> _debug{false};
     std::atomic<bool> _sync{false};
     std::atomic<bool>  _terminated{false};    
-    std::atomic<bool>  _terminating{false};
     std::atomic<size_t> _min_buffers{1};
     std::atomic<size_t> _max_buffers{std::numeric_limits<size_t>::max()};
 
@@ -128,7 +129,6 @@ private:
     std::list<Message> _outbox;
     std::map<pid_t, std::set<uint64_t>> _iterations_pending_by_pid;
     std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
-    std::condition_variable _consumer_availability, _acks;
 
     std::thread _message_handler;
 

@@ -23,14 +23,6 @@
 
 static std::vector<MomentumContext*> contexts;
 
-void cleanup() {
-    for (MomentumContext* ctx : contexts) {
-        if (ctx != NULL) {
-            delete ctx;
-        }            
-    }
-}
-
 MomentumContext::MomentumContext() {
     // Get our pid
     _pid = getpid();
@@ -687,6 +679,13 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
     // unlock the buffer prior to sending
     flock(buffer_fd, LOCK_UN | (_sync ? 0 : LOCK_NB));
         
+    {
+        // if in synchronous mode, we need consumers, so fail if there are none
+        std::lock_guard<std::mutex> consumer_lock(_consumer_mutex);
+        if (_sync && _consumer_mqs_by_stream[stream].size() == 0) {
+            return false;
+        }
+    }
 
     std::set<pid_t> consumer_pids;
     std::vector<mqd_t> consumer_mqs;
@@ -761,13 +760,7 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
         // waiting for acknowledgement
         std::unique_lock<std::mutex> lock(_ack_mutex);
         _acks.wait(lock, [&] { 
-            {
-                std::lock_guard<std::mutex> consumer_lock(_consumer_mutex);
-                if (_consumer_mqs_by_stream[stream].size() == 0) {
-                    return false;
-                }
-            }
-
+           
             bool all_acknowledged = true;
 
             for (auto const& consumer_pid : consumer_pids) {
@@ -1160,7 +1153,7 @@ std::string MomentumContext::to_shm_path(pid_t pid, const std::string& stream, u
     std::ostringstream oss;
     oss << "/" << NAMESPACE << PATH_DELIM;
     oss << std::to_string(pid) << PATH_DELIM << stream << PATH_DELIM;
-    oss << std::setw(8) << std::setfill('0') << id;
+    oss << id;
     return oss.str();
 }
 

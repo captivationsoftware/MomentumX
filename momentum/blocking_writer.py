@@ -1,4 +1,5 @@
 from ctypes import *
+import time
 
 from momentum import Context
 
@@ -12,7 +13,8 @@ context.sync = True
 i = 0
 try:
     while True:
-        context.send_string(STREAM, str(i))
-        i += 1
+        if context.send_string(STREAM, str(i), timeout=60):
+            i += 1
+        
 except KeyboardInterrupt:
     context.term()
