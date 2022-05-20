@@ -819,7 +819,7 @@ Buffer* MomentumContext::next_buffer(std::string stream, size_t length) {
             if (_debug) {
                 std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
             }
-            return false;
+            return NULL;
         }
 
         {
