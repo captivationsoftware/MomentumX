@@ -258,7 +258,7 @@ class Context:
             if bool(
                 lib.momentum_send_buffer(
                     self._context, 
-                    buffer.by_ref(),
+                    buffer._pointer,
                     data_length,
                     ts
                 )
@@ -311,10 +311,9 @@ class Buffer:
         except:
             raise Exception("Buffer instantiation failed")
 
-
-    def by_ref(self):
-        return self._pointer
-
+    @property
+    def raw(self):
+        return self._memory.contents
 
     @property
     def length(self):
@@ -338,7 +337,7 @@ class Buffer:
             raise Exception("End index must not exceed buffer length")
 
         try:
-            return bytes(self._memory.contents[from_index:to_index])
+            return bytes(self.raw[from_index:to_index])
         except:
             raise Exception("Read failed")
 
@@ -352,6 +351,6 @@ class Buffer:
 
         try:
             for i in range(data_length):
-                self._memory.contents[i] = data_bytes[i]
+                self.raw[i] = data_bytes[i]
         except:
             raise Exception("Write failed")
