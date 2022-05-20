@@ -319,38 +319,3 @@ class Buffer:
     def length(self):
         return self._length
 
-
-    def read(self, *indices):
-        if len(indices) == 0:
-            from_index = 0
-            to_index = self.length
-        elif len(indices) == 1:
-            from_index = 0
-            to_index = indices[0]
-        elif len(indices) == 2:
-            from_index = indices[0]
-            to_index = indices[2]
-        else:
-            raise Exception("Can accept at most 2 index arguments")
-
-        if (to_index > self.length):
-            raise Exception("End index must not exceed buffer length")
-
-        try:
-            return bytes(self.raw[from_index:to_index])
-        except:
-            raise Exception("Read failed")
-
-
-    def write(self, data_bytes, data_length):
-        if (data_length > self.length):
-            raise Exception("Data length must not exceed buffer length")
-
-        if not isinstance(data_bytes, (bytes, bytearray,)):
-            raise Exception("Data bytes argument must be bytes-like")
-
-        try:
-            for i in range(data_length):
-                self.raw[i] = data_bytes[i]
-        except:
-            raise Exception("Write failed")
