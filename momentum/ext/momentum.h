@@ -22,6 +22,7 @@ static const std::string NAMESPACE = "momentum";
 static const std::string DEBUG_PREFIX = "[" + NAMESPACE + "]: ";
 static const std::string PROTOCOL = NAMESPACE + "://";
 static const std::string SHM_PATH_BASE = "/dev/shm";
+static const std::string MQ_PATH_BASE = "/dev/mqueue";
 static const std::string DEBUG_ENV = "DEBUG";
 static const size_t PAGE_SIZE = getpagesize();
 static const size_t MAX_STREAM_SIZE = 128; // 32 chars for stream name, and 11 for protocol (i.e. "momentum://)
@@ -137,10 +138,10 @@ private:
     void resize_buffer(Buffer* buffer, size_t length, bool truncate=false);
     void deallocate_buffer(Buffer* buffer);
     std::string to_shm_path(pid_t pid, const std::string& stream, uint64_t id) const;
-    void shm_iter(const std::function<void(std::string)> callback);
+    std::string stream_from_shm_path(std::string shm_path) const;
     void get_shm_time(const std::string& shm_path, uint64_t* read_ts, uint64_t* write_ts);
     void set_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts);
-    std::string stream_from_shm_path(std::string shm_path) const;
+    void dir_iter(const std::string& base_path, const std::function<void(std::string)> callback);
 
     // Message / MQ functions
     std::string to_mq_name(pid_t pid, const std::string& stream);

@@ -1,10 +1,18 @@
 import ctypes
 import time
+import glob
 import sys
+import os
+
+try:
+    import momentum.ext
+    libmomentum = glob.glob(f'{os.path.dirname(momentum.ext.__file__)}/libmomentum*.so', recursive=True)[0] 
+except:
+    raise Exception("Could not locate momentum extension module")
 
 # C API mappings
 
-lib = ctypes.cdll.LoadLibrary("./libmomentum.so")
+lib = ctypes.cdll.LoadLibrary(libmomentum)
 
 lib.momentum_context.argtypes = ()
 lib.momentum_context_restype = ctypes.c_void_p
@@ -175,13 +183,22 @@ class Context:
         return False
 
     def next_buffer(self, stream, buffer_length, timeout=0, retry_interval=1e-6):
-        return Buffer(
-            lib.momentum_next_buffer(
+        retry_interval = max(0.001, retry_interval)
+        attempts = max(1, int(timeout / retry_interval))
+
+        for _ in range(attempts):
+            pointer = lib.momentum_next_buffer(
                 self._context, 
                 stream.encode() if isinstance(stream, str) else stream,
                 int(buffer_length)
             )
-        )
+
+            if pointer is not None:
+                return Buffer(pointer)
+            else:
+                time.sleep(retry_interval)    
+        
+        return None        
 
     def receive_buffer(self, stream, func, timeout=0, retry_interval=1e-6):
         if not self.is_subscribed(stream):
@@ -254,6 +271,10 @@ class Context:
 
 
     def send_string(self, stream, data, ts=0, timeout=0, retry_interval=1e-6):
+        if not isinstance(data, (str, bytes, bytearray)):
+            raise Exception("Data must be instance of string or bytes-like")
+
+
         data_length = len(data)
 
         buffer = self.next_buffer(stream, data_length)
@@ -271,6 +292,9 @@ class Context:
         return_value = lib.momentum_destroy(self._context) 
         self._context = None
         return bool(return_value)
+
+    def Stream(self, stream):
+        return Stream(self, stream)
 
 
 class Buffer:
@@ -333,3 +357,37 @@ class Buffer:
             raise Exception("Write failed")
 
     
+class Stream:
+    def __init__(self, context, stream):
+        self._context = context
+        self._stream = stream
+
+    def __enter__(self):
+        if self.subscribe():
+            return self
+        else:
+            raise Exception(f"Failed to subscribe to stream: {self._stream}")
+
+    def __exit__(self, *args):
+        self.unsubscribe()
+
+    def send_string(self, data, timeout=0, ts=0, retry_interval=1e-6):
+        return self._context.send_string(self._stream, data, ts, timeout, retry_interval)
+
+    def send_buffer(self, data, timeout=0, ts=0, retry_interval=1e-6):
+        return self._context.send_buffer(self._stream, data, ts, timeout, retry_interval)
+    
+    def receive_string(self, callback, timeout=0, retry_interval=1e-6):
+        return self._context.receive_string(self._stream, callback, timeout, retry_interval)
+
+    def receive_buffer(self, callback, timeout=0, retry_interval=1e-6):
+        return self._context.receive_buffer(self._stream, callback, timeout, retry_interval)
+
+    def is_subscribed(self):
+        return self._context.is_subscribed(self._stream)
+
+    def subscribe(self, timeout=0, retry_interval=0.1):
+        return self._context.subscribe(self._stream, timeout, retry_interval)
+
+    def unsubscribe(self):
+        return self._context.unsubscribe(self._stream)

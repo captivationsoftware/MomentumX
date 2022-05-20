@@ -21,8 +21,6 @@
 
 #include "momentum.h"
 
-static std::vector<MomentumContext*> contexts;
-
 MomentumContext::MomentumContext() {
     // Get our pid
     _pid = getpid();
@@ -277,17 +275,26 @@ MomentumContext::MomentumContext() {
             }   
         });
 
-        contexts.push_back(this);
-
     } else {
         // wait for our parent to die... :(
         while (getppid() == _pid) {
             sleep(1);
         }
 
-        shm_iter([&](std::string filename) {
+        // clean up any dangling shm files
+        dir_iter(SHM_PATH_BASE, [&](std::string filename) {
             if (filename.rfind(std::string(NAMESPACE + PATH_DELIM + std::to_string(_pid) + PATH_DELIM)) == 0) {
                 shm_unlink(filename.c_str());
+            }
+        });
+
+        // clean up any dangling mq files
+        dir_iter(MQ_PATH_BASE, [&](std::string filename) {
+            std::string suffix(PATH_DELIM + std::to_string(_pid));
+            bool starts_with_namespace = filename.rfind(NAMESPACE) == 0;
+            bool ends_with_pid = filename.rfind(suffix) == filename.size() - suffix.size();
+            if (starts_with_namespace && ends_with_pid) {
+                mq_unlink(("/" + filename).c_str());
             }
         });
 
@@ -1121,16 +1128,16 @@ bool MomentumContext::force_notify(mqd_t mq, Message* message, size_t length, in
     return true;
 }
 
-void MomentumContext::shm_iter(std::function<void(std::string)> callback) {
+void MomentumContext::dir_iter(const std::string& base_path, std::function<void(std::string)> callback) {
     std::set<std::string> filenames;
 
     // clean up any unnecessary files created by the parent process
     struct dirent* entry;
     DIR* dir;
-    dir = opendir(SHM_PATH_BASE.c_str());
+    dir = opendir(base_path.c_str());
     if (dir == NULL) {
         if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Failed to access shm directory: " << SHM_PATH_BASE << std::endl;
+            std::cerr << DEBUG_PREFIX << "Failed to access directory: " << base_path << std::endl;
         }
     } else {
         while ((entry = readdir(dir))) {
