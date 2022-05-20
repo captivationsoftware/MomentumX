@@ -355,39 +355,3 @@ class Buffer:
                 self._memory.contents[i] = data_bytes[i]
         except:
             raise Exception("Write failed")
-
-    
-class Stream:
-    def __init__(self, context, stream):
-        self._context = context
-        self._stream = stream
-
-    def __enter__(self):
-        if self.subscribe():
-            return self
-        else:
-            raise Exception(f"Failed to subscribe to stream: {self._stream}")
-
-    def __exit__(self, *args):
-        self.unsubscribe()
-
-    def send_string(self, data, timeout=0, ts=0, retry_interval=1e-6):
-        return self._context.send_string(self._stream, data, ts, timeout, retry_interval)
-
-    def send_buffer(self, data, timeout=0, ts=0, retry_interval=1e-6):
-        return self._context.send_buffer(self._stream, data, ts, timeout, retry_interval)
-    
-    def receive_string(self, callback, timeout=0, retry_interval=1e-6):
-        return self._context.receive_string(self._stream, callback, timeout, retry_interval)
-
-    def receive_buffer(self, callback, timeout=0, retry_interval=1e-6):
-        return self._context.receive_buffer(self._stream, callback, timeout, retry_interval)
-
-    def is_subscribed(self):
-        return self._context.is_subscribed(self._stream)
-
-    def subscribe(self, timeout=0, retry_interval=0.1):
-        return self._context.subscribe(self._stream, timeout, retry_interval)
-
-    def unsubscribe(self):
-        return self._context.unsubscribe(self._stream)

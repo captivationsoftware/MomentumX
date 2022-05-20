@@ -1,1 +1,1 @@
-from .momentum import Context, Stream, Buffer
+from .momentum import Context, Buffer
