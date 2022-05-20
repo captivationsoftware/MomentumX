@@ -327,7 +327,7 @@ class Buffer:
         elif len(indices) == 1:
             from_index = 0
             to_index = indices[0]
-        elif len(indices == 2):
+        elif len(indices) == 2:
             from_index = indices[0]
             to_index = indices[2]
         else:
