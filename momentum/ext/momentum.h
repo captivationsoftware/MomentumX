@@ -43,6 +43,14 @@ struct Buffer {
     uint8_t* address;
 };
 
+struct BufferData {
+    Buffer* buffer;
+    size_t data_length;
+    uint64_t iteration;
+    uint64_t ts;
+    bool sync;
+};
+
 struct Message {
     enum{SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, BUFFER_MESSAGE, ACK_MESSAGE, TERM_MESSAGE} type;
     union { 
@@ -69,8 +77,6 @@ struct Message {
     };
 };
 
-typedef const void (*callback_t)(Buffer*, size_t, uint64_t, uint64_t);
-
 class MomentumContext {
 
 public:
@@ -84,8 +90,9 @@ public:
     bool subscribe(std::string stream);
     bool unsubscribe(std::string stream, bool notify=true);
     Buffer* next_buffer(std::string stream, size_t length);
-    bool receive_buffer(std::string stream, callback_t callback);
     bool send_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
+    BufferData* receive_buffer(std::string stream);
+    bool release_buffer(std::string stream, BufferData* buffer_data);
 
     // getter / setters for options    
     bool get_debug();
@@ -186,7 +193,8 @@ extern "C" {
     
     Buffer* momentum_next_buffer(MomentumContext* ctx, const char* stream, size_t length);
     bool momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t data_length, uint64_t ts);
-    bool momentum_receive_buffer(MomentumContext* ctx, const char* stream, callback_t callback);
+    BufferData* momentum_receive_buffer(MomentumContext* ctx, const char* stream);
+    bool momentum_release_buffer(MomentumContext* ctx, const char* stream, BufferData* buffer_data);
 
     uint8_t* momentum_get_buffer_address(Buffer* buffer);
     size_t momentum_get_buffer_length(Buffer* buffer);

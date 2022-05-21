@@ -2,9 +2,6 @@ from ctypes import *
 
 from momentum import Context
 
-def on_read(string, ts, iteration):
-    print(string)
-
 STREAM = b'momentum://incrementer'
 
 context = Context()
@@ -14,6 +11,8 @@ context.subscribe(STREAM)
 
 try:
     while (context.is_subscribed(STREAM)):
-        context.receive_string(STREAM, on_read)
+        string = context.receive_string(STREAM)
+        if string is not None:
+            print('Received:', string)
 except KeyboardInterrupt:
     context.term()

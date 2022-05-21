@@ -564,15 +564,15 @@ bool MomentumContext::unsubscribe(std::string stream, bool notify) {
     return true;
 }
 
-bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
-    if (_terminated) return false; // only disallow terminated if we are truly terminated (i.e. not terminating)
+BufferData* MomentumContext::receive_buffer(std::string stream) {
+    if (_terminated) return NULL; // only disallow terminated if we are truly terminated (i.e. not terminating)
 
     normalize_stream(stream);
     if (!is_valid_stream(stream)) {
         if (_debug) {
             std::cerr << DEBUG_PREFIX << "Invalid stream " << stream << std::endl;
         }
-        return false;
+        return NULL;
     } 
 
     Buffer* buffer = NULL;
@@ -585,7 +585,7 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
         { 
             std::lock_guard<std::mutex> lock(_message_mutex);
             if (_consumer_messages_by_stream[stream].size() == 0) {
-                return false;
+                return NULL;
             }
 
             buffer_message = _consumer_messages_by_stream[stream].front();
@@ -624,37 +624,58 @@ bool MomentumContext::receive_buffer(std::string stream, callback_t callback) {
     }
 
     if (buffer == NULL) {
-        return false;
+        return NULL;
     }
 
     // update buffer access (read) time
     set_shm_time(buffer_shm_path, now(), 0);
 
-    // invoke the callback function
-    callback(
-        buffer, 
-        buffer_message.buffer_message.data_length, 
-        buffer_message.buffer_message.ts, 
-        buffer_message.buffer_message.iteration
-    );  
+    BufferData* buffer_data = new BufferData();
+    buffer_data->buffer = buffer;
+    buffer_data->data_length = buffer_message.buffer_message.data_length;
+    buffer_data->ts = buffer_message.buffer_message.ts;
+    buffer_data->iteration = buffer_message.buffer_message.iteration;
+    buffer_data->sync = buffer_message.buffer_message.sync;
+
+    return buffer_data;
+}
+
+bool MomentumContext::release_buffer(std::string stream, BufferData* buffer_data) {
+    if (_terminated) return false; // only disallow terminated if we are truly terminated (i.e. not terminating)
+
+    normalize_stream(stream);
+    if (!is_valid_stream(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Invalid stream " << stream << std::endl;
+        }
+        return false;
+    } 
+
+    int buffer_fd = buffer_data->buffer->fd;
+    uint64_t iteration = buffer_data->iteration;
+    bool sync = buffer_data->sync;
+
+    delete buffer_data;
 
     if (flock(buffer_fd, LOCK_UN | LOCK_NB) < 0) {
         std::cerr << DEBUG_PREFIX << "Failed to release buffer file lock" << std::endl;
+        return false;
     }
 
     // if the producer who sent this message is in blocking mode, send them the ack
-    if (buffer_message.buffer_message.sync) {
+    if (sync) {
         Message ack_message;
         ack_message.type = Message::ACK_MESSAGE;
-        ack_message.ack_message.iteration = buffer_message.buffer_message.iteration;
+        ack_message.ack_message.iteration = iteration;
         ack_message.ack_message.pid = _pid;
 
         std::lock_guard<std::mutex> lock(_producer_mutex);
         if (!force_notify(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
             std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
+            return false;
         }
     }
-
+    
     return true;
 }
 
@@ -1292,8 +1313,12 @@ bool momentum_send_buffer(MomentumContext* ctx, Buffer* buffer, size_t length, u
     return ctx->send_buffer(buffer, length, ts ? ts : 0);
 }
 
-bool momentum_receive_buffer(MomentumContext* ctx, const char* stream, callback_t callback) {
-    return ctx->receive_buffer(std::string(stream), callback);
+BufferData* momentum_receive_buffer(MomentumContext* ctx, const char* stream) {
+    return ctx->receive_buffer(std::string(stream));
+}
+
+bool momentum_release_buffer(MomentumContext* ctx, const char* stream, BufferData* buffer_data) {
+    return ctx->release_buffer(std::string(stream), buffer_data);
 }
 
 uint8_t* momentum_get_buffer_address(Buffer* buffer) {

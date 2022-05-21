@@ -14,6 +14,7 @@ i = 0
 try:
     while True:
         if context.send_string(STREAM, str(i), timeout=60):
+            print("Sent: ", i)
             i += 1
         
 except KeyboardInterrupt:

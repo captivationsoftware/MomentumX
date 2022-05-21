@@ -11,34 +11,8 @@ messages_received = 0
 last_iteration = 0
 skip_count = 0
 
-def on_read(buffer, data_length, ts, iteration):
-    global now
-    global bytes_received
-    global messages_received
-    global last_iteration
-    global skip_count
-
-    messages_received += 1
-    bytes_received += data_length
-
-    step = iteration - last_iteration
-    if last_iteration > 0 and step > 1:
-        skip_count = skip_count + step
-
-    last_iteration = iteration
-
-    threshold = 10000
-
-    if (messages_received % threshold == 0):
-        elapsed = time.time() - now
-        print("Received {:.2f} msgs/sec".format(messages_received / elapsed))
-        print("Received {:.2f} GB/sec".format(bytes_received / elapsed / 1.0e9))
-
-        print(f"Missed: {skip_count}")
-        skip_count = 0
-
-
 STREAM = b'momentum://streamer'
+THRESHOLD = 10000
 
 context = Context()
 
@@ -46,6 +20,29 @@ context.subscribe(STREAM)
 
 try:
     while True:
-        context.receive_buffer(STREAM, on_read)
+        buffer_data = context.receive_buffer(STREAM)
+        
+        messages_received += 1
+        bytes_received += buffer_data.data_length
+
+        step = buffer_data.iteration - last_iteration
+        if last_iteration > 0 and step > 1:
+            skip_count = skip_count + step
+
+        last_iteration = buffer_data.iteration
+
+
+        if (messages_received % THRESHOLD == 0):
+            elapsed = time.time() - now
+            print("Received {:.2f} msgs/sec".format(messages_received / elapsed))
+            print("Received {:.2f} GB/sec".format(bytes_received / elapsed / 1.0e9))
+
+            print(f"Missed: {skip_count}")
+            skip_count = 0
+
+        context.release_buffer(STREAM, buffer_data)
+
+
+
 except KeyboardInterrupt:
     context.term()
