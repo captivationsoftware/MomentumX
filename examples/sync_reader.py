@@ -10,8 +10,8 @@ context.debug = 1
 context.subscribe(STREAM)
 
 try:
-    while (context.is_subscribed(STREAM)):
-        string = context.receive_string(STREAM)
+    while context.is_subscribed(STREAM):
+        string = context.receive_string(STREAM, timeout=10)
         if string is not None:
             print('Received:', string)
 except KeyboardInterrupt:

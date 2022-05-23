@@ -26,7 +26,7 @@ class BUFFER_DATA(ctypes.Structure):
 lib = ctypes.cdll.LoadLibrary(libmomentum)
 
 lib.momentum_context.argtypes = ()
-lib.momentum_context_restype = ctypes.c_void_p
+lib.momentum_context.restype = ctypes.c_void_p
 
 lib.momentum_get_debug.argtypes = (ctypes.c_void_p,)
 lib.momentum_get_debug.restype = ctypes.c_bool
@@ -53,25 +53,22 @@ lib.momentum_set_sync.argtypes = (ctypes.c_void_p, ctypes.c_bool,)
 lib.momentum_set_sync.restype = None
 
 lib.momentum_term.argtypes = (ctypes.c_void_p,)
-lib.momentum_term_restype = ctypes.c_bool
+lib.momentum_term.restype = ctypes.c_bool
 
 lib.momentum_destroy.argtypes = (ctypes.c_void_p,)
-lib.momentum_destroy_restype = ctypes.c_bool
+lib.momentum_destroy.restype = ctypes.c_bool
 
 lib.momentum_is_terminated.argtypes = (ctypes.c_void_p,)
-lib.momentum_is_terminated_restype = ctypes.c_bool
-
-lib.momentum_is_stream_available.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_is_stream_available_restype = ctypes.c_bool
+lib.momentum_is_terminated.restype = ctypes.c_bool
 
 lib.momentum_is_subscribed.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_is_subscribed_restype = ctypes.c_bool
+lib.momentum_is_subscribed.restype = ctypes.c_bool
 
 lib.momentum_subscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_subscribe_restype = ctypes.c_bool
+lib.momentum_subscribe.restype = ctypes.c_bool
 
 lib.momentum_unsubscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_unsubscribe_restype = ctypes.c_bool
+lib.momentum_unsubscribe.restype = ctypes.c_bool
 
 lib.momentum_next_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,)
 lib.momentum_next_buffer.restype = ctypes.c_void_p
@@ -86,7 +83,7 @@ lib.momentum_release_buffer.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes
 lib.momentum_release_buffer.restype = ctypes.c_bool
 
 lib.momentum_get_buffer_address.argtypes = (ctypes.c_void_p,)
-lib.momentum_get_buffer_address.restype = ctypes.POINTER(ctypes.c_uint8)
+lib.momentum_get_buffer_address.restype = ctypes.POINTER(ctypes.c_char)
 
 lib.momentum_get_buffer_length.argtypes = (ctypes.c_void_p,)
 lib.momentum_get_buffer_length.restype = ctypes.c_size_t
@@ -145,17 +142,10 @@ class Context:
     def max_buffers(self, value):
         return lib.momentum_set_max_buffers(self._context, value)
 
+
     def is_terminated(self):
         return bool(lib.momentum_is_terminated(self._context))
 
-    def is_stream_available(self, stream):
-        return bool(
-            lib.momentum_is_stream_available(
-                self._context, 
-                stream.encode() if isinstance(stream, str) else stream
-            )
-        )
-    
     def is_subscribed(self, stream):
         return bool(
             lib.momentum_is_subscribed(
@@ -172,16 +162,17 @@ class Context:
             )
         )
 
-    def subscribe(self, stream, timeout=0, retry_interval=0.1):
-        if not self.is_stream_available(stream):
-            raise Exception(f'Stream "{stream}" not available')
+    def subscribe(self, stream, timeout=0, retry_interval=1):
+        if (self.is_subscribed(stream)):
+            return True
 
         stream = stream.encode() if isinstance(stream, str) else stream
 
-        retry_interval = max(0.001, retry_interval)
-        attempts = max(1, int(timeout / retry_interval))
+        timeout_time = time.time() + timeout if timeout > 0 else sys.maxsize
 
-        for _ in range(attempts):
+        retry_interval = max(0.001, retry_interval)
+
+        while time.time() < timeout_time:
             if bool(
                 lib.momentum_subscribe(
                     self._context,
@@ -195,10 +186,10 @@ class Context:
         return False
 
     def next_buffer(self, stream, buffer_length, timeout=0, retry_interval=1e-6):
+        timeout_time = time.time() + timeout if timeout > 0 else sys.maxsize
         retry_interval = max(0.001, retry_interval)
-        attempts = max(1, int(timeout / retry_interval))
 
-        for _ in range(attempts):
+        while time.time() < timeout_time:
             pointer = lib.momentum_next_buffer(
                 self._context, 
                 stream.encode() if isinstance(stream, str) else stream,
@@ -218,10 +209,10 @@ class Context:
 
         stream = stream.encode() if isinstance(stream, str) else stream
 
+        timeout_time = time.time() + timeout if timeout > 0 else sys.maxsize
         retry_interval = max(0.001, retry_interval)
-        attempts = max(1, int(timeout / retry_interval))
 
-        for _ in range(attempts):
+        while time.time() < timeout_time:
             pointer = lib.momentum_receive_buffer(
                 self._context,
                 stream,
@@ -229,6 +220,8 @@ class Context:
 
             if pointer is not None:
                 return BufferData(pointer)
+            elif not self.is_subscribed(stream):
+                break
             else:
                 time.sleep(retry_interval)    
         
@@ -236,10 +229,10 @@ class Context:
 
 
     def release_buffer(self, stream, buffer_data, timeout=0, retry_interval=1e-6):
+        timeout_time = time.time() + timeout if timeout > 0 else sys.maxsize
         retry_interval = max(0.001, retry_interval)
-        attempts = max(1, int(timeout / retry_interval))
 
-        for _ in range(attempts):
+        while time.time() < timeout_time:
             if bool(
                 lib.momentum_release_buffer(
                     self._context, 
@@ -255,8 +248,11 @@ class Context:
 
 
     def receive_string(self, stream, timeout=0, retry_interval=1e-6):
+        retry_interval = max(0.001, retry_interval)
+
         if timeout > 0:
             then = time.time()
+
         buffer_data = self.receive_buffer(stream, timeout, retry_interval)
 
         if buffer_data is not None:
@@ -270,10 +266,11 @@ class Context:
 
 
     def send_buffer(self, buffer, data_length, ts = 0, timeout=0, retry_interval=1e-6):
+        timeout_time = time.time() + timeout if timeout > 0 else sys.maxsize
         retry_interval = max(0.001, retry_interval)
-        attempts = max(1, int(timeout / retry_interval))
 
-        for _ in range(attempts):
+        while time.time() < timeout_time:
+
             if bool(
                 lib.momentum_send_buffer(
                     self._context, 
@@ -318,13 +315,13 @@ class Buffer:
 
     def __init__(self, pointer):
         if pointer is None:
-            raise Exception("Null buffer pointer")
+            raise Exception("Null Buffer pointer")
 
         try:
             self._pointer = pointer
             self._data_address = lib.momentum_get_buffer_address(pointer)
             self._length = lib.momentum_get_buffer_length(pointer)
-            self._memory = ctypes.cast(self._data_address, ctypes.POINTER(ctypes.c_uint8 * self._length))
+            self._memory = ctypes.cast(self._data_address, ctypes.POINTER(ctypes.c_char * self._length))
         except:
             raise Exception("Buffer instantiation failed")
 
@@ -339,13 +336,13 @@ class Buffer:
 class BufferData:
     def __init__(self, pointer):
         if pointer is None:
-            raise Exception("Null pointer")
+            raise Exception("Null BufferData pointer")
 
         try:
             self._pointer = pointer
             self._buffer_data = BUFFER_DATA.from_address(self._pointer)
         except:
-            raise Exception("Buffer instantiation failed")
+            raise Exception("BufferData instantiation failed")
 
     @property
     def buffer(self):

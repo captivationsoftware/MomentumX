@@ -30,6 +30,9 @@ static const size_t MAX_PATH_SIZE = 256; // 255 maximum linux file name + 1 for 
 static const uint64_t NANOS_PER_SECOND = 1000000000;
 static const mode_t MQ_MODE = 0644;
 
+static const int NORMAL_PRIORITY = 0;
+static const int HIGH_PRIORITY = 1; 
+
 static const struct timespec MESSAGE_TIMEOUT {
     0,
     1000
@@ -46,18 +49,30 @@ struct Buffer {
 struct BufferData {
     Buffer* buffer;
     size_t data_length;
-    uint64_t iteration;
     uint64_t ts;
+    uint64_t iteration;
     bool sync;
 };
 
 struct Message {
-    enum{SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, BUFFER_MESSAGE, ACK_MESSAGE, TERM_MESSAGE} type;
+    enum{
+        SUBSCRIBE_MESSAGE, 
+        SUBSCRIBE_ACK_MESSAGE, 
+        UNSUBSCRIBE_MESSAGE, 
+        BUFFER_MESSAGE, 
+        BUFFER_ACK_MESSAGE, 
+        TERM_MESSAGE
+    } type;
+    
     union { 
         struct {
             char stream[MAX_STREAM_SIZE];
             pid_t pid;
         } subscription_message;
+        struct {
+            char stream[MAX_STREAM_SIZE];
+            pid_t pid;
+        } subscription_ack_message;
         struct {
             char stream[MAX_STREAM_SIZE];
         } term_message;
@@ -73,7 +88,7 @@ struct Message {
         struct {
             uint64_t iteration;
             pid_t pid;
-        } ack_message;
+        } buffer_ack_message;
     };
 };
 
@@ -84,11 +99,10 @@ public:
     ~MomentumContext();
     bool is_terminated() const;
     bool term();
-    bool is_stream_available(std::string stream);
     bool is_subscribed(std::string stream);
     size_t subscriber_count(std::string stream);
     bool subscribe(std::string stream);
-    bool unsubscribe(std::string stream, bool notify=true);
+    bool unsubscribe(std::string stream, bool send_notification=true);
     Buffer* next_buffer(std::string stream, size_t length);
     bool send_buffer(Buffer* buffer, size_t length, uint64_t ts=0);
     BufferData* receive_buffer(std::string stream);
@@ -104,8 +118,6 @@ public:
     bool get_sync();
     void set_sync(bool value);
 
-    std::condition_variable _acks;
-    std::atomic<bool>  _terminating{false};
 
 private:
 
@@ -115,6 +127,7 @@ private:
     std::atomic<bool> _debug{false};
     std::atomic<bool> _sync{false};
     std::atomic<bool>  _terminated{false};    
+    std::atomic<bool>  _terminating{false};
     std::atomic<size_t> _min_buffers{1};
     std::atomic<size_t> _max_buffers{std::numeric_limits<size_t>::max()};
 
@@ -125,6 +138,9 @@ private:
     std::map<std::string, std::vector<mqd_t>> _consumer_mqs_by_stream;
     std::map<mqd_t, pid_t> _pid_by_consumer_mq;
     std::map<std::string, mqd_t> _mq_by_mq_name;
+    std::map<pid_t, std::set<std::string>> _streams_by_consumer_pid;
+    std::map<pid_t, std::set<std::string>> _streams_by_producer_pid;
+    std::map<std::string, pid_t> _producer_pid_by_stream;
 
     std::map<std::string, std::list<Buffer*>> _buffers_by_stream;
     std::map<std::string, Buffer*> _buffer_by_shm_path;
@@ -134,11 +150,15 @@ private:
     std::map<std::string, uint64_t> _last_iteration_by_stream;
     std::map<std::string, Message*> _producer_message_by_shm_path;
     std::map<std::string, std::list<Message>> _consumer_messages_by_stream;
-    std::list<Message> _outbox;
     std::map<pid_t, std::set<uint64_t>> _iterations_pending_by_pid;
-    std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _ack_mutex, _buffer_mutex;
 
-    std::thread _message_handler;
+    std::set<std::string> _pending_stream_subscriptions;
+
+    std::mutex _message_mutex, _producer_mutex, _consumer_mutex, _buffer_mutex, _buffer_ack_mutex, _subscription_ack_mutex;
+
+    std::thread _message_handler, _process_watcher;
+
+    std::condition_variable _buffer_acks, _subscription_acks;
 
     // Buffer / SHM functions
     Buffer* allocate_buffer(const std::string& shm_path, size_t length, int flags);
@@ -149,6 +169,7 @@ private:
     void get_shm_time(const std::string& shm_path, uint64_t* read_ts, uint64_t* write_ts);
     void set_shm_time(const std::string& shm_path, uint64_t read_ts, uint64_t write_ts);
     void dir_iter(const std::string& base_path, const std::function<void(std::string)> callback);
+    void remove_consumer(pid_t pid, std::string stream);
 
     // Message / MQ functions
     std::string to_mq_name(pid_t pid, const std::string& stream);
@@ -159,9 +180,7 @@ private:
 
     // Utility functions
     uint64_t now() const;    
-    bool notify(mqd_t mq, Message* message, size_t length, int priority=1);
-    bool force_notify(mqd_t mq, Message* message, size_t length, int priority=1);
-    
+    bool notify(mqd_t mq, Message* message, int priority=NORMAL_PRIORITY); 
 };
 
 extern "C" {
@@ -183,9 +202,6 @@ extern "C" {
     bool momentum_term(MomentumContext* ctx);
     bool momentum_is_terminated(MomentumContext* ctx);
     bool momentum_destroy(MomentumContext* ctx);
-
-    bool momentum_is_stream_available(MomentumContext* ctx, const char* stream);
-    bool momentum_subscriber_count(MomentumContext* ctx, const char* stream);
 
     bool momentum_is_subscribed(MomentumContext* ctx, const char* stream);
     bool momentum_subscribe(MomentumContext* ctx, const char* stream);

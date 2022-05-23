@@ -6,7 +6,6 @@ from momentum import Context
 STREAM = b'momentum://incrementer'
 
 context = Context()
-context.debug = True
 
 context.sync = True
 

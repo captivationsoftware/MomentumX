@@ -26,6 +26,7 @@ MomentumContext::MomentumContext() {
     _pid = getpid();
 
     if (fork() != 0) {
+        // Parent process 
 
         _message_handler = std::thread([&] {
             Message message;
@@ -113,7 +114,7 @@ MomentumContext::MomentumContext() {
                                     std::lock_guard<std::mutex> lock(_message_mutex);
                                     if (iteration <= _last_iteration_by_stream[stream]) {
                                         if (_debug) {
-                                            std::cout << DEBUG_PREFIX << "Received stale / duplicate message for iteration: " << iteration << std::endl;
+                                            std::cout << DEBUG_PREFIX << "Received duplicate message for iteration: " << iteration << std::endl;
                                         }
                                         continue;
                                     }
@@ -154,7 +155,28 @@ MomentumContext::MomentumContext() {
                             }
 
                             break;
-                    
+
+                        case Message::SUBSCRIBE_ACK_MESSAGE:
+                            {
+                                std::string stream(message.subscription_ack_message.stream);
+                                pid_t producer_pid = message.subscription_ack_message.pid;
+                                
+                                {
+                                    std::unique_lock<std::mutex> lock(_subscription_ack_mutex);
+                                    _pending_stream_subscriptions.erase(stream);
+                                }
+
+                                {
+                                    std::lock_guard<std::mutex> lock(_producer_mutex);
+                                    _producer_pid_by_stream[stream] = producer_pid;
+                                }
+
+                            }
+
+                            _subscription_acks.notify_all();
+
+                            break;
+                            
                         case Message::SUBSCRIBE_MESSAGE:
                             {
                                 std::string stream(message.subscription_message.stream);
@@ -170,12 +192,27 @@ MomentumContext::MomentumContext() {
                                         std::cerr << DEBUG_PREFIX << "Failed to find mq for stream: " << stream << std::endl;
                                     }
                                 } else {
+                                    Message subscription_ack_message;
+                                    subscription_ack_message.type = Message::SUBSCRIBE_ACK_MESSAGE;
+                                    subscription_ack_message.subscription_ack_message.pid = _pid;
+                                    strcpy(subscription_ack_message.subscription_ack_message.stream, stream.c_str());
+                                    if (!notify(consumer_mq, &subscription_ack_message, HIGH_PRIORITY)) {
+                                        mq_close(consumer_mq);
+                                        if (_debug) {
+                                            std::cerr << DEBUG_PREFIX << "Failed to send subscription ack message for stream: " << stream << std::endl;
+                                        }
+                                        continue;
+                                    } 
+
+                                    // if we made it here, everything is looking good, so save our lookups!
                                     {
                                         std::unique_lock<std::mutex> lock(_consumer_mutex);
 
                                         _mq_by_mq_name[consumer_mq_name] = consumer_mq;
                                         _pid_by_consumer_mq[consumer_mq] = pid;
                                         _consumer_mqs_by_stream[stream].push_back(consumer_mq);
+                                        _streams_by_consumer_pid[pid].insert(stream);
+
                                         if (_debug) {
                                             std::cout << DEBUG_PREFIX << "Added subscriber to stream: " << stream << std::endl;
                                         }
@@ -188,8 +225,7 @@ MomentumContext::MomentumContext() {
                                         buffers = _buffers_by_stream[stream];
                                     }
 
-
-                                    Message* message = NULL;
+                                    Message* buffer_message = NULL;
                                     for (auto const& buffer : buffers) {
                                         std::string shm_path;
                                         {
@@ -200,12 +236,12 @@ MomentumContext::MomentumContext() {
                                         {
                                             std::unique_lock<std::mutex> message_lock(_message_mutex);
                                             if (_producer_message_by_shm_path.count(shm_path) > 0) {
-                                                message = _producer_message_by_shm_path[shm_path];
+                                                buffer_message = _producer_message_by_shm_path[shm_path];
                                             }
                                         }
 
-                                        if (message != NULL) {
-                                            force_notify(consumer_mq, message, sizeof(Message));
+                                        if (buffer_message != NULL) {
+                                            notify(consumer_mq, buffer_message, HIGH_PRIORITY);
                                         }
                                     }
                                 }    
@@ -220,63 +256,85 @@ MomentumContext::MomentumContext() {
                                 std::string stream(message.subscription_message.stream);
                                 pid_t pid = message.subscription_message.pid;
 
-                                std::string consumer_mq_name = to_mq_name(pid, stream);
-
-                                mqd_t consumer_mq;
-                                if (_mq_by_mq_name.count(consumer_mq_name) > 0) {
-                                    {
-                                        std::unique_lock<std::mutex> lock(_consumer_mutex);
-                                        consumer_mq = _mq_by_mq_name[consumer_mq_name];
-                                        mq_close(consumer_mq);
-                                        _mq_by_mq_name.erase(consumer_mq_name);
-                                        _pid_by_consumer_mq.erase(consumer_mq);
-
-                                        _consumer_mqs_by_stream[stream].erase(
-                                            std::remove(
-                                                _consumer_mqs_by_stream[stream].begin(),
-                                                _consumer_mqs_by_stream[stream].end(),
-                                                consumer_mq
-                                            ),
-                                            _consumer_mqs_by_stream[stream].end()
-                                        );
-
-                                        if (_consumer_mqs_by_stream[stream].size() == 0) {
-                                            _consumer_mqs_by_stream.erase(stream);
-                                        }
-                                    }
-                                    {
-                                        std::unique_lock<std::mutex> lock(_ack_mutex);
-                                        _iterations_pending_by_pid.erase(pid);
-                                    }
-
-                                    _acks.notify_all();
-
-                                    if (_debug) {
-                                        std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
-                                    }
-                                }
+                                remove_consumer(pid, stream);
                             }
 
                             break;
 
-                        case Message::ACK_MESSAGE:
+                        case Message::BUFFER_ACK_MESSAGE:
                             {
-                                pid_t pid = message.ack_message.pid;
-                                uint64_t iteration = message.ack_message.iteration;
+                                pid_t pid = message.buffer_ack_message.pid;
+                                uint64_t iteration = message.buffer_ack_message.iteration;
 
-                                std::unique_lock<std::mutex> lock(_ack_mutex);
+                                std::unique_lock<std::mutex> lock(_buffer_ack_mutex);
                                 _iterations_pending_by_pid[pid].erase(iteration);
+        
                             }
 
-                            _acks.notify_all();
+                            _buffer_acks.notify_all();
                             break;
                     }
                 }
             }   
         });
 
+        _process_watcher = std::thread([&] {
+            while (!_terminated && !_terminating) { 
+                std::map<pid_t, std::set<std::string>> streams_by_consumer_pid;
+                {
+                    std::lock_guard<std::mutex> lock(_consumer_mutex);
+                    streams_by_consumer_pid = _streams_by_consumer_pid;
+                }
+
+                for (auto const& tuple : streams_by_consumer_pid) {
+                    if (getpgid(tuple.first) < 0) {
+                        for (auto const& stream : tuple.second) {
+                            remove_consumer(tuple.first, stream);
+                        }
+                    }
+                }
+
+                std::map<pid_t, std::set<std::string>> streams_by_producer_pid;
+                {
+                    std::lock_guard<std::mutex> lock(_producer_mutex);
+                    streams_by_producer_pid = _streams_by_producer_pid;
+                }
+
+                for (auto const& tuple : streams_by_producer_pid) {
+                    // Send empty signal 0 to the producer pid (DOES NOT ACTUALLY KILL IT!!!),
+                    // and if it returns -1, then the pid no longer exists
+                    if (kill(tuple.first, 0) < 0) {
+                        for (auto const& stream : streams_by_producer_pid[tuple.first]) {
+                            if (_debug) {
+                                std::cerr << DEBUG_PREFIX << "Producer exited without sending unsubscribe for stream: " << stream << std::endl;
+                            }
+                            unsubscribe(stream, false);
+
+                            // clean up any dangling parent shm files
+                            dir_iter(SHM_PATH_BASE, [&](std::string filename) {
+                                if (filename.rfind(std::string(NAMESPACE + PATH_DELIM + std::to_string(tuple.first) + PATH_DELIM)) == 0) {
+                                    shm_unlink(filename.c_str());
+
+                                }
+                            });
+
+                            // clean up any dangling producer mq
+                            mq_unlink((to_mq_name(0, stream)).c_str());
+
+                        }
+                    }   
+                }
+
+                if (usleep(100e3) < 0) {
+                    break;
+                }
+            }
+        });
+
     } else {
-        // wait for our parent to die... :(
+        // Child process
+        
+        // wait for our parent to die
         while (getppid() == _pid) {
             sleep(1);
         }
@@ -301,6 +359,7 @@ MomentumContext::MomentumContext() {
         // and then exit!
         exit(0);
     }
+
 }
 
 MomentumContext::~MomentumContext() {
@@ -316,12 +375,13 @@ bool MomentumContext::term() {
 
     _terminating = true;
 
-    _message_handler.join();
-
     // for every stream we are consuming, issue an unsubscribe
     for (auto const& stream : _consumer_streams) {
         unsubscribe(stream);
     }
+
+    _message_handler.join();
+    _process_watcher.join();
     
     // for every stream we are producing, notify the consumers that we are terminating
     for (auto const& stream : _producer_streams) {
@@ -333,7 +393,7 @@ bool MomentumContext::term() {
         strcpy(message.term_message.stream, stream.c_str());
         
         for (auto const& consumer_mq : _consumer_mqs_by_stream[stream]) {
-            if (!force_notify(consumer_mq, &message, sizeof(Message))) {
+            if (!notify(consumer_mq, &message, HIGH_PRIORITY)) {
                 if (_debug) {
                     std::cerr << DEBUG_PREFIX << "Failed to notify term for stream: " << stream << std::endl;
                 }
@@ -358,28 +418,6 @@ bool MomentumContext::term() {
 
     return true;
 };
-
-bool MomentumContext::is_stream_available(std::string stream) {
-    if (_terminated) return false;
-
-    normalize_stream(stream); 
-    if (!is_valid_stream(stream)) {
-        if (_debug) {
-            std::cerr << DEBUG_PREFIX << "Invalid stream: " << stream << std::endl;
-        }
-        return false;
-    }
-
-    // Attempt to open the producer mq  
-    std::string producer_mq_name = to_mq_name(0, stream);
-    mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDONLY | O_NONBLOCK);
-    if (producer_mq < 0) {
-        return false;
-    } else {
-        return true;
-    }
-}
-
 
 bool MomentumContext::is_subscribed(std::string stream) {
     if (_terminated) return false;
@@ -446,7 +484,7 @@ bool MomentumContext::subscribe(std::string stream) {
     message.subscription_message.pid = _pid;
     strcpy(message.subscription_message.stream, stream.c_str());
 
-    if (!force_notify(producer_mq, &message, sizeof(Message))) {
+    if (!notify(producer_mq, &message, HIGH_PRIORITY)) {
         // we failed for a true failure condition, so cleanup and return false
         if (_debug) {
             std::cerr << DEBUG_PREFIX << "Failed to send subscribe message for stream: " << stream << std::endl;
@@ -463,9 +501,8 @@ bool MomentumContext::subscribe(std::string stream) {
 
         return false;
     }
-    
-    // If we made it here, everything went well so cache references
 
+    // If we made it here, everything went well so cache references!
     {
         std::unique_lock<std::mutex> lock(_consumer_mutex);
 
@@ -475,11 +512,60 @@ bool MomentumContext::subscribe(std::string stream) {
         _consumer_mqs_by_stream[stream].push_back(consumer_mq);
 
         _consumer_streams.insert(stream);
+        _mq_by_mq_name[consumer_mq_name] = consumer_mq;
     }
 
+    bool ack_received;
+    {
+        // waiting up to 1 second for subscription ack
+        std::unique_lock<std::mutex> lock(_subscription_ack_mutex);
+        _pending_stream_subscriptions.insert(stream);
+        
+        ack_received = _subscription_acks.wait_for(lock, std::chrono::seconds(1), [&] { 
+            return _pending_stream_subscriptions.find(stream) == _pending_stream_subscriptions.end();
+        });
+    }
+
+
+    if (!ack_received) {
+        mq_close(producer_mq);
+        mq_close(consumer_mq);
+
+        if (_debug) {
+            std::cout << DEBUG_PREFIX << "Timed out awaiting subscription acknowledgement for stream: " << stream << std::endl;
+        }
+
+        if (mq_unlink(consumer_mq_name.c_str()) < 0) {
+            if (_debug) {        
+                std::cerr << DEBUG_PREFIX << "Failed to unlink consumer mq for stream: " << stream << std::endl;
+            }
+        }
+
+        // Spoke too soon there, undo everything we just added!
+        {
+            std::unique_lock<std::mutex> lock(_consumer_mutex);
+
+            _consumer_mqs_by_stream[stream].erase(
+                std::remove(
+                    _consumer_mqs_by_stream[stream].begin(),
+                    _consumer_mqs_by_stream[stream].end(),
+                    consumer_mq
+                ),
+                _consumer_mqs_by_stream[stream].end()
+            );
+            _consumer_streams.erase(stream);
+            _mq_by_mq_name.erase(consumer_mq_name);
+        }
+
+        return false;
+    }
+    
     {
         std::unique_lock<std::mutex> lock(_producer_mutex);
         _producer_mq_by_stream[stream] = producer_mq;
+
+        pid_t producer_pid = _producer_pid_by_stream[stream];
+        _streams_by_producer_pid[producer_pid].insert(stream);
     }
     
     if (_debug) {
@@ -489,7 +575,7 @@ bool MomentumContext::subscribe(std::string stream) {
     return true;
 }
 
-bool MomentumContext::unsubscribe(std::string stream, bool notify) {
+bool MomentumContext::unsubscribe(std::string stream, bool notify_producer) {
     if (_terminated) return false; // only disallow terminated if we are truly terminated (i.e. not terminating)
 
     normalize_stream(stream);
@@ -522,14 +608,14 @@ bool MomentumContext::unsubscribe(std::string stream, bool notify) {
     {
         std::unique_lock<std::mutex> lock(_producer_mutex);
 
-        if (notify) {
+        if (notify_producer) {
             Message message;
             message.type = Message::UNSUBSCRIBE_MESSAGE;
             message.subscription_message.pid = _pid;
             strcpy(message.subscription_message.stream, stream.c_str());
 
 
-            if (!force_notify(_producer_mq_by_stream[stream], &message, sizeof(Message))) {
+            if (!notify(_producer_mq_by_stream[stream], &message, HIGH_PRIORITY)) {
                 // unexepected error occurred so we must return from this function
                 if (_debug) {
                     std::cerr << DEBUG_PREFIX << "Failed to send unsubscribe message for stream: " << stream << std::endl;
@@ -540,6 +626,9 @@ bool MomentumContext::unsubscribe(std::string stream, bool notify) {
 
         mq_close(_producer_mq_by_stream[stream]);
         _producer_mq_by_stream.erase(stream);
+
+        pid_t producer_pid = _producer_pid_by_stream[stream];
+        _streams_by_producer_pid[producer_pid].erase(stream);
     }
 
     { 
@@ -575,6 +664,13 @@ BufferData* MomentumContext::receive_buffer(std::string stream) {
         return NULL;
     } 
 
+    if (!is_subscribed(stream)) {
+        if (_debug) {
+            std::cerr << DEBUG_PREFIX << "Attempted to receive buffer without subscription for stream: " << stream << std::endl;
+        }
+        return NULL;
+    }
+
     Buffer* buffer = NULL;
     bool has_next = true;
     Message buffer_message;
@@ -600,7 +696,6 @@ BufferData* MomentumContext::receive_buffer(std::string stream) {
             buffer_fd = buffer->fd;
             buffer_shm_path = buffer->shm_path;
         }
-            
 
         // attempt to acquire the lock on this buffer
         if (flock(buffer_fd, LOCK_SH | LOCK_NB) < 0) {
@@ -664,13 +759,13 @@ bool MomentumContext::release_buffer(std::string stream, BufferData* buffer_data
 
     // if the producer who sent this message is in blocking mode, send them the ack
     if (sync) {
-        Message ack_message;
-        ack_message.type = Message::ACK_MESSAGE;
-        ack_message.ack_message.iteration = iteration;
-        ack_message.ack_message.pid = _pid;
+        Message buffer_ack_message;
+        buffer_ack_message.type = Message::BUFFER_ACK_MESSAGE;
+        buffer_ack_message.buffer_ack_message.iteration = iteration;
+        buffer_ack_message.buffer_ack_message.pid = _pid;
 
         std::lock_guard<std::mutex> lock(_producer_mutex);
-        if (!force_notify(_producer_mq_by_stream[stream], &ack_message, sizeof(Message))) {
+        if (!notify(_producer_mq_by_stream[stream], &buffer_ack_message)) {
             std::cout << DEBUG_PREFIX << "Failed to send ack message" << std::endl;
             return false;
         }
@@ -764,14 +859,14 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
             }
 
             {
-                std::unique_lock<std::mutex> lock(_ack_mutex);
+                std::unique_lock<std::mutex> lock(_buffer_ack_mutex);
                 _iterations_pending_by_pid[consumer_pid].insert(iteration);
             }
             
-            if (!force_notify(consumer_mq, message, sizeof(Message))) {
+            if (!notify(consumer_mq, message)) {
                 {
                     // send failed, so remove this message from the list of pending
-                    std::unique_lock<std::mutex> lock(_ack_mutex);
+                    std::unique_lock<std::mutex> lock(_buffer_ack_mutex);
                     _iterations_pending_by_pid[consumer_pid].erase(iteration);
                 }
 
@@ -779,15 +874,15 @@ bool MomentumContext::send_buffer(Buffer* buffer, size_t length, uint64_t ts) {
                 return false;
             }
         } else {
-            force_notify(consumer_mq, message, sizeof(Message));
+            notify(consumer_mq, message);
         } 
     }
 
     // if blocking, wait for acknowledgement prior to returning
     if (_sync) {
         // waiting for acknowledgement
-        std::unique_lock<std::mutex> lock(_ack_mutex);
-        _acks.wait(lock, [&] { 
+        std::unique_lock<std::mutex> lock(_buffer_ack_mutex);
+        _buffer_acks.wait(lock, [&] { 
            
             bool all_acknowledged = true;
 
@@ -835,7 +930,7 @@ Buffer* MomentumContext::next_buffer(std::string stream, size_t length) {
 
         std::string producer_mq_name = to_mq_name(0, stream);
         mq_unlink(producer_mq_name.c_str());
-        mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK, MQ_MODE, &attrs);
+        mqd_t producer_mq = mq_open(producer_mq_name.c_str(), O_RDWR | O_CREAT | O_NONBLOCK, MQ_MODE, &attrs);
         if (producer_mq < 0) {
             if (_debug) {
                 std::cerr << DEBUG_PREFIX << "Failed to open mq for stream: " << stream << std::endl;
@@ -1129,17 +1224,25 @@ uint64_t MomentumContext::now() const {
     ).count();
 }
 
-bool MomentumContext::notify(mqd_t mq, Message* message, size_t length, int priority) {
-    return mq_send(mq, (const char*) message, length, priority) > -1;
-}
-
-bool MomentumContext::force_notify(mqd_t mq, Message* message, size_t length, int priority) {
-    while (!notify(mq, message, length, priority)) {
+bool MomentumContext::notify(mqd_t mq, Message* message, int priority) {
+    while (mq_send(mq, (const char*) message, sizeof(Message), priority) < 0) {
+        
         if (errno == EAGAIN) {
-            // recipient was busy, so try again with higher priority 
-            priority++;
+            { 
+                // ensure that this process wasn't removed on us...
+                std::lock_guard<std::mutex> lock(_consumer_mutex);
+                if (_pid_by_consumer_mq.count(mq) == 0) {
+                    // process was removed, so fail
+                    return false;
+                }
+            }
+
+            // recipient was busy, so try again after sleeping
             if (usleep(1) < 0) {
+                // we were terminated while sleeping, so exit with false
                 return false;
+            } else {
+                continue;
             }
         } else {
             // an unexpected error occurred
@@ -1234,6 +1337,52 @@ std::string MomentumContext::to_mq_name(pid_t pid, const std::string& stream) {
     return oss.str();
 }
 
+void MomentumContext::remove_consumer(pid_t pid, std::string stream) {
+
+    std::string consumer_mq_name = to_mq_name(pid, stream);
+
+    mqd_t consumer_mq;
+    {
+        std::unique_lock<std::mutex> lock(_consumer_mutex);
+
+        if (_mq_by_mq_name.count(consumer_mq_name) == 0) {
+            return;
+        }
+
+        consumer_mq = _mq_by_mq_name[consumer_mq_name];
+        mq_close(consumer_mq);
+        _mq_by_mq_name.erase(consumer_mq_name);
+        _pid_by_consumer_mq.erase(consumer_mq);
+
+        _consumer_mqs_by_stream[stream].erase(
+            std::remove(
+                _consumer_mqs_by_stream[stream].begin(),
+                _consumer_mqs_by_stream[stream].end(),
+                consumer_mq
+            ),
+            _consumer_mqs_by_stream[stream].end()
+        );
+
+        _streams_by_consumer_pid[pid].erase(stream);
+
+        // if consumer mqs for this stream are all empty, remove the key from the data structure
+        if (_consumer_mqs_by_stream[stream].size() == 0) {
+            _consumer_mqs_by_stream.erase(stream);
+        }
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(_buffer_ack_mutex);
+        _iterations_pending_by_pid.erase(pid);
+    }
+
+    _buffer_acks.notify_all();
+
+    if (_debug) {
+        std::cout << DEBUG_PREFIX << "Removed subscriber from stream: " << stream << std::endl;
+    }
+}
+
 
 MomentumContext* momentum_context() {
     MomentumContext* ctx = new MomentumContext();
@@ -1287,10 +1436,6 @@ bool momentum_destroy(MomentumContext* ctx) {
     } else {
         return false;
     }
-}
-
-bool momentum_is_stream_available(MomentumContext* ctx, const char* stream) {
-    return ctx->is_stream_available(std::string(stream));
 }
 
 bool momentum_is_subscribed(MomentumContext* ctx, const char* stream) {
