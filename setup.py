@@ -6,7 +6,7 @@ __version__ = '1.0.0'
 libmomentum = Extension(
     'momentum.ext.libmomentum', 
     sources = [
-        'momentum/ext/momentum.cpp'
+        'momentum/ext/momentum.cpp',
     ],
     include_dirs=['momentum/ext/'],
     extra_compile_args=[

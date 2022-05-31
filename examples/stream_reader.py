@@ -16,20 +16,19 @@ THRESHOLD = 10000
 
 context = Context()
 
-context.subscribe(STREAM)
-
+stream = context.subscribe(STREAM)
 try:
-    while context.subscribe(STREAM):
-        buffer_data = context.receive_buffer(STREAM)
-        if buffer_data is not None:
+    while context.is_subscribed(STREAM):
+        buffer_state = context.receive(stream)
+        if buffer_state is not None:
             messages_received += 1
-            bytes_received += buffer_data.data_length
+            bytes_received += buffer_state.data_size
 
-            step = buffer_data.iteration - last_iteration
+            step = buffer_state.iteration - last_iteration
             if last_iteration > 0 and step > 1:
                 skip_count = skip_count + step
 
-            last_iteration = buffer_data.iteration
+            last_iteration = buffer_state.iteration
 
 
             if (messages_received % THRESHOLD == 0):
@@ -40,7 +39,7 @@ try:
                 print(f"Missed: {skip_count}")
                 skip_count = 0
 
-            context.release_buffer(STREAM, buffer_data)
+            context.release(stream, buffer_state)
 
 
 except KeyboardInterrupt:
