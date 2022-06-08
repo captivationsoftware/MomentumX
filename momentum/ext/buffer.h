@@ -53,7 +53,7 @@ namespace Momentum {
                 // do the ftruncate to resize and (re)mmap
                 resize_remap(size);          
 
-                std::cout << "Created Buffer (" << (uint64_t) this << ")" << std::endl;
+                std::cout << (_is_create ? "Created" : "Opened") << " Buffer (" << (uint64_t) this << ")" << std::endl;
 
             };
 
@@ -66,7 +66,7 @@ namespace Momentum {
                     }
                 }
 
-                std::cout << "Deleted Buffer (" << (uint64_t) this << ")" << std::endl;
+                std::cout << (_is_create ? "Deleted" : "Closed") << " Buffer (" << (uint64_t) this << ")" << std::endl;
             }
 
             const uint16_t id() {

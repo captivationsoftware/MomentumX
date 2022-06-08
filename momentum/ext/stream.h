@@ -59,29 +59,48 @@ namespace Momentum {
 
             enum Role { CONSUMER, PRODUCER };
 
-            Stream(std::string name, size_t buffer_size=0, size_t buffer_count=0, bool sync=false, Role role=Role::CONSUMER) :
+            Stream(
+                std::string name, 
+                size_t buffer_size=0, 
+                size_t buffer_count=0, 
+                bool sync=false, 
+                Role role=Role::CONSUMER
+            ) :
                 _name(name),
                 _role(role),
                 _path("momentum." + name),
                 _fd(shm_open(_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? (O_CREAT | O_EXCL) : 0), S_IRWXU)),
-                _stream_data_read_lock(_fd, 0, getpagesize()),
-                _buffer_state_read_lock(_fd, getpagesize(), getpagesize()),
-                _subscriptions_read_lock(_fd, getpagesize() * 2, getpagesize()),
-                _acknowledgements_read_lock(_fd, getpagesize() * 3, getpagesize()),
-                _stream_data_write_lock(_fd, 0, getpagesize()),
-                _buffer_state_write_lock(_fd, getpagesize(), getpagesize()),
-                _subscriptions_write_lock(_fd, getpagesize() * 2, getpagesize()),
-                _acknowledgements_write_lock(_fd, getpagesize() * 3, getpagesize())
+                
+                _stream_data_size(sizeof(bool) + sizeof(size_t) + sizeof(size_t)),
+                _buffer_state_size(512 * sizeof(BufferState)),
+                _subscribers_size(256 * sizeof(Context*)),
+                _acknowledgements_size(_subscribers_size),
+
+                _stream_data_offset(0),
+                _buffer_state_offset(_stream_data_offset + _stream_data_size),
+                _subscribers_offset(_buffer_state_offset + _buffer_state_size),
+                _acknowledgements_offset(_subscribers_offset + _subscribers_size),
+
+                _stream_data_read_lock(_fd, _stream_data_offset, _stream_data_size),
+                _buffer_state_read_lock(_fd, _buffer_state_offset, _buffer_state_size),
+                _subscriptions_read_lock(_fd, _subscribers_offset, _subscribers_size),
+                _acknowledgements_read_lock(_fd, _acknowledgements_offset, _acknowledgements_size),
+                
+                _stream_data_write_lock(_fd, _stream_data_offset, _stream_data_size),
+                _buffer_state_write_lock(_fd, _buffer_state_offset, _buffer_state_size),
+                _subscriptions_write_lock(_fd, _subscribers_offset, _subscribers_size),
+                _acknowledgements_write_lock(_fd, _acknowledgements_offset, _acknowledgements_size)
             {
                 if (_fd < 0) {
                     throw std::string("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
                 } 
 
-                // 1 page for stream data, 
-                // 1 page for buffer state 
-                // 1 page for stream subscriptions 
-                // 1 page for acknowledgements
-                size_t size_required = getpagesize() * 4; 
+                size_t size_required = Utils::page_aligned_size(
+                    _stream_data_size + 
+                    _buffer_state_size + 
+                    _subscribers_size + 
+                    _acknowledgements_size
+                );
 
                 if (role == Role::PRODUCER) {
                     ftruncate(_fd, size_required);
@@ -101,7 +120,7 @@ namespace Momentum {
                     this->sync(sync);
                 }
 
-                std::cout << "Created Stream (" << (uint64_t) this << ")" << std::endl;
+                std::cout << (_role == PRODUCER ? "Created Producer" : "Opened Consumer") << " Stream (" << (uint64_t) this << ")" << std::endl;
             };
 
             ~Stream() {
@@ -113,7 +132,8 @@ namespace Momentum {
                     }
                 }
 
-                std::cout << "Deleted Stream (" << (uint64_t) this << ")" << std::endl;
+                std::cout << (_role == PRODUCER ? "Deleted Producer" : "Closed Consumer") << " Stream (" << (uint64_t) this << ")" << std::endl;
+            
             }
 
             bool is_alive() {
@@ -207,11 +227,10 @@ namespace Momentum {
                 {
                     std::lock_guard<Utils::FileReadLock> lock(_buffer_state_read_lock);
 
-                    off_t base_offset = getpagesize();
                     for (size_t i = 0; i < _buffer_count; i++) {
                         off_t iter_offset = i * sizeof(BufferState);
                         BufferState buffer_state;
-                        std::memcpy(&buffer_state, _data + base_offset + iter_offset, sizeof(BufferState));
+                        std::memcpy(&buffer_state, _data + _buffer_state_offset + iter_offset, sizeof(BufferState));
 
                         if (
                             minimum_timestamp == 0 || buffer_state.data_timestamp >= minimum_timestamp
@@ -244,11 +263,15 @@ namespace Momentum {
                 if (_role == Role::CONSUMER) {
                     throw std::string("Consumer stream can not set stream 'buffer_states' parameter");
                 }
+
+                if (_buffer_states.size() * sizeof(BufferState) > _buffer_state_size) {
+                    throw std::string("Buffer state count exceeds the allowable amount for this stream");
+                }
+
                 std::lock_guard<Utils::FileWriteLock> lock(_buffer_state_write_lock);
-                off_t base_offset = getpagesize();
                 off_t iter_offset = 0;
                 for (auto const& buffer_state : _buffer_states) {
-                    std::memcpy(_data + base_offset + iter_offset, &buffer_state, sizeof(BufferState));
+                    std::memcpy(_data + _buffer_state_offset + iter_offset, &buffer_state, sizeof(BufferState));
                     iter_offset += sizeof(BufferState);
                 }
             }
@@ -258,8 +281,11 @@ namespace Momentum {
                 std::set<Context*> subscribers;
 
                 if (is_alive()) {
-                    off_t base_offset = getpagesize() * 2;
-                    for (off_t offset = base_offset; offset < base_offset + getpagesize(); offset += sizeof(Context*)) {
+                    for (
+                        size_t offset = _subscribers_offset; 
+                        offset < _subscribers_offset + _subscribers_size; 
+                        offset += sizeof(Context*)
+                    ) {
                         Context* context;
 
                         std::memcpy(&context, _data + offset, sizeof(Context*));
@@ -279,15 +305,18 @@ namespace Momentum {
                     throw std::string("Producer stream can not set stream 'subscribers' parameter");
                 }
 
+                if (subscribers.size() * sizeof(Context*) > _subscribers_size) {
+                    throw std::string("Subscriber count exceeds the allowable amount for this stream");
+                }
+
                 std::lock_guard<Utils::FileWriteLock> lock(_subscriptions_write_lock);
                 if (!is_alive()) {
                     return;
                 }
 
-                off_t base_offset = getpagesize() * 2;
-                std::memset(_data + base_offset, 0, getpagesize());
+                std::memset(_data + _subscribers_offset, 0, _subscribers_size);
 
-                off_t offset = base_offset;
+                off_t offset = _subscribers_offset;
                 for (auto const& context : subscribers) {
                     std::memcpy(_data + offset, &context, sizeof(Context*));
                     offset += sizeof(Context*);
@@ -300,8 +329,11 @@ namespace Momentum {
                 std::set<Context*> pending;
                 
                 if (is_alive()) {
-                    off_t base_offset = getpagesize() * 3;
-                    for (off_t offset = base_offset; offset < base_offset + getpagesize(); offset += sizeof(Context*)) {
+                    for (
+                        size_t offset = _acknowledgements_offset; 
+                        offset < _acknowledgements_offset + _acknowledgements_size; 
+                        offset += sizeof(Context*)
+                    ) {
                         Context* context;
 
                         std::memcpy(&context, _data + offset, sizeof(Context*));
@@ -322,10 +354,13 @@ namespace Momentum {
                     return;
                 }
 
-                off_t base_offset = getpagesize() * 3;
-                std::memset(_data + base_offset, 0, getpagesize());
+                if (pending.size() * sizeof(Context*) > _acknowledgements_size) {
+                    throw std::string("Acknowledgement count exceeds the allowable amount for this stream");
+                }
 
-                off_t offset = base_offset;
+                std::memset(_data + _acknowledgements_offset, 0, _acknowledgements_size);
+
+                size_t offset = _acknowledgements_offset;
                 for (auto const& context : pending) {
                     std::memcpy(_data + offset, &context, sizeof(Context*));
                     offset += sizeof(Context*);
@@ -339,6 +374,9 @@ namespace Momentum {
             Role _role;
             std::string _path;
             int _fd;
+            size_t _stream_data_size, _buffer_state_size, _subscribers_size, _acknowledgements_size;
+            size_t _stream_data_offset, _buffer_state_offset, _subscribers_offset, _acknowledgements_offset;
+            
             Utils::FileReadLock 
                 _stream_data_read_lock, 
                 _buffer_state_read_lock, 
@@ -352,6 +390,7 @@ namespace Momentum {
                 _acknowledgements_write_lock;
 
             char* _data;
+
     };
 
     class StreamManager {
