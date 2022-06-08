@@ -696,6 +696,11 @@ namespace Momentum {
                 return NULL;
             }
 
+            void flush_buffer_state(Stream* stream) {
+                std::lock_guard<std::mutex> lock(_mutex);
+                _iteration_by_stream[stream] = stream->buffer_states(true).back().iteration; 
+            }
+
             void release_buffer_state(Stream* stream, Stream::BufferState* buffer_state) {
                 std::lock_guard<std::mutex> lock(_mutex);
              

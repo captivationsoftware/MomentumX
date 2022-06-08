@@ -154,9 +154,7 @@ namespace Momentum {
                     throw std::string("Terminated");
                 }
 
-                _stream_manager.receive_buffer_state(
-                    stream, Utils::now()
-                );
+                _stream_manager.flush_buffer_state(stream);
             }
 
             void release(Stream* stream, Stream::BufferState* buffer_state) {
