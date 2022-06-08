@@ -91,6 +91,7 @@ namespace Momentum {
                 _subscriptions_write_lock(_fd, _subscribers_offset, _subscribers_size),
                 _acknowledgements_write_lock(_fd, _acknowledgements_offset, _acknowledgements_size)
             {
+
                 if (_fd < 0) {
                     throw std::string("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
                 } 
@@ -120,7 +121,15 @@ namespace Momentum {
                     this->sync(sync);
                 }
 
-                std::cout << (_role == PRODUCER ? "Created Producer" : "Opened Consumer") << " Stream (" << (uint64_t) this << ")" << std::endl;
+                if (_role == PRODUCER) {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Created Stream (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                } else {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Opened Stream (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                }
             };
 
             ~Stream() {
@@ -132,7 +141,15 @@ namespace Momentum {
                     }
                 }
 
-                std::cout << (_role == PRODUCER ? "Deleted Producer" : "Closed Consumer") << " Stream (" << (uint64_t) this << ")" << std::endl;
+                if (_role == PRODUCER) {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Deleted Stream (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                } else {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Closed Stream (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                }
             
             }
 
@@ -163,6 +180,7 @@ namespace Momentum {
                 if (_role == Role::CONSUMER) {
                     throw std::string("Consumer stream can not set stream 'sync' parameter");
                 }
+
                 if (!is_alive()) {
                     return;
                 }

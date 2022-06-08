@@ -208,6 +208,71 @@ namespace Momentum {
                 off_t _from, _size;
         };
 
+        class Logger {
+
+            public:
+                enum Level { DEBUG = 0, INFO = 1, WARNING = 2, ERROR = 3 };
+                
+                static Logger& get_logger() {
+                    static Logger logger;
+                    return logger;
+                }
+
+                void set_level(Level level) {
+                    _level = level;
+                }
+
+                void debug(std::string message) {
+                    print(Level::DEBUG, message);
+                }
+
+                void info(std::string message) {
+                    print(Level::INFO, message);
+                }
+
+                void warning(std::string message) {
+                    print(Level::WARNING, message);
+                }
+
+                void error(std::string message) {
+                    print(Level::ERROR, message);
+                }
+
+                Logger(Logger const&) = delete;
+                void operator=(Logger const&) = delete;
+
+            private:
+                Level _level;
+
+                Logger() :
+                    _level(Level::INFO)
+                { };
+
+                void print(Level level, std::string message) {
+                    if (level < _level) return;
+
+                    std::lock_guard<std::mutex> lock(_mutex);
+
+                    std::cout << "MOMENTUM - ";
+                    switch(level) {
+                        case Level::DEBUG:
+                            std::cout << "DEBUG";
+                            break;
+                        case Level::INFO:
+                            std::cout << "INFO";
+                            break;
+                        case Level::WARNING:
+                            std::cout << "WARNING";
+                            break;
+                        case Level::ERROR:
+                            std::cout << "ERROR";
+                            break;
+                    }
+                    std::cout << " - " << message << std::endl;
+                }
+
+                std::mutex _mutex;
+        };
   
     }    
 

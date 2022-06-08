@@ -1,6 +1,7 @@
 import ctypes
 import glob
 import os
+from enum import Enum
 
 try:
     import momentum.ext
@@ -22,11 +23,17 @@ class STREAM_BUFFER_STATE(ctypes.Structure):
 
 lib = ctypes.cdll.LoadLibrary(libmomentum)
 
-lib.momentum_context.argtypes = ()
+class LogLevel(Enum):
+    DEBUG = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_DEBUG")
+    INFO = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_INFO")
+    WARNING = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_WARNING")
+    ERROR = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_ERROR")
+    
+lib.momentum_context.argtypes = (ctypes.c_uint8,)
 lib.momentum_context.restype = ctypes.c_void_p
 
-lib.momentum_debug.argtypes = (ctypes.c_void_p,)
-lib.momentum_debug.restype = ctypes.c_bool
+lib.momentum_log_level.argtypes = (ctypes.c_void_p, ctypes.c_uint8,)
+lib.momentum_log_level.restype = None
 
 lib.momentum_term.argtypes = (ctypes.c_void_p,)
 lib.momentum_term.restype = ctypes.c_bool
@@ -73,8 +80,8 @@ lib.momentum_data_address.restype = ctypes.POINTER(ctypes.c_char)
 class Context:
 
     # Constructor
-    def __init__(self):
-        self._context = lib.momentum_context()
+    def __init__(self, log_level=LogLevel.INFO):
+        self._context = lib.momentum_context(log_level.value)
         self._last_data_timestamp_by_stream = {}
         
     # Destructor
@@ -90,9 +97,8 @@ class Context:
     def __exit__(self, *args):
         self.term()
 
-    
-    def debug(self, value):
-        lib.momentum_debug(self._context, value)
+    def log_level(self, log_level):
+        lib.momentum_log_level(self._context, log_level.value)
 
     def is_terminated(self):
         return bool(lib.momentum_is_terminated(self._context))

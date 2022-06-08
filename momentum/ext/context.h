@@ -21,18 +21,24 @@ namespace Momentum {
     class Context {
 
         public:
-            Context() : 
+            Context(Utils::Logger::Level log_level=Utils::Logger::Level::INFO) : 
                 _terminated(false),
                 _buffer_manager(),
                 _stream_manager(this, &_buffer_manager)
             { 
-                std::cout << "Created Context (" << (uint64_t) this  << ")" << std::endl;
+                Utils::Logger::get_logger().set_level(log_level);
+
+                Utils::Logger::get_logger().debug(
+                    std::string("Created Context (" + std::to_string((uint64_t) this) + ")")          
+                );
             };
 
             ~Context() {
                 term();
-                std::cout << "Deleted Context (" << (uint64_t) this  << ")" << std::endl;
-             }
+                Utils::Logger::get_logger().debug(
+                    std::string("Deleted Context (" + std::to_string((uint64_t) this) + ")")          
+                );
+            }
             
 
             void term() {
@@ -43,7 +49,9 @@ namespace Momentum {
                     _stream_manager.unsubscribe(stream);
                 }
 
-                std::cout << "Terminated Context (" << (uint64_t) this  << ")" << std::endl;
+                Utils::Logger::get_logger().debug(
+                    std::string("Terminated Context (" + std::to_string((uint64_t) this) + ")")          
+                );
 
                 _terminated = true;
             }
@@ -168,6 +176,11 @@ namespace Momentum {
                 return _stream_manager.subscriber_count(stream);
             }
 
+            void log_level(Utils::Logger::Level level) {
+                Utils::Logger::get_logger().set_level(level);
+            }
+
+        private:
             friend class StreamManager;
 
             std::atomic<bool> _terminated;

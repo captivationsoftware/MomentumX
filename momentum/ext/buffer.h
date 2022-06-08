@@ -28,7 +28,6 @@ namespace Momentum {
                 _size(0),
                 _is_create(id == CREATE_ID)
             {
-
                 if (_is_create) {
                     // Find an unused shared memory region
                     int fd;
@@ -53,7 +52,15 @@ namespace Momentum {
                 // do the ftruncate to resize and (re)mmap
                 resize_remap(size);          
 
-                std::cout << (_is_create ? "Created" : "Opened") << " Buffer (" << (uint64_t) this << ")" << std::endl;
+                if (_is_create) {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Created Buffer (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                } else {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Opened Buffer (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                }
 
             };
 
@@ -66,7 +73,15 @@ namespace Momentum {
                     }
                 }
 
-                std::cout << (_is_create ? "Deleted" : "Closed") << " Buffer (" << (uint64_t) this << ")" << std::endl;
+                if (_is_create) {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Deleted Buffer (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                } else {
+                    Utils::Logger::get_logger().debug(
+                        std::string("Closed Buffer (" + std::to_string((uint64_t) this) + ")")          
+                    );
+                }
             }
 
             const uint16_t id() {

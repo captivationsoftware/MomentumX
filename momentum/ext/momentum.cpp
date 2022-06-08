@@ -1,12 +1,16 @@
 #include "momentum.h"
 
-Momentum::Context* momentum_context() {
-    Momentum::Context* ctx = new Momentum::Context();
+Momentum::Context* momentum_context(uint8_t log_level) {
+    Momentum::Context* ctx = new Momentum::Context(
+        static_cast<Momentum::Utils::Logger::Level>(log_level)
+    );
     return ctx;
 }
 
-void momentum_debug(Momentum::Context* ctx, bool value) {
-    // return ctx->debug(value);
+void momentum_log_level(Momentum::Context* ctx, uint8_t log_level) {
+    ctx->log_level(
+        static_cast<Momentum::Utils::Logger::Level>(log_level)
+    );
 }
 
 bool momentum_term(Momentum::Context* ctx) { 

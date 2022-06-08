@@ -2,11 +2,17 @@
 #define MOMENTUM_H
 
 #include "context.h"
+#include "utils.h"
 
 extern "C" {
 
-    Momentum::Context* momentum_context();
-    void momentum_debug(Momentum::Context* ctx, bool value);
+    extern const uint8_t MOMENTUM_LOG_LEVEL_DEBUG = static_cast<uint8_t>(Momentum::Utils::Logger::Level::DEBUG);
+    extern const uint8_t MOMENTUM_LOG_LEVEL_INFO = static_cast<uint8_t>(Momentum::Utils::Logger::Level::INFO);
+    extern const uint8_t MOMENTUM_LOG_LEVEL_WARNING = static_cast<uint8_t>(Momentum::Utils::Logger::Level::WARNING);
+    extern const uint8_t MOMENTUM_LOG_LEVEL_ERROR = static_cast<uint8_t>(Momentum::Utils::Logger::Level::ERROR);
+
+    Momentum::Context* momentum_context(uint8_t log_level=static_cast<uint8_t>(Momentum::Utils::Logger::Level::INFO));
+    void momentum_log_level(Momentum::Context* ctx, uint8_t log_level);
     bool momentum_term(Momentum::Context* ctx);
     bool momentum_is_terminated(Momentum::Context* ctx);
     bool momentum_destroy(Momentum::Context* ctx);
