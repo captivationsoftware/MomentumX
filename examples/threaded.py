@@ -12,10 +12,11 @@ def consumer():
     time.sleep(1)
     stream = context.subscribe(STREAM)
 
-    while context.is_subscribed(STREAM):
+    while context.is_subscribed(STREAM)  :
         string = context.receive_string(stream)
         if string is not None:
             print('Received:', string)
+
     context.term()
 
 def producer():
@@ -23,12 +24,13 @@ def producer():
     stream = context.stream(STREAM, 100, 10, True)
     i = 0
     try:
-        while True:
+        while i < 1000:
             if context.send_string(stream, str(i)):
                 print("Sent: ", i)
                 i += 1
     except KeyboardInterrupt:
         context.term()
+        context.destroy()
         return
 
 

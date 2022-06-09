@@ -18,7 +18,7 @@ bool momentum_term(Momentum::Context* ctx) {
         ctx->term();
         return true;
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return false;
     }
 }
@@ -44,7 +44,7 @@ Momentum::Stream* momentum_subscribe(Momentum::Context* ctx, const char* stream_
     try {
         return ctx->subscribe(std::string(stream_name));
     } catch(std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return NULL;
     }
 }
@@ -54,7 +54,7 @@ bool momentum_unsubscribe(Momentum::Context* ctx, Momentum::Stream* stream) {
         ctx->unsubscribe(stream);
         return true;
     } catch(std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return false;
     }
 }
@@ -67,7 +67,7 @@ Momentum::Stream* momentum_stream(Momentum::Context* ctx, const char* stream_nam
     try {
         return ctx->stream(std::string(stream_name), buffer_size, buffer_count, sync);
     } catch(std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return NULL;
     }
 }
@@ -76,7 +76,7 @@ Momentum::Stream::BufferState* momentum_stream_next(Momentum::Context* ctx, Mome
     try {
         return ctx->next(stream);
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return NULL;
     }
     
@@ -86,7 +86,7 @@ bool momentum_stream_send(Momentum::Context* ctx, Momentum::Stream* stream, Mome
     try {
         return ctx->send(stream, buffer_state);
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return false;
     }
 }
@@ -95,7 +95,7 @@ Momentum::Stream::BufferState* momentum_stream_receive(Momentum::Context* ctx, M
     try {
         return ctx->receive(stream, minimum_timestamp);
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return NULL;
     }
 }
@@ -104,7 +104,7 @@ void momentum_stream_flush(Momentum::Context* ctx, Momentum::Stream* stream) {
     try {
         return ctx->flush(stream);
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
     }
 }
 
@@ -114,7 +114,7 @@ bool momentum_stream_release(Momentum::Context* ctx, Momentum::Stream* stream, M
         ctx->release(stream, buffer_state);
         return true;
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return false;
     }
 }
@@ -123,7 +123,7 @@ uint8_t* momentum_data_address(Momentum::Context* ctx, Momentum::Stream* stream,
     try {
         return ctx->data_address(stream, buffer_id);
     } catch (std::string ex) {
-        std::cerr << ex << std::endl;
+        Momentum::Utils::Logger::get_logger().error(ex);
         return NULL;
     }
 }

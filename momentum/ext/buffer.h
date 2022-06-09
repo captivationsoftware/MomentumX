@@ -4,6 +4,7 @@
 #include <mutex>
 #include <errno.h>
 #include <map>
+#include <cstring>
 #include <list>
 #include <iostream>
 #include <sys/shm.h>
@@ -19,45 +20,31 @@ namespace Momentum {
         static const uint16_t MAX_UINT16_T = -1; // intentionally wrap
 
         public:
-            
-            static const uint16_t CREATE_ID = 0;
-            
-            Buffer(std::string stream, uint16_t id=CREATE_ID, size_t size=0) :
+                        
+            Buffer(std::string stream, uint16_t id, size_t size=0, bool create=false) :
                 _stream(stream),
                 _id(id),
                 _size(0),
-                _is_create(id == CREATE_ID)
+                _is_create(create),
+                _fd(shm_allocate(id, O_RDWR | (create ? O_CREAT : 0)))
             {
-                if (_is_create) {
-                    // Find an unused shared memory region
-                    int fd;
-                    for (uint16_t id = 1; id < MAX_UINT16_T; id++) {
-                        fd = shm_allocate(id, O_RDWR | O_CREAT | O_EXCL);
-                        if (fd > -1) {
-                            _fd = fd;
-                            _id = id;
-                            break;
-                        }
+                if (_fd < 0) {
+                    if (_is_create) {
+                        throw std::string("Failed to create shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
+                    } else {
+                        throw std::string("Failed to open shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
                     }
-                } else {
-                    // Attach to a previously created shared memory region
-                    _fd = shm_allocate(id, O_RDWR);
-                        
-                }
-
-                if (_id == 0 || _fd < 0) {
-                    throw std::string("Failed to create shared memory buffer [errno: " + std::to_string(errno) + "]");
                 } 
 
                 // do the ftruncate to resize and (re)mmap
                 resize_remap(size);          
 
                 if (_is_create) {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Created Buffer (" + std::to_string((uint64_t) this) + ")")          
                     );
                 } else {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Opened Buffer (" + std::to_string((uint64_t) this) + ")")          
                     );
                 }
@@ -74,11 +61,11 @@ namespace Momentum {
                 }
 
                 if (_is_create) {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Deleted Buffer (" + std::to_string((uint64_t) this) + ")")          
                     );
                 } else {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Closed Buffer (" + std::to_string((uint64_t) this) + ")")          
                     );
                 }
@@ -157,6 +144,10 @@ namespace Momentum {
                         address = (uint8_t* ) mremap(_address, _size, size_required, MREMAP_MAYMOVE);
                     }
 
+                    if (_is_create) {
+                        std::memset(address, 0, size_required);
+                    }
+
                     if (address == MAP_FAILED) {
                         throw std::string("Failed to mmap shared memory file [errno: " + std::to_string(errno) + "]");
                     } else {
@@ -191,14 +182,12 @@ namespace Momentum {
                 }
             };
 
-
-
-            Buffer* allocate(std::string stream, uint16_t id=Buffer::CREATE_ID, size_t size=0) {
+            Buffer* allocate(std::string stream, uint16_t id, size_t size=0, bool create=false) {
                 std::lock_guard<std::mutex> lock(_mutex); 
-                Buffer* buffer = new Buffer(stream, id, size);
+                Buffer* buffer = new Buffer(stream, id, size, create);
                 _buffers_by_stream[stream].push_back(buffer);
                 
-                if (id == Buffer::CREATE_ID && _head_buffer_by_stream.count(stream) == 0) {
+                if (_head_buffer_by_stream.count(stream) == 0) {
                     _head_buffer_by_stream[stream] = buffer;
                 }
                 return buffer;

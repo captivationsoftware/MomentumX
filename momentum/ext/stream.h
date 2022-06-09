@@ -69,7 +69,7 @@ namespace Momentum {
                 _name(name),
                 _role(role),
                 _path("momentum." + name),
-                _fd(shm_open(_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? (O_CREAT | O_EXCL) : 0), S_IRWXU)),
+                _fd(shm_open(_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT : 0), S_IRWXU)),
                 
                 _stream_data_size(sizeof(bool) + sizeof(size_t) + sizeof(size_t)),
                 _buffer_state_size(512 * sizeof(BufferState)),
@@ -79,21 +79,15 @@ namespace Momentum {
                 _stream_data_offset(0),
                 _buffer_state_offset(_stream_data_offset + _stream_data_size),
                 _subscribers_offset(_buffer_state_offset + _buffer_state_size),
-                _acknowledgements_offset(_subscribers_offset + _subscribers_size),
-
-                _stream_data_read_lock(_fd, _stream_data_offset, _stream_data_size),
-                _buffer_state_read_lock(_fd, _buffer_state_offset, _buffer_state_size),
-                _subscriptions_read_lock(_fd, _subscribers_offset, _subscribers_size),
-                _acknowledgements_read_lock(_fd, _acknowledgements_offset, _acknowledgements_size),
-                
-                _stream_data_write_lock(_fd, _stream_data_offset, _stream_data_size),
-                _buffer_state_write_lock(_fd, _buffer_state_offset, _buffer_state_size),
-                _subscriptions_write_lock(_fd, _subscribers_offset, _subscribers_size),
-                _acknowledgements_write_lock(_fd, _acknowledgements_offset, _acknowledgements_size)
+                _acknowledgements_offset(_subscribers_offset + _subscribers_size)
             {
 
                 if (_fd < 0) {
-                    throw std::string("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
+                    if (role == Role::CONSUMER) {
+                        throw std::string("Failed to open shared memory stream file [errno: " + std::to_string(errno) + "]");
+                    } else {
+                        throw std::string("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
+                    }
                 } 
 
                 size_t size_required = Utils::page_aligned_size(
@@ -122,11 +116,11 @@ namespace Momentum {
                 }
 
                 if (_role == PRODUCER) {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Created Stream (" + std::to_string((uint64_t) this) + ")")          
                     );
                 } else {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Opened Stream (" + std::to_string((uint64_t) this) + ")")          
                     );
                 }
@@ -142,11 +136,11 @@ namespace Momentum {
                 }
 
                 if (_role == PRODUCER) {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Deleted Stream (" + std::to_string((uint64_t) this) + ")")          
                     );
                 } else {
-                    Utils::Logger::get_logger().debug(
+                    Utils::Logger::get_logger().info(
                         std::string("Closed Stream (" + std::to_string((uint64_t) this) + ")")          
                     );
                 }
@@ -166,13 +160,21 @@ namespace Momentum {
                 return _name;
             }
 
+            int fd() { 
+                return _fd;
+            }
+
             bool sync() {
-                std::lock_guard<Utils::FileReadLock> lock(_stream_data_read_lock);
                 if (!is_alive()) {
                     return false;
                 }
+               
                 bool _sync;
-                std::memcpy(&_sync, _data, sizeof(bool));
+
+                Utils::with_read_lock(_fd, [&] {
+                    std::memcpy(&_sync, _data, sizeof(bool));
+                });
+
                 return _sync;
             }
 
@@ -184,18 +186,24 @@ namespace Momentum {
                 if (!is_alive()) {
                     return;
                 }
-                std::lock_guard<Utils::FileWriteLock> lock(_stream_data_write_lock);
-                std::memcpy(_data, &_sync, sizeof(bool));
+                
+                Utils::with_write_lock(_fd, [&] {
+                    std::memcpy(_data, &_sync, sizeof(bool));
+                });
             }
 
             size_t buffer_size() {
-                std::lock_guard<Utils::FileReadLock> lock(_stream_data_read_lock);
                 if (!is_alive()) {
                     return 0;
                 }
+
                 off_t offset = sizeof(bool);
                 size_t _buffer_size;
-                std::memcpy(&_buffer_size, _data + offset, sizeof(size_t));
+
+                Utils::with_read_lock(_fd, [&] {
+                    std::memcpy(&_buffer_size, _data + offset, sizeof(size_t));
+                });
+
                 return _buffer_size;
             }
 
@@ -203,22 +211,28 @@ namespace Momentum {
                 if (_role == Role::CONSUMER) {
                     throw std::string("Consumer stream can not set stream 'buffer_size' parameter");
                 }
-                std::lock_guard<Utils::FileWriteLock> lock(_stream_data_write_lock);
+
                 if (!is_alive()) {
                     return;
                 }
+
                 off_t offset = sizeof(bool);
-                std::memcpy(_data + offset, &_buffer_size, sizeof(size_t));
+                Utils::with_write_lock(_fd, [&] {
+                    std::memcpy(_data + offset, &_buffer_size, sizeof(size_t));
+                });
             }
 
             size_t buffer_count() {
-                std::lock_guard<Utils::FileReadLock> lock(_stream_data_read_lock);
                 if (!is_alive()) {
                     return 0;
                 }
+                
                 off_t offset = sizeof(bool) + sizeof(size_t);
                 size_t _buffer_count;
-                std::memcpy(&_buffer_count, _data + offset, sizeof(size_t));
+                Utils::with_read_lock(_fd, [&] {
+                    std::memcpy(&_buffer_count, _data + offset, sizeof(size_t));
+                });
+
                 return _buffer_count;
             }
 
@@ -226,24 +240,26 @@ namespace Momentum {
                 if (_role == Role::CONSUMER) {
                     throw std::string("Consumer stream can not set stream 'buffer_count' parameter");
                 }
-                std::lock_guard<Utils::FileWriteLock> lock(_stream_data_write_lock);
+                
                 if (!is_alive()) {
                     return;
                 }
+
                 off_t offset = sizeof(bool) + sizeof(size_t);
-                std::memcpy(_data + offset, &_buffer_count, sizeof(size_t));
+                Utils::with_write_lock(_fd, [&] {
+                    std::memcpy(_data + offset, &_buffer_count, sizeof(size_t));
+                });
             }
 
             std::list<BufferState> buffer_states(bool sort=false, uint64_t minimum_timestamp=0) {
                 size_t _buffer_count = buffer_count();
-
                 std::list<BufferState> _buffer_states;
+                
                 if (!is_alive()) {
                     return _buffer_states;
                 }
 
-                {
-                    std::lock_guard<Utils::FileReadLock> lock(_buffer_state_read_lock);
+                Utils::with_read_lock(_fd, [&] {
 
                     for (size_t i = 0; i < _buffer_count; i++) {
                         off_t iter_offset = i * sizeof(BufferState);
@@ -264,8 +280,8 @@ namespace Momentum {
                         }
 
                     }
-                }
-
+                });
+                
                 if (sort && _buffer_states.size() > 0) {
                     _buffer_states.sort(
                         [] (const BufferState &x, const BufferState &y) { 
@@ -277,113 +293,182 @@ namespace Momentum {
                 return _buffer_states;
             }
 
-            void buffer_states(const std::list<BufferState>& _buffer_states) {
+            void update_buffer_state(BufferState* buffer_state) {
                 if (_role == Role::CONSUMER) {
-                    throw std::string("Consumer stream can not set stream 'buffer_states' parameter");
+                    throw std::string("Consumer stream can not update stream buffer states");
                 }
 
-                if (_buffer_states.size() * sizeof(BufferState) > _buffer_state_size) {
-                    throw std::string("Buffer state count exceeds the allowable amount for this stream");
-                }
-
-                std::lock_guard<Utils::FileWriteLock> lock(_buffer_state_write_lock);
-                off_t iter_offset = 0;
-                for (auto const& buffer_state : _buffer_states) {
-                    std::memcpy(_data + _buffer_state_offset + iter_offset, &buffer_state, sizeof(BufferState));
-                    iter_offset += sizeof(BufferState);
-                }
-            }
-
-            std::set<Context*> subscribers() {
-                std::lock_guard<Utils::FileReadLock> lock(_subscriptions_read_lock);
-                std::set<Context*> subscribers;
-
-                if (is_alive()) {
-                    for (
-                        size_t offset = _subscribers_offset; 
-                        offset < _subscribers_offset + _subscribers_size; 
-                        offset += sizeof(Context*)
-                    ) {
-                        Context* context;
-
-                        std::memcpy(&context, _data + offset, sizeof(Context*));
-                        if (context != NULL) {
-                            subscribers.insert(
-                                context
-                            );
-                        }
-                    }
-                }
-
-                return subscribers;
-            }
-
-            void subscribers(std::set<Context*> subscribers) {
-                if (_role == Role::PRODUCER) {
-                    throw std::string("Producer stream can not set stream 'subscribers' parameter");
-                }
-
-                if (subscribers.size() * sizeof(Context*) > _subscribers_size) {
-                    throw std::string("Subscriber count exceeds the allowable amount for this stream");
-                }
-
-                std::lock_guard<Utils::FileWriteLock> lock(_subscriptions_write_lock);
                 if (!is_alive()) {
                     return;
                 }
 
-                std::memset(_data + _subscribers_offset, 0, _subscribers_size);
+                Utils::with_write_lock(_fd, [&] {
+                    size_t offset;
+                    for (offset = _buffer_state_offset; offset < _buffer_state_offset + _buffer_state_size; offset += sizeof(BufferState)) {
+                        BufferState bs;
+                        std::memcpy(&bs, _data + offset, sizeof(BufferState));
 
-                off_t offset = _subscribers_offset;
-                for (auto const& context : subscribers) {
-                    std::memcpy(_data + offset, &context, sizeof(Context*));
-                    offset += sizeof(Context*);
+                        if (bs.buffer_id == 0) break;
+
+                        if (bs.buffer_id == buffer_state->buffer_id) {
+                            std::memcpy(_data + offset, buffer_state, sizeof(BufferState));
+                            return;
+                        }
+                    }
+
+                    // if we made it here, its a new buffer so we need to add it
+                    std::memcpy(_data + offset, buffer_state, sizeof(BufferState));
+                });
+            }
+
+            std::set<Context*> subscribers() {
+                std::set<Context*> _subscribers;
+
+                if (is_alive()) {
+                    Utils::with_read_lock(_fd, [&] {
+                        for (
+                            size_t offset = _subscribers_offset; 
+                            offset < _subscribers_offset + _subscribers_size; 
+                            offset += sizeof(Context*)
+                        ) {
+                            Context* context;
+
+                            std::memcpy(&context, _data + offset, sizeof(Context*));
+                            if (context != NULL) {
+                                _subscribers.insert(
+                                    context
+                                );
+                            } else {
+                                break;
+                            }
+                        }
+                    });
+                }
+
+                return _subscribers;
+            }
+
+            void add_subscriber(Context* context) {
+                if (_role == Role::PRODUCER) {
+                    throw std::string("Producer stream can not set add subscribers");
+                }
+
+                if (!is_alive()) {
+                    return;
+                }
+
+                bool added = false;
+                Utils::with_write_lock(_fd, [&] {
+                    for (size_t offset = _subscribers_offset; offset < _subscribers_offset + _subscribers_size; offset += sizeof(Context*)) {
+                        Context* subscriber;
+                        std::memcpy(&subscriber, _data + offset, sizeof(Context*));
+
+                        if (subscriber == NULL) {
+                            std::memcpy(_data + offset, &context, sizeof(Context*));
+                            Utils::Logger::get_logger().debug(std::string("Added subscriber: " + std::to_string((uint64_t) context)));
+                            added = true;
+                            break;
+                        }
+                    }
+                });
+
+                if (!added) {
+                    // if we made it here, there was no slot found for this subscriber
+                    throw std::string("Subscriber count exceeds the allowable amount for this stream");
                 }
             }
 
-            std::set<Context*> pending_acknowledgements() {
-                std::lock_guard<Utils::FileReadLock> lock(_acknowledgements_read_lock);
 
+            void remove_subscriber(Context* context) {
+                if (_role == Role::PRODUCER) {
+                    throw std::string("Producer stream can not remove subscribers");
+                }
+
+                if (!is_alive()) {
+                    return;
+                }
+
+                Utils::with_write_lock(_fd, [&] {
+                    bool shift = false;
+                    for (size_t offset = _subscribers_offset; offset < _subscribers_offset + _subscribers_size; offset += sizeof(Context*)) {
+                        Context* subscriber;
+                        std::memcpy(&subscriber, _data + offset, sizeof(Context*));
+                        
+                        if (subscriber == context) {
+                            std::memset(_data + offset, 0, sizeof(Context*));
+                            Utils::Logger::get_logger().debug(std::string("Removed subscriber: " + std::to_string((uint64_t) context)));
+                            shift = true;
+                        }
+
+                        if (shift && _data + offset + sizeof(Context*) < _data + _subscribers_offset + _subscribers_size) {
+                            std::memmove(_data + offset, _data + offset + sizeof(Context*), sizeof(Context*));
+                        }
+                    }
+                });
+
+            }
+
+            std::set<Context*> pending_acknowledgements() {
                 std::set<Context*> pending;
                 
                 if (is_alive()) {
-                    for (
-                        size_t offset = _acknowledgements_offset; 
-                        offset < _acknowledgements_offset + _acknowledgements_size; 
-                        offset += sizeof(Context*)
-                    ) {
-                        Context* context;
+                    Utils::with_read_lock(_fd, [&] {
+                        for (
+                            size_t offset = _acknowledgements_offset; 
+                            offset < _acknowledgements_offset + _acknowledgements_size; 
+                            offset += sizeof(Context*)
+                        ) {
+                            Context* context;
 
-                        std::memcpy(&context, _data + offset, sizeof(Context*));
-                        if (context != NULL) {
-                            pending.insert(
-                                context
-                            );
+                            std::memcpy(&context, _data + offset, sizeof(Context*));
+                            if (context != NULL) {
+                                pending.insert(
+                                    context
+                                );
+                            }
                         }
-                    }
+                    });
                 }
 
                 return pending;
             }
 
-            void pending_acknowledgements(std::set<Context*> pending) {
-                std::lock_guard<Utils::FileWriteLock> lock(_acknowledgements_write_lock);
+            void set_pending_acknowledgements() {
                 if (!is_alive()) {
                     return;
                 }
 
-                if (pending.size() * sizeof(Context*) > _acknowledgements_size) {
-                    throw std::string("Acknowledgement count exceeds the allowable amount for this stream");
-                }
+                Utils::with_write_lock(_fd, [&] {
+                    std::memcpy(_data + _acknowledgements_offset, _data + _subscribers_offset, _subscribers_size);
+                });
 
-                std::memset(_data + _acknowledgements_offset, 0, _acknowledgements_size);
-
-                size_t offset = _acknowledgements_offset;
-                for (auto const& context : pending) {
-                    std::memcpy(_data + offset, &context, sizeof(Context*));
-                    offset += sizeof(Context*);
-                }
+                Utils::Logger::get_logger().debug(std::string("Reset pending acknowledgements to mirror current subscribers"));
             }
+
+            void remove_pending_acknowledgement(Context* context) {
+                if (!is_alive()) {
+                    return;
+                }
+
+                Utils::with_write_lock(_fd, [&] {
+                    bool shift = true;
+                    for (size_t offset = _acknowledgements_offset; offset < _acknowledgements_offset + _acknowledgements_size; offset += sizeof(Context*)) {
+                        Context* subscriber;
+                        std::memcpy(&subscriber, _data + offset, sizeof(Context*));
+
+                        if (subscriber == context) {
+                            std::memset(_data + offset, 0, sizeof(Context*));
+                            Utils::Logger::get_logger().debug(std::string("Removed pending acknowledgement: " + std::to_string((uint64_t) context)));
+                            shift = true;
+                        }
+
+                        if (shift && _data + offset + sizeof(Context*) < _data + _acknowledgements_offset + _acknowledgements_size) {
+                            std::memmove(_data + offset, _data + offset + sizeof(Context*), sizeof(Context*));
+                        }
+                    }
+                });
+            }
+
 
         private:
             friend class StreamManager;
@@ -395,18 +480,6 @@ namespace Momentum {
             size_t _stream_data_size, _buffer_state_size, _subscribers_size, _acknowledgements_size;
             size_t _stream_data_offset, _buffer_state_offset, _subscribers_offset, _acknowledgements_offset;
             
-            Utils::FileReadLock 
-                _stream_data_read_lock, 
-                _buffer_state_read_lock, 
-                _subscriptions_read_lock, 
-                _acknowledgements_read_lock;
-
-            Utils::FileWriteLock 
-                _stream_data_write_lock, 
-                _buffer_state_write_lock, 
-                _subscriptions_write_lock, 
-                _acknowledgements_write_lock;
-
             char* _data;
 
     };
@@ -456,15 +529,15 @@ namespace Momentum {
                 Stream* stream = new Stream(name, buffer_size, buffer_count, sync, role);
                 _stream_by_name[name] = stream;
 
-                std::list<Stream::BufferState> buffer_states;
-                for (size_t i = 0; i < buffer_count; i++) {
+                for (size_t i = 1; i <= buffer_count; i++) {
                     Buffer* buffer = _buffer_manager->allocate(
                         name, 
-                        Buffer::CREATE_ID, 
-                        buffer_size
+                        i, 
+                        buffer_size,
+                        true
                     );
 
-                    buffer_states.emplace_back(
+                    Stream::BufferState* buffer_state = new Stream::BufferState(
                         buffer->id(),
                         buffer_size,
                         buffer_count,
@@ -472,9 +545,11 @@ namespace Momentum {
                         0,
                         0
                     );
+
+                    stream->update_buffer_state(buffer_state);
+                    delete buffer_state;
                 }
 
-                stream->buffer_states(buffer_states);
 
                 return stream;
             }
@@ -505,12 +580,13 @@ namespace Momentum {
                     return false;
                 }
 
-                for (auto const* subscriber : stream->subscribers()) {
+                for (auto const& subscriber : stream->subscribers()) {
                     if (subscriber == _context) {
                         return true;
                     }
                 }
-
+                
+                Utils::Logger::get_logger().debug(std::string("Not subscribed to stream: " + std::to_string((uint64_t) _context)));
                 return false;
             }
 
@@ -518,16 +594,8 @@ namespace Momentum {
                 Stream* stream = find(name);
 
                 std::lock_guard<std::mutex> lock(_mutex);
-                std::set<Context*> subscribers = stream->subscribers();
 
-                for (auto const& subscriber : subscribers) {
-                    // check if already subscribed
-                    if (subscriber == _context) {
-                        return stream;
-                    }
-                }
-
-                subscribers.insert(_context);
+                stream->add_subscriber(_context);
 
                 for (auto const& buffer_state : stream->buffer_states()) {
                     _buffer_manager->allocate(
@@ -537,20 +605,14 @@ namespace Momentum {
                     );
                 }
 
-                stream->subscribers(subscribers);
 
                 return stream;
             }
 
             void unsubscribe(Stream* stream) {
                 std::lock_guard<std::mutex> lock(_mutex);
-                std::set<Context*> subscribers = stream->subscribers();
-                subscribers.erase(_context);
-                stream->subscribers(subscribers);
-
-                std::set<Context*> pending = stream->pending_acknowledgements();
-                pending.erase(_context);
-                stream->pending_acknowledgements(pending);
+                stream->remove_pending_acknowledgement(_context);
+                stream->remove_subscriber(_context);
 
                 _buffer_manager->deallocate_stream(stream->name());
             }
@@ -624,19 +686,11 @@ namespace Momentum {
                 Utils::unlock(buffer->fd());
 
                 if (stream->sync()) {
-                    stream->pending_acknowledgements(stream->subscribers());
+                    stream->set_pending_acknowledgements();
                 }
 
-                std::list<Stream::BufferState> buffer_states = stream->buffer_states();
-                for (auto& bs : buffer_states) {
-                    if (bs.buffer_id == buffer->id()) {
-                        bs.data_size = buffer_state->data_size;
-                        bs.data_timestamp = buffer_state->data_timestamp;
-                        bs.iteration = buffer_state->iteration;
-                    }
-                }
-                stream->buffer_states(buffer_states);
-
+                stream->update_buffer_state(buffer_state);
+               
                 delete buffer_state;
 
                 return true;
@@ -678,12 +732,6 @@ namespace Momentum {
                     }
                     
                     if (Utils::try_read_lock(buffer->fd())) {
-                        if (stream->sync()) {
-                            std::set<Context*> pending = stream->pending_acknowledgements();
-                            pending.erase(_context);
-                            stream->pending_acknowledgements(pending);
-                        }
-
                         // we got the read lock, so return a copy of buffer state to the caller
                         return new Stream::BufferState(buffer_state);
                     } else {
@@ -697,22 +745,31 @@ namespace Momentum {
             }
 
             void flush_buffer_state(Stream* stream) {
-                std::lock_guard<std::mutex> lock(_mutex);
-                _iteration_by_stream[stream] = stream->buffer_states(true).back().iteration; 
+                if (stream->sync()) {
+                    Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");
+                } else {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    _iteration_by_stream[stream] = stream->buffer_states(true).back().iteration; 
+                }
+
             }
 
             void release_buffer_state(Stream* stream, Stream::BufferState* buffer_state) {
                 std::lock_guard<std::mutex> lock(_mutex);
              
+                if (stream->sync()) {
+                    stream->remove_pending_acknowledgement(_context);
+                }
+
                 Buffer* buffer = _buffer_manager->find(stream->name(), buffer_state->buffer_id);
                 Utils::unlock(buffer->fd());
+
 
                 delete buffer_state;
 
             }
 
             size_t subscriber_count(Stream* stream) {
-                std::lock_guard<std::mutex> lock(_mutex); 
                 return stream->subscribers().size();
             }
 

@@ -1,7 +1,7 @@
 from ctypes import *
 import time
 
-from momentum import Context
+from momentum import Context, LogLevel
 
 STREAM = b'momentum://incrementer'
 

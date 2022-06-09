@@ -99,7 +99,13 @@ namespace Momentum {
             return ceil(size / (double) getpagesize()) * getpagesize();
         }
 
+        static std::mutex& _file_lock_mutex() {
+            static std::mutex _mutex;
+            return _mutex;
+        };
+
         static void read_lock(int fd, off_t from=0, off_t size=0) {
+            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
             struct flock lock {
                 F_RDLCK,
                 SEEK_SET,
@@ -110,6 +116,7 @@ namespace Momentum {
         }
 
         static bool try_read_lock(int fd, off_t from=0, off_t size=0) {
+            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
             struct flock lock {
                 F_RDLCK,
                 SEEK_SET,
@@ -120,6 +127,7 @@ namespace Momentum {
         }
 
         static void write_lock(int fd, off_t from=0, off_t size=0) {
+            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
             struct flock lock {
                 F_WRLCK,
                 SEEK_SET,
@@ -130,6 +138,7 @@ namespace Momentum {
         }
 
         static bool try_write_lock(int fd, off_t from=0, off_t size=0) {
+            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
             struct flock lock {
                 F_WRLCK,
                 SEEK_SET,
@@ -149,65 +158,31 @@ namespace Momentum {
             fcntl(fd, F_SETLK, &lock);
         }
 
-        class FileReadLock {
-            public:
-                FileReadLock(int fd, off_t from=0, off_t size=0) :
-                    _fd(fd),
-                    _from(from),
-                    _size(size)
-                { }; 
+        template <typename T>
+        static void with_write_lock(int fd, const T& func) {
+            try {
+                write_lock(fd);
+                func();
+                unlock(fd);
+            } catch(...) {
+                unlock(fd);
+                throw;
+            }
+        }
 
-                ~FileReadLock() {
-                    unlock();
-                }
-                
-                void lock() {
-                    Utils::read_lock(_fd, _from, _size);
-                }
+        template <typename T>
+        static void with_read_lock(int fd, const T& func) {
+            try {
+                read_lock(fd);
+                func();
+                unlock(fd);
+            } catch(...) {
+                unlock(fd);
+                throw;
+            }
+        }
 
-                bool try_lock() {
-                    return Utils::try_read_lock(_fd, _from, _size);
-                }
-
-                void unlock() {
-                    Utils::unlock(_fd, _from, _size);
-                }
-
-            private:
-                int _fd;
-                off_t _from, _size;
-        };
-
-        class FileWriteLock {
-            
-            public:
-                FileWriteLock(int fd, off_t from=0, off_t size=0) :
-                    _fd(fd),
-                    _from(from),
-                    _size(size)
-                { }; 
-
-                ~FileWriteLock() {
-                    unlock();
-                }
-                
-                void lock() {
-                    Utils::write_lock(_fd, _from, _size);
-                }
-
-                bool try_lock() {
-                    return Utils::try_write_lock(_fd, _from, _size);
-                }
-
-                void unlock() {
-                    Utils::unlock(_fd, _from, _size);
-                }
-
-            private:
-                int _fd;
-                off_t _from, _size;
-        };
-
+        
         class Logger {
 
             public:

@@ -80,7 +80,7 @@ lib.momentum_data_address.restype = ctypes.POINTER(ctypes.c_char)
 class Context:
 
     # Constructor
-    def __init__(self, log_level=LogLevel.INFO):
+    def __init__(self, log_level=LogLevel.WARNING):
         self._context = lib.momentum_context(log_level.value)
         self._last_data_timestamp_by_stream = {}
         
@@ -227,12 +227,10 @@ class Context:
     def term(self):
         return bool(lib.momentum_term(self._context))
 
-
     def destroy(self):
         return_value = lib.momentum_destroy(self._context) 
         self._context = None
         return bool(return_value)
-
 
 class StreamBufferState:
     def __init__(self, context, stream, pointer):

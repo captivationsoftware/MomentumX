@@ -28,14 +28,14 @@ namespace Momentum {
             { 
                 Utils::Logger::get_logger().set_level(log_level);
 
-                Utils::Logger::get_logger().debug(
+                Utils::Logger::get_logger().info(
                     std::string("Created Context (" + std::to_string((uint64_t) this) + ")")          
                 );
             };
 
             ~Context() {
                 term();
-                Utils::Logger::get_logger().debug(
+                Utils::Logger::get_logger().info(
                     std::string("Deleted Context (" + std::to_string((uint64_t) this) + ")")          
                 );
             }
@@ -49,7 +49,7 @@ namespace Momentum {
                     _stream_manager.unsubscribe(stream);
                 }
 
-                Utils::Logger::get_logger().debug(
+                Utils::Logger::get_logger().info(
                     std::string("Terminated Context (" + std::to_string((uint64_t) this) + ")")          
                 );
 

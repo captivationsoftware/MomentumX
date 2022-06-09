@@ -11,7 +11,7 @@ extern "C" {
     extern const uint8_t MOMENTUM_LOG_LEVEL_WARNING = static_cast<uint8_t>(Momentum::Utils::Logger::Level::WARNING);
     extern const uint8_t MOMENTUM_LOG_LEVEL_ERROR = static_cast<uint8_t>(Momentum::Utils::Logger::Level::ERROR);
 
-    Momentum::Context* momentum_context(uint8_t log_level=static_cast<uint8_t>(Momentum::Utils::Logger::Level::INFO));
+    Momentum::Context* momentum_context(uint8_t log_level=static_cast<uint8_t>(Momentum::Utils::Logger::Level::WARNING));
     void momentum_log_level(Momentum::Context* ctx, uint8_t log_level);
     bool momentum_term(Momentum::Context* ctx);
     bool momentum_is_terminated(Momentum::Context* ctx);
