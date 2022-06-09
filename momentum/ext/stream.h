@@ -593,6 +593,11 @@ namespace Momentum {
             Stream* subscribe(std::string name) {
                 Stream* stream = find(name);
 
+                // short circuit if we're already subscribed                    
+                if (is_subscribed(name)) {
+                    return stream;
+                }
+
                 std::lock_guard<std::mutex> lock(_mutex);
 
                 stream->add_subscriber(_context);

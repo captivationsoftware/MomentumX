@@ -115,11 +115,7 @@ class Context:
         )
 
     def subscribe(self, stream_name):
-        if (self.is_subscribed(stream_name)):
-            return True
-
         stream_name = stream_name.encode() if isinstance(stream_name, str) else stream_name
-
         return lib.momentum_subscribe(self._context, stream_name)
     
     def unsubscribe(self, stream):
