@@ -74,6 +74,9 @@ lib.momentum_stream_flush.restype = None
 lib.momentum_stream_release.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
 lib.momentum_stream_release.restype = ctypes.c_bool
 
+lib.momentum_is_stream_sync.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.momentum_is_stream_sync.restype = ctypes.c_bool
+
 lib.momentum_data_address.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint16,)
 lib.momentum_data_address.restype = ctypes.POINTER(ctypes.c_char)
 
@@ -137,6 +140,12 @@ class Context:
         return (
             lib.momentum_stream(self._context, stream_name, buffer_size, buffer_count, sync)
         )
+
+    def is_stream_sync(self, stream):
+        return bool(
+            lib.momentum_is_stream_sync(self._context, stream)
+        )
+    
 
     def next(self, stream):
         pointer = lib.momentum_stream_next(

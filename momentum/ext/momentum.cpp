@@ -119,6 +119,11 @@ bool momentum_stream_release(Momentum::Context* ctx, Momentum::Stream* stream, M
     }
 }
 
+bool momentum_is_stream_sync(Momentum::Context* ctx, Momentum::Stream* stream) {
+    return stream->sync();
+}
+
+
 uint8_t* momentum_data_address(Momentum::Context* ctx, Momentum::Stream* stream, uint16_t buffer_id) {
     try {
         return ctx->data_address(stream, buffer_id);
