@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 from distutils.core import Extension
 
-__version__ = '1.2.0'
+__version__ = '1.2.1'
 
 libmomentum = Extension(
     'momentum.ext.libmomentum', 

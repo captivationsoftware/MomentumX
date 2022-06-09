@@ -675,6 +675,10 @@ namespace Momentum {
                     }
                 }
 
+                if (buffer_state->data_size == 0) {
+                    Utils::Logger::get_logger().warning("Sending buffer state without having set data_size property");
+                }
+
                 Buffer* buffer = _buffer_manager->find(stream->name(), buffer_state->buffer_id);
 
                 // update the buffer write timestamp
