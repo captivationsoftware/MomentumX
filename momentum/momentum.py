@@ -206,7 +206,7 @@ class Context:
         stream_buffer_state = self.receive(stream)
 
         if stream_buffer_state is not None:
-            string = bytes(stream_buffer_state.contents[0:stream_buffer_state.buffer_size]).decode()
+            string = bytes(stream_buffer_state.contents[0:stream_buffer_state.data_size]).decode()
             self.release(stream, stream_buffer_state)
             return string
         else:
@@ -225,6 +225,8 @@ class Context:
         data = data.encode() if isinstance(data, str) else data
         for i in range(len(data)):
             stream_buffer_state.contents[i] = data[i] 
+
+        stream_buffer_state.data_size = len(data)
 
         return self.send(stream, stream_buffer_state)
 

@@ -350,7 +350,7 @@ namespace Momentum {
 
             void add_subscriber(Context* context) {
                 if (_role == Role::PRODUCER) {
-                    throw std::string("Producer stream can not set add subscribers");
+                    throw std::string("Producer stream can not add subscribers");
                 }
 
                 if (!is_alive()) {
@@ -699,19 +699,13 @@ namespace Momentum {
                 }
 
                 stream->update_buffer_state(buffer_state);
-               
+
                 delete buffer_state;
 
                 return true;
             }
 
             Stream::BufferState* receive_buffer_state(Stream* stream, uint64_t minimum_timestamp=1) {
-                if (!stream->is_alive()) {
-                    throw std::string(
-                        "Attempted to receive buffer state on stream that has been terminated"
-                    );
-                }
-
                 std::list<Stream::BufferState> buffer_states;
                 {
                     std::lock_guard<std::mutex> lock(_mutex);
@@ -748,8 +742,16 @@ namespace Momentum {
                     }
                 }
 
+                // weren't able to read any messages - is it because the stream is terminated?
+                if (!stream->is_alive()) {
+                    // yes it was, so alert the caller
+                    throw std::string(
+                        "Attempted to receive buffer state on stream that has been terminated"
+                    );
+                }
+
                 // if we made it here, we were unable to read any of the last returned
-                // buffer states, so return null
+                // buffer states, but the stream IS alive, so return null
                 return NULL;
             }
 

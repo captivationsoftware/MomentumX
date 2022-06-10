@@ -2,7 +2,8 @@
 #define MOMENTUM_UTILS_H
 
 #include <string>
-#include <pthread.h>
+#include <chrono>
+#include <ctime>
 #include <signal.h>
 #include <unistd.h>
 #include <functional>
@@ -10,7 +11,9 @@
 #include <set>
 #include <initializer_list>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <fcntl.h>
+#include <iostream>
 
 namespace Momentum { 
 
@@ -228,7 +231,13 @@ namespace Momentum {
 
                     std::lock_guard<std::mutex> lock(_mutex);
 
-                    std::cout << "MOMENTUM - ";
+                    timeval tv;
+                    gettimeofday(&tv, NULL);
+                    char dt[sizeof("YYYY-MM-DDTHH:MM:SS.MMMZ")];
+                    strftime(dt, sizeof(dt), "%FT%T", gmtime(&tv.tv_sec));
+                    sprintf(dt + strlen(dt), ".%03dZ", tv.tv_usec / 1000);
+
+                    std::cout << dt << " [";
                     switch(level) {
                         case Level::DEBUG:
                             std::cout << "DEBUG";
@@ -243,7 +252,7 @@ namespace Momentum {
                             std::cout << "ERROR";
                             break;
                     }
-                    std::cout << " - " << message << std::endl;
+                    std::cout << "] MOMENTUM - " << message << std::endl;
                 }
 
                 std::mutex _mutex;
