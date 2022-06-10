@@ -117,8 +117,8 @@ namespace Momentum {
             std::string _stream;
             uint16_t _id;
             size_t _size;
-            int _fd;
             bool _is_create;
+            int _fd;
             uint8_t* _address;
 
             int shm_allocate(uint16_t id, int flags) {

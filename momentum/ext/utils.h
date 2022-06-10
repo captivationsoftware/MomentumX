@@ -235,7 +235,7 @@ namespace Momentum {
                     gettimeofday(&tv, NULL);
                     char dt[sizeof("YYYY-MM-DDTHH:MM:SS.MMMZ")];
                     strftime(dt, sizeof(dt), "%FT%T", gmtime(&tv.tv_sec));
-                    sprintf(dt + strlen(dt), ".%03dZ", tv.tv_usec / 1000);
+                    sprintf(dt + strlen(dt), ".%03ldZ", tv.tv_usec / 1000);
 
                     std::cout << dt << " [";
                     switch(level) {

@@ -11,8 +11,8 @@ def emitter():
     context = Context(log_level=LogLevel.DEBUG)
     stream = context.stream('emitter', 8, 4, True)
     
-    i = 1
-    while i < 60 :
+    i = 0
+    while i <= 60 :
         if context.send_string(stream, str(i)):
             i += 1
             time.sleep(0.25)
