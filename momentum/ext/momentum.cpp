@@ -100,6 +100,15 @@ Momentum::Stream::BufferState* momentum_stream_receive(Momentum::Context* ctx, M
     }
 }
 
+Momentum::Stream::BufferState* momentum_get_by_buffer_id(Momentum::Context* ctx, Momentum::Stream* stream, uint16_t buffer_id) {
+    try {
+        return ctx->get_by_buffer_id(stream, buffer_id);
+    } catch (std::string ex) {
+        Momentum::Utils::Logger::get_logger().error(ex);
+        return NULL;
+    }
+}
+
 void momentum_stream_flush(Momentum::Context* ctx, Momentum::Stream* stream) {
     try {
         return ctx->flush(stream);

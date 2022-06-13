@@ -24,6 +24,7 @@ extern "C" {
     Momentum::Stream::BufferState* momentum_stream_next(Momentum::Context* ctx, Momentum::Stream* stream);
     bool momentum_stream_send(Momentum::Context* ctx, Momentum::Stream* stream, Momentum::Stream::BufferState* buffer_state);
     Momentum::Stream::BufferState* momentum_stream_receive(Momentum::Context* ctx, Momentum::Stream* stream, uint64_t minimum_ts=1);
+    Momentum::Stream::BufferState* momentum_get_by_buffer_id(Momentum::Context* ctx, Momentum::Stream* stream, uint16_t buffer_id);
     void momentum_stream_flush(Momentum::Context* ctx, Momentum::Stream* stream);
     bool momentum_stream_release(Momentum::Context* ctx, Momentum::Stream* stream, Momentum::Stream::BufferState* buffer_state);
     bool momentum_is_stream_sync(Momentum::Context* ctx, Momentum::Stream* stream);

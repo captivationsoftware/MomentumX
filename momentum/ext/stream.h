@@ -755,6 +755,40 @@ namespace Momentum {
                 return NULL;
             }
 
+            Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
+                std::list<Stream::BufferState> buffer_states;
+                {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    buffer_states = stream->buffer_states(true, 0);
+                }
+
+                if (buffer_states.size() == 0) {
+                    return NULL;
+                }
+
+                Buffer* buffer = _buffer_manager->find(stream->name(), buffer_id);
+                if (buffer == NULL) {
+                    throw std::string(
+                        "Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'"
+                    );
+                }
+
+                for (auto const& buffer_state : buffer_states) {
+                    if (buffer_state.buffer_id == buffer_id) {
+                        if (Utils::try_read_lock(buffer->fd())) {
+                            // we got the read lock, so return a copy of buffer state to the caller
+                            return new Stream::BufferState(buffer_state);
+                        } else {
+                            // failed to get the lock
+                        }
+                        break; 
+                    }
+                }
+
+                return NULL;
+
+            }
+
             void flush_buffer_state(Stream* stream) {
                 if (stream->sync()) {
                     Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");

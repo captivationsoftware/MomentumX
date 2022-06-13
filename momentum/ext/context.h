@@ -149,6 +149,16 @@ namespace Momentum {
                 return buffer_state;
             }
 
+            Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
+                if (is_terminated()) {
+                    throw std::string("Terminated");
+                }
+
+                return _stream_manager.get_by_buffer_id(
+                    stream, buffer_id
+                );
+            }
+
             void flush(Stream* stream) {
                 if (is_terminated()) {
                     throw std::string("Terminated");
