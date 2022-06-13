@@ -20,7 +20,9 @@ stream = context.subscribe(STREAM)
 try:
     while context.is_subscribed(STREAM):
         buffer_state = context.receive(stream)
+
         if buffer_state is not None:
+
             messages_received += 1
             bytes_received += buffer_state.data_size
 

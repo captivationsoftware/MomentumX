@@ -68,6 +68,9 @@ lib.momentum_stream_send.restype = ctypes.c_bool
 lib.momentum_stream_receive.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64,)
 lib.momentum_stream_receive.restype = ctypes.c_void_p
 
+lib.momentum_get_by_buffer_id.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint16,)
+lib.momentum_get_by_buffer_id.restype = ctypes.c_void_p
+
 lib.momentum_stream_flush.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
 lib.momentum_stream_flush.restype = None
 
@@ -186,6 +189,15 @@ class Context:
             return stream_buffer_state
         else:
             return None
+
+
+    def get_by_buffer_id(self, stream, buffer_id):
+        pointer = lib.momentum_get_by_buffer_id(self._context, stream, buffer_id)
+        if pointer is not None:
+            return StreamBufferState(self._context, stream, pointer)
+        else:
+            return None
+
 
     def release(self, stream, stream_buffer_state):
         return bool(
