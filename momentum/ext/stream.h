@@ -735,8 +735,13 @@ namespace Momentum {
                     }
                     
                     if (Utils::try_read_lock(buffer->fd())) {
-                        // we got the read lock, so return a copy of buffer state to the caller
-                        return new Stream::BufferState(buffer_state);
+                        uint64_t last_data_timestamp;
+                        Utils::get_timestamps(buffer->fd(), NULL, &last_data_timestamp);
+                        
+                        if (buffer_state.data_timestamp == last_data_timestamp) {
+                            // we got the read lock and data matches, so return a copy of buffer state to the caller
+                            return new Stream::BufferState(buffer_state);
+                        }
                     } else {
                         // failed to get the lock
                     }
@@ -756,15 +761,6 @@ namespace Momentum {
             }
 
             Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
-                std::list<Stream::BufferState> buffer_states;
-                {
-                    std::lock_guard<std::mutex> lock(_mutex);
-                    buffer_states = stream->buffer_states(true, 0);
-                }
-
-                if (buffer_states.size() == 0) {
-                    return NULL;
-                }
 
                 Buffer* buffer = _buffer_manager->find(stream->name(), buffer_id);
                 if (buffer == NULL) {
@@ -773,16 +769,28 @@ namespace Momentum {
                     );
                 }
 
-                for (auto const& buffer_state : buffer_states) {
-                    if (buffer_state.buffer_id == buffer_id) {
-                        if (Utils::try_read_lock(buffer->fd())) {
-                            // we got the read lock, so return a copy of buffer state to the caller
-                            return new Stream::BufferState(buffer_state);
-                        } else {
-                            // failed to get the lock
-                        }
-                        break; 
+                if (Utils::try_read_lock(buffer->fd())) {
+                    uint64_t last_data_timestamp;
+                    Utils::get_timestamps(buffer->fd(), NULL, &last_data_timestamp);
+
+                    std::list<Stream::BufferState> buffer_states;
+                    {
+                        std::lock_guard<std::mutex> lock(_mutex);
+                        buffer_states = stream->buffer_states();
                     }
+
+                    for (auto const& buffer_state : buffer_states) {
+                        if (buffer_state.buffer_id == buffer_id) {
+                            if (last_data_timestamp == buffer_state.data_timestamp) {
+                                // we verified that buffer state mirrors the underlying file, so return
+                                return new Stream::BufferState(buffer_state);
+                            } else {
+                                // data was expired, so return null
+                                break;
+                            }
+                        }
+                    }
+
                 }
 
                 return NULL;
