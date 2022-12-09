@@ -15,7 +15,11 @@ MomentumX: <small><em>Data In Motion</em></small>
 
 
 ### License
-Captivation Software, LLC offers MomentumX under an Unlimited Use License to the United States Government, with all other parties subject to the GPL-3.0 License.
+**Captivation Software, LLC** offers **MomentumX** under an **Unlimited Use License to the United States Government**, with **all other parties subject to the GPL-3.0 License**.
+
+### Inquiries / Requests
+All inquiries and requests may be sent to <a href="mailto:opensource@captivation.us">opensource@captivation.us</a>.
+
 
 <small>
     Copyright &copy; 2022-2023 - <a href="https://captivation.us" target="_blank">Captivation Software, LLC</a>.
