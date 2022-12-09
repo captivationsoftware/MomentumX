@@ -12,3 +12,11 @@ MomentumX: <small><em>Data In Motion</em></small>
 - Supports **streaming and synchronous** modes for use within a wide variety of use cases. 
 - Pairs with other high-performance libraries, such as **numpy** and **scipy**, to support parallel processing of memory-intensive scientific data.
 - Works on all versions of Linux using shared memory via `/dev/shm`, and seamlessly integrates into a **Docker** environment with minimal configuration. 
+
+
+### License
+Captivation Software, LLC offers MomentumX under an Unlimited Use License to the United States Government, with all other parties subject to the GPL-3.0 License.
+
+<small>
+    Copyright &copy; 2022-2023 - <a href="https://captivation.us" target="_blank">Captivation Software, LLC</a>.
+</small>
