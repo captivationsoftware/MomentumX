@@ -1,4 +1,4 @@
-MomentumX 
+MomentumX: <small><em>Data In Motion</em></small>
 ===
 <p align="center">
     <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto;" />
