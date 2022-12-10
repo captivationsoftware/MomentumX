@@ -1,7 +1,9 @@
-MomentumX: <small><em>Data In Motion</em></small>
-===
-<p align="center">
-    <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto;" />
+<p align="center" style="border-bottom: solid 1px;">
+    <strong style="font-size: 2em;">MomentumX</strong>
+    <br />
+    <em style="font-size: 1.25em">Data in Motion</em>
+    <br />
+    <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto; object-fit: cover; margin: -30px; auto;" />
 </p>
 
 **MomentumX** is a **zero-copy shared memory IPC** library for building complex **streaming data pipelines** capable of processing **large datasets** using **Python**. 
@@ -12,7 +14,7 @@ MomentumX: <small><em>Data In Motion</em></small>
 - Bring your own encoding, or use **raw binary** data.
 - Supports **streaming and synchronous** modes for use within a wide variety of use cases. 
 - Pairs with other high-performance libraries, such as **numpy** and **scipy**, to support parallel processing of memory-intensive scientific data.
-- Works on all versions of Linux using shared memory via `/dev/shm` with **zero dependencies**, and seamlessly integrates into a **Docker** environment with minimal configuration. 
+- Works with **zero dependencies** on most modern versions of Linux using shared memory via `/dev/shm`, and seamlessly integrates into a **Docker** environment with minimal configuration. 
 
 
 ### License
