@@ -12,11 +12,12 @@
 
 ### Key Features:
 - High-Throughput, Low Latency
-- Sane **data protections** to ensure **reliability of data** in a cooperative computing environment. 
-- Bring your own encoding, or use **raw binary** data.
 - Supports **streaming and synchronous** modes for use within a wide variety of use cases. 
+- Bring your own encoding, or use **raw binary** data.
+- Small footprint with **zero dependencies**.
+- Sane **data protections** to ensure **reliability of data** in a cooperative computing environment. 
 - Pairs with other high-performance libraries, such as **numpy** and **scipy**, to support parallel processing of memory-intensive scientific data.
-- Works with **zero dependencies** on most modern versions of Linux using shared memory via `/dev/shm`, and seamlessly integrates into a **Docker** environment with minimal configuration. 
+- Works on most modern versions of Linux using shared memory via `/dev/shm`, and seamlessly integrates into a **Docker** environment with minimal configuration. 
 
 
 ### License
