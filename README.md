@@ -17,7 +17,7 @@
 - Small footprint with **zero dependencies**.
 - Sane **data protections** to ensure **reliability of data** in a cooperative computing environment. 
 - Pairs with other high-performance libraries, such as **numpy** and **scipy**, to support parallel processing of memory-intensive scientific data.
-- Works on most modern versions of Linux using shared memory (via `/dev/shm`).
+- Works on most modern versions of **Linux** using shared memory (via `/dev/shm`).
 - Seamlessly integrates into a **Docker** environment with minimal configuration, and readily enables lightweight container-to-container data sharing. 
 
 
