@@ -1,7 +1,7 @@
 <p align="center" style="border-bottom: solid 1px;">
-    <strong style="font-size: 2em;">MomentumX</strong>
+    <strong style="font-size: 3em;">MomentumX</strong>
     <br />
-    <em style="font-size: 1.25em">Data in Motion</em>
+    <em style="font-size: 2em">Data in Motion</em>
     <br />
     <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto; object-fit: cover; margin: -30px; auto;" />
 </p>
