@@ -1,7 +1,7 @@
 # MomentumX
 
 <p align="center">
-    <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto; object-fit: cover; margin: -30px; auto;" />
+    <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" />
     <br/>
     <span>
         <strong>MomentumX</strong> is a <strong>zero-copy shared memory IPC</strong> library for building complex <strong>streaming data pipelines</strong> capable of processing <strong>large datasets</strong> using <strong>Python</strong>. 
