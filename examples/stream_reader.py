@@ -2,7 +2,7 @@ from concurrent.futures import thread
 from ctypes import *
 import time
 
-from momentum import Context
+import momentumx as mx
 
 now = time.time()
 bytes_received = 0
@@ -11,10 +11,10 @@ messages_received = 0
 last_iteration = 0
 skip_count = 0
 
-STREAM = b'momentum://streamer'
+STREAM = b'mx://streamer'
 THRESHOLD = 10000
 
-context = Context()
+context = mx.Context()
 
 stream = context.subscribe(STREAM)
 try:

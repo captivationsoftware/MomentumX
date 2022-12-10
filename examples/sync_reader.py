@@ -1,11 +1,11 @@
 from ctypes import *
 import time
 
-from momentum import Context, LogLevel
+import momentumx as mx
 
-STREAM = b'momentum://incrementer'
+STREAM = b'mx://incrementer'
 
-context = Context()
+context = mx.Context()
 
 stream = context.subscribe(STREAM)
 

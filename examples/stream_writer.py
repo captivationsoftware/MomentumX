@@ -1,14 +1,14 @@
 from ctypes import *
 import time
 
-from momentum import Context
+import momentumx as mx
 
 data_length = int(100e6)
 
-STREAM = b'momentum://streamer'
+STREAM = b'mx://streamer'
 THRESHOLD = 10000
 
-context = Context()
+context = mx.Context()
 
 now = time.time()
 messages_sent = 0

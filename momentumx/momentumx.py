@@ -4,10 +4,10 @@ import os
 from enum import Enum
 
 try:
-    import momentum.ext
-    libmomentum = glob.glob(f'{os.path.dirname(momentum.ext.__file__)}/libmomentum*.so', recursive=True)[0] 
+    import momentumx.ext
+    libmomentumx = glob.glob(f'{os.path.dirname(momentumx.ext.__file__)}/libmomentumx*.so', recursive=True)[0] 
 except:
-    raise Exception("Could not locate momentum extension module")
+    raise Exception("Could not locate MomentumX extension module")
 
 # C API mappings
 
@@ -21,73 +21,73 @@ class STREAM_BUFFER_STATE(ctypes.Structure):
         ("iteration", ctypes.c_uint64),
     ]
 
-lib = ctypes.cdll.LoadLibrary(libmomentum)
+lib = ctypes.cdll.LoadLibrary(libmomentumx)
 
 class LogLevel(Enum):
-    DEBUG = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_DEBUG")
-    INFO = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_INFO")
-    WARNING = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_WARNING")
-    ERROR = ctypes.c_uint8.in_dll(lib, "MOMENTUM_LOG_LEVEL_ERROR")
+    DEBUG = ctypes.c_uint8.in_dll(lib, "MX_LOG_LEVEL_DEBUG")
+    INFO = ctypes.c_uint8.in_dll(lib, "MX_LOG_LEVEL_INFO")
+    WARNING = ctypes.c_uint8.in_dll(lib, "MX_LOG_LEVEL_WARNING")
+    ERROR = ctypes.c_uint8.in_dll(lib, "MX_LOG_LEVEL_ERROR")
     
-lib.momentum_context.argtypes = (ctypes.c_uint8,)
-lib.momentum_context.restype = ctypes.c_void_p
+lib.mx_context.argtypes = (ctypes.c_uint8,)
+lib.mx_context.restype = ctypes.c_void_p
 
-lib.momentum_log_level.argtypes = (ctypes.c_void_p, ctypes.c_uint8,)
-lib.momentum_log_level.restype = None
+lib.mx_log_level.argtypes = (ctypes.c_void_p, ctypes.c_uint8,)
+lib.mx_log_level.restype = None
 
-lib.momentum_term.argtypes = (ctypes.c_void_p,)
-lib.momentum_term.restype = ctypes.c_bool
+lib.mx_term.argtypes = (ctypes.c_void_p,)
+lib.mx_term.restype = ctypes.c_bool
 
-lib.momentum_destroy.argtypes = (ctypes.c_void_p,)
-lib.momentum_destroy.restype = ctypes.c_bool
+lib.mx_destroy.argtypes = (ctypes.c_void_p,)
+lib.mx_destroy.restype = ctypes.c_bool
 
-lib.momentum_is_terminated.argtypes = (ctypes.c_void_p,)
-lib.momentum_is_terminated.restype = ctypes.c_bool
+lib.mx_is_terminated.argtypes = (ctypes.c_void_p,)
+lib.mx_is_terminated.restype = ctypes.c_bool
 
-lib.momentum_is_subscribed.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_is_subscribed.restype = ctypes.c_bool
+lib.mx_is_subscribed.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
+lib.mx_is_subscribed.restype = ctypes.c_bool
 
-lib.momentum_subscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
-lib.momentum_subscribe.restype = ctypes.c_void_p
+lib.mx_subscribe.argtypes = (ctypes.c_void_p, ctypes.c_char_p,)
+lib.mx_subscribe.restype = ctypes.c_void_p
 
-lib.momentum_unsubscribe.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
-lib.momentum_unsubscribe.restype = None
+lib.mx_unsubscribe.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.mx_unsubscribe.restype = None
 
-lib.momentum_subscriber_count.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
-lib.momentum_subscriber_count.restype = ctypes.c_size_t
+lib.mx_subscriber_count.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.mx_subscriber_count.restype = ctypes.c_size_t
 
-lib.momentum_stream.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_bool,)
-lib.momentum_stream.restype = ctypes.c_void_p
+lib.mx_stream.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_bool,)
+lib.mx_stream.restype = ctypes.c_void_p
 
-lib.momentum_stream_next.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
-lib.momentum_stream_next.restype = ctypes.c_void_p
+lib.mx_stream_next.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.mx_stream_next.restype = ctypes.c_void_p
 
-lib.momentum_stream_send.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,)
-lib.momentum_stream_send.restype = ctypes.c_bool
+lib.mx_stream_send.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,)
+lib.mx_stream_send.restype = ctypes.c_bool
 
-lib.momentum_stream_receive.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64,)
-lib.momentum_stream_receive.restype = ctypes.c_void_p
+lib.mx_stream_receive.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64,)
+lib.mx_stream_receive.restype = ctypes.c_void_p
 
-lib.momentum_get_by_buffer_id.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint16,)
-lib.momentum_get_by_buffer_id.restype = ctypes.c_void_p
+lib.mx_get_by_buffer_id.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint16,)
+lib.mx_get_by_buffer_id.restype = ctypes.c_void_p
 
-lib.momentum_stream_flush.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
-lib.momentum_stream_flush.restype = None
+lib.mx_stream_flush.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.mx_stream_flush.restype = None
 
-lib.momentum_stream_release.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
-lib.momentum_stream_release.restype = ctypes.c_bool
+lib.mx_stream_release.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+lib.mx_stream_release.restype = ctypes.c_bool
 
-lib.momentum_is_stream_sync.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
-lib.momentum_is_stream_sync.restype = ctypes.c_bool
+lib.mx_is_stream_sync.argtypes = (ctypes.c_void_p, ctypes.c_void_p,)
+lib.mx_is_stream_sync.restype = ctypes.c_bool
 
-lib.momentum_data_address.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint16,)
-lib.momentum_data_address.restype = ctypes.POINTER(ctypes.c_char)
+lib.mx_data_address.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint16,)
+lib.mx_data_address.restype = ctypes.POINTER(ctypes.c_char)
 
 class Context:
 
     # Constructor
     def __init__(self, log_level=LogLevel.WARNING):
-        self._context = lib.momentum_context(log_level.value)
+        self._context = lib.mx_context(log_level.value)
         self._last_data_timestamp_by_stream = {}
         
     # Destructor
@@ -104,14 +104,14 @@ class Context:
         self.term()
 
     def log_level(self, log_level):
-        lib.momentum_log_level(self._context, log_level.value)
+        lib.mx_log_level(self._context, log_level.value)
 
     def is_terminated(self):
-        return bool(lib.momentum_is_terminated(self._context))
+        return bool(lib.mx_is_terminated(self._context))
 
     def is_subscribed(self, stream_name):
         return bool(
-            lib.momentum_is_subscribed(
+            lib.mx_is_subscribed(
                 self._context, 
                 stream_name.encode() if isinstance(stream_name, str) else stream_name
             )
@@ -119,35 +119,35 @@ class Context:
 
     def subscribe(self, stream_name):
         stream_name = stream_name.encode() if isinstance(stream_name, str) else stream_name
-        return lib.momentum_subscribe(self._context, stream_name)
+        return lib.mx_subscribe(self._context, stream_name)
     
     def unsubscribe(self, stream):
         return bool(
-            lib.momentum_unsubscribe(
+            lib.mx_unsubscribe(
                 self._context, 
                 stream
             )
         )
 
     def subscriber_count(self, stream):
-        return lib.momentum_subscriber_count(self._context, stream)
+        return lib.mx_subscriber_count(self._context, stream)
 
 
     def stream(self, stream_name, buffer_size, buffer_count=0, sync=False):
         stream_name = stream_name.encode() if isinstance(stream_name, str) else stream_name
 
         return (
-            lib.momentum_stream(self._context, stream_name, buffer_size, buffer_count, sync)
+            lib.mx_stream(self._context, stream_name, buffer_size, buffer_count, sync)
         )
 
     def is_stream_sync(self, stream):
         return bool(
-            lib.momentum_is_stream_sync(self._context, stream)
+            lib.mx_is_stream_sync(self._context, stream)
         )
     
 
     def next(self, stream):
-        pointer = lib.momentum_stream_next(
+        pointer = lib.mx_stream_next(
             self._context, 
             stream
         )
@@ -160,7 +160,7 @@ class Context:
 
     def send(self, stream, stream_buffer_state):
         return bool(
-            lib.momentum_stream_send(
+            lib.mx_stream_send(
                 self._context, 
                 stream, 
                 stream_buffer_state._pointer
@@ -174,7 +174,7 @@ class Context:
         if minimum_timestamp == 0:
             minimum_timestamp = self._last_data_timestamp_by_stream[stream] + 1
 
-        pointer = lib.momentum_stream_receive(
+        pointer = lib.mx_stream_receive(
             self._context,
             stream,
             minimum_timestamp
@@ -192,7 +192,7 @@ class Context:
 
 
     def get_by_buffer_id(self, stream, buffer_id):
-        pointer = lib.momentum_get_by_buffer_id(self._context, stream, buffer_id)
+        pointer = lib.mx_get_by_buffer_id(self._context, stream, buffer_id)
         if pointer is not None:
             return StreamBufferState(self._context, stream, pointer)
         else:
@@ -201,7 +201,7 @@ class Context:
 
     def release(self, stream, stream_buffer_state):
         return bool(
-            lib.momentum_stream_release(
+            lib.mx_stream_release(
                 self._context, 
                 stream,
                 stream_buffer_state._pointer,
@@ -209,7 +209,7 @@ class Context:
         )
 
     def flush(self, stream):
-        lib.momentum_stream_flush(
+        lib.mx_stream_flush(
             self._context, 
             stream
         )
@@ -244,10 +244,10 @@ class Context:
 
 
     def term(self):
-        return bool(lib.momentum_term(self._context))
+        return bool(lib.mx_term(self._context))
 
     def destroy(self):
-        return_value = lib.momentum_destroy(self._context) 
+        return_value = lib.mx_destroy(self._context) 
         self._context = None
         return bool(return_value)
 
@@ -269,7 +269,7 @@ class StreamBufferState:
             self._data_timestamp = self._stream_buffer_state.data_timestamp
             self._iteration = self._stream_buffer_state.iteration
 
-            self._data_address = lib.momentum_data_address(self._context, self._stream, self._buffer_id)
+            self._data_address = lib.mx_data_address(self._context, self._stream, self._buffer_id)
             self._contents = ctypes.cast(
                 self._data_address, 
                 ctypes.POINTER(ctypes.c_char * self._buffer_size)

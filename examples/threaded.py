@@ -2,13 +2,13 @@ from ctypes import *
 import threading
 import time
 
-from momentum import Context
+import momentumx as mx
 
-STREAM = b'momentum://threaded'
+STREAM = b'mx://threaded'
 
 
 def consumer():
-    context = Context()
+    context = mx.Context()
     time.sleep(1)
     stream = context.subscribe(STREAM)
 
@@ -20,7 +20,7 @@ def consumer():
     context.term()
 
 def producer():
-    context = Context()
+    context = mx.Context()
     stream = context.stream(STREAM, 100, 10, True)
     i = 0
     try:

@@ -1,5 +1,5 @@
-#ifndef MOMENTUM_STREAM_H
-#define MOMENTUM_STREAM_H
+#ifndef MOMENTUMX_STREAM_H
+#define MOMENTUMX_STREAM_H
 
 #include <mutex>
 #include <errno.h>
@@ -18,7 +18,7 @@
 #include "buffer.h"
 #include "utils.h"
 
-namespace Momentum {
+namespace MomentumX {
 
     class Stream {
 
@@ -68,7 +68,7 @@ namespace Momentum {
             ) :
                 _name(name),
                 _role(role),
-                _path("momentum." + name),
+                _path("mx." + name),
                 _fd(shm_open(_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT : 0), S_IRWXU)),
                 
                 _stream_data_size(sizeof(bool) + sizeof(size_t) + sizeof(size_t)),

@@ -1,5 +1,5 @@
-#ifndef MOMENTUM_UTILS_H
-#define MOMENTUM_UTILS_H
+#ifndef MOMENTUMX_UTILS_H
+#define MOMENTUMX_UTILS_H
 
 #include <string>
 #include <chrono>
@@ -15,7 +15,7 @@
 #include <fcntl.h>
 #include <iostream>
 
-namespace Momentum { 
+namespace MomentumX { 
 
     class Context; // forward declare context
 
@@ -30,7 +30,7 @@ namespace Momentum {
             }
 
             // remove the protocol string prefix (if present)
-            std::string protocol("momentum://");
+            std::string protocol("mx://");
             if (stream.find(protocol) == 0) {
                 stream.erase(0, protocol.size());
             } 
@@ -252,7 +252,7 @@ namespace Momentum {
                             std::cout << "ERROR";
                             break;
                     }
-                    std::cout << "] MOMENTUM - " << message << std::endl;
+                    std::cout << "] MomentumX - " << message << std::endl;
                 }
 
                 std::mutex _mutex;

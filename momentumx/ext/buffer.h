@@ -1,5 +1,5 @@
-#ifndef MOMENTUM_BUFFER_H
-#define MOMENTUM_BUFFER_H
+#ifndef MOMENTUMX_BUFFER_H
+#define MOMENTUMX_BUFFER_H
 
 #include <mutex>
 #include <errno.h>
@@ -13,7 +13,7 @@
 
 #include "utils.h"
 
-namespace Momentum {
+namespace MomentumX {
 
     class Buffer {
 
@@ -159,7 +159,7 @@ namespace Momentum {
 
             std::string path(uint16_t id=0) {
                 // Build the path to the underlying shm file s
-                return std::string("momentum." + _stream + ".buffer." + std::to_string(id));
+                return std::string("mx." + _stream + ".buffer." + std::to_string(id));
             }
 
     };

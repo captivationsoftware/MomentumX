@@ -1,5 +1,5 @@
-#ifndef MOMENTUM_CONTEXT_H
-#define MOMENTUM_CONTEXT_H
+#ifndef MOMENTUMX_CONTEXT_H
+#define MOMENTUMX_CONTEXT_H
 
 #include <string>
 #include <functional>
@@ -16,7 +16,7 @@
 #include "stream.h"
 #include "utils.h"
 
-namespace Momentum {
+namespace MomentumX {
 
     class Context {
 

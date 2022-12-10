@@ -3,12 +3,12 @@ from distutils.core import Extension
 
 __version__ = '1.3.2'
 
-libmomentum = Extension(
-    'momentum.ext.libmomentum', 
+libmomentumx = Extension(
+    'momentumx.ext.libmomentumx', 
     sources = [
-        'momentum/ext/momentum.cpp',
+        'momentumx/ext/momentumx.cpp',
     ],
-    include_dirs=['momentum/ext/'],
+    include_dirs=['momentumx/ext/'],
     extra_compile_args=[
          '-std=c++11',
          '-g',
@@ -20,10 +20,10 @@ libmomentum = Extension(
 )
 
 setup(
-    name="momentum",
+    name="MomentumX",
     version=__version__,
-    description="Streaming / syncronous shared memory buffering",
+    description="Zero-copy shared memory IPC library for building complex streaming data pipelines capable of processing large datasets",
     author="Captivation Software, LLC",
     packages=find_packages(),
-    ext_modules=[libmomentum]
+    ext_modules=[libmomentumx]
 )
