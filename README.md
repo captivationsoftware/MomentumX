@@ -1,12 +1,13 @@
-<p align="center" style="border-bottom: solid 1px;">
-    <strong style="font-size: 3em;">MomentumX</strong>
-    <br />
-    <em style="font-size: 2em">Data in Motion</em>
-    <br />
-    <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto; object-fit: cover; margin: -30px; auto;" />
-</p>
+# MomentumX
 
-**MomentumX** is a **zero-copy shared memory IPC** library for building complex **streaming data pipelines** capable of processing **large datasets** using **Python**. 
+<p align="center">
+    <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" style="height: 250px; width: auto; object-fit: cover; margin: -30px; auto;" />
+    <br/>
+    <span>
+        <strong>MomentumX</strong> is a <strong>zero-copy shared memory IPC</strong> library for building complex <strong>streaming data pipelines</strong> capable of processing <strong>large datasets</strong> using <strong>Python</strong>. 
+    </span>
+</p>
+<br />
 
 ### Key Features:
 - High-Throughput, Low Latency
