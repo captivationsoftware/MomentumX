@@ -6,10 +6,10 @@
 
 extern "C" {
 
-    extern const uint8_t MX_LOG_LEVEL_DEBUG = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::DEBUG);
-    extern const uint8_t MX_LOG_LEVEL_INFO = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::INFO);
-    extern const uint8_t MX_LOG_LEVEL_WARNING = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::WARNING);
-    extern const uint8_t MX_LOG_LEVEL_ERROR = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::ERROR);
+    static const uint8_t MX_LOG_LEVEL_DEBUG = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::DEBUG);
+    static const uint8_t MX_LOG_LEVEL_INFO = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::INFO);
+    static const uint8_t MX_LOG_LEVEL_WARNING = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::WARNING);
+    static const uint8_t MX_LOG_LEVEL_ERROR = static_cast<uint8_t>(MomentumX::Utils::Logger::Level::ERROR);
 
     MomentumX::Context* mx_context(uint8_t log_level=static_cast<uint8_t>(MomentumX::Utils::Logger::Level::WARNING));
     void mx_log_level(MomentumX::Context* ctx, uint8_t log_level);

@@ -1,29 +1,24 @@
-from setuptools import setup, find_packages
-from distutils.core import Extension
+import time
 
-__version__ = '1.3.2'
+from setuptools import find_packages
+from skbuild import setup
 
-libmomentumx = Extension(
-    'momentumx.ext.libmomentumx', 
-    sources = [
-        'momentumx/ext/momentumx.cpp',
-    ],
-    include_dirs=['momentumx/ext/'],
-    extra_compile_args=[
-         '-std=c++11',
-         '-g',
-         '-Wall', 
-         '-c', 
-         '-fPIC'
-    ],
-    libraries=['rt']
-)
+__version__ = "1.3.2"
 
 setup(
-    name="MomentumX",
+    name="momentumx",
     version=__version__,
     description="Zero-copy shared memory IPC library for building complex streaming data pipelines capable of processing large datasets",
     author="Captivation Software, LLC",
-    packages=find_packages(),
-    ext_modules=[libmomentumx]
+    # packages=find_packages(),
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
+    cmake_install_dir="src/momentumx",
+    # include_package_data=True,
+    requires=["numpy"],
+    extras_require={"test": ["pytest"]},
+    python_requires=">=3.8",
+    cmake_args=[
+        "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+    ]
 )
