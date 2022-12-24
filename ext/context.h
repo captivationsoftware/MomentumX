@@ -75,7 +75,7 @@ namespace MomentumX {
 
             bool is_subscribed(std::string stream_name) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 // Ensure valid stream name
@@ -90,7 +90,7 @@ namespace MomentumX {
 
             Stream* subscribe(std::string stream_name) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 // Ensure valid stream name
@@ -108,7 +108,7 @@ namespace MomentumX {
 
             void unsubscribe(Stream* stream) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 _stream_manager.unsubscribe(stream);
@@ -119,7 +119,7 @@ namespace MomentumX {
 
             Stream::BufferState* next(Stream* stream) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 return _stream_manager.next_buffer_state(stream);
@@ -127,7 +127,7 @@ namespace MomentumX {
 
             bool send(Stream* stream, Stream::BufferState* buffer_state) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 return _stream_manager.send_buffer_state(stream, buffer_state);
@@ -135,7 +135,7 @@ namespace MomentumX {
 
             Stream::BufferState* receive(Stream* stream, uint64_t minimum_timestamp=1) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 Stream::BufferState* buffer_state = _stream_manager.receive_buffer_state(
@@ -151,7 +151,7 @@ namespace MomentumX {
 
             Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 return _stream_manager.get_by_buffer_id(
@@ -161,7 +161,7 @@ namespace MomentumX {
 
             void flush(Stream* stream) {
                 if (is_terminated()) {
-                    throw std::string("Terminated");
+                    throw std::runtime_error("Terminated");
                 }
 
                 _stream_manager.flush_buffer_state(stream);

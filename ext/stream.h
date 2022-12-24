@@ -84,9 +84,9 @@ namespace MomentumX {
 
                 if (_fd < 0) {
                     if (role == Role::CONSUMER) {
-                        throw std::string("Failed to open shared memory stream file [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to open shared memory stream file [errno: " + std::to_string(errno) + "]");
                     } else {
-                        throw std::string("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
                     }
                 } 
 
@@ -103,7 +103,7 @@ namespace MomentumX {
 
                 _data = (char* ) mmap(NULL, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
                 if (_data == MAP_FAILED) {
-                    throw std::string("Failed to mmap shared memory stream file [errno: " + std::to_string(errno) + "]");
+                    throw std::runtime_error("Failed to mmap shared memory stream file [errno: " + std::to_string(errno) + "]");
                 }
 
                 if (_role == PRODUCER) {
@@ -180,7 +180,7 @@ namespace MomentumX {
 
             void sync(bool _sync) {
                 if (_role == Role::CONSUMER) {
-                    throw std::string("Consumer stream can not set stream 'sync' parameter");
+                    throw std::runtime_error("Consumer stream can not set stream 'sync' parameter");
                 }
 
                 if (!is_alive()) {
@@ -209,7 +209,7 @@ namespace MomentumX {
 
             void buffer_size(size_t _buffer_size) {
                 if (_role == Role::CONSUMER) {
-                    throw std::string("Consumer stream can not set stream 'buffer_size' parameter");
+                    throw std::runtime_error("Consumer stream can not set stream 'buffer_size' parameter");
                 }
 
                 if (!is_alive()) {
@@ -238,7 +238,7 @@ namespace MomentumX {
 
             void buffer_count(size_t _buffer_count) {
                 if (_role == Role::CONSUMER) {
-                    throw std::string("Consumer stream can not set stream 'buffer_count' parameter");
+                    throw std::runtime_error("Consumer stream can not set stream 'buffer_count' parameter");
                 }
                 
                 if (!is_alive()) {
@@ -295,7 +295,7 @@ namespace MomentumX {
 
             void update_buffer_state(BufferState* buffer_state) {
                 if (_role == Role::CONSUMER) {
-                    throw std::string("Consumer stream can not update stream buffer states");
+                    throw std::runtime_error("Consumer stream can not update stream buffer states");
                 }
 
                 if (!is_alive()) {
@@ -350,7 +350,7 @@ namespace MomentumX {
 
             void add_subscriber(Context* context) {
                 if (_role == Role::PRODUCER) {
-                    throw std::string("Producer stream can not add subscribers");
+                    throw std::runtime_error("Producer stream can not add subscribers");
                 }
 
                 if (!is_alive()) {
@@ -374,14 +374,14 @@ namespace MomentumX {
 
                 if (!added) {
                     // if we made it here, there was no slot found for this subscriber
-                    throw std::string("Subscriber count exceeds the allowable amount for this stream");
+                    throw std::runtime_error("Subscriber count exceeds the allowable amount for this stream");
                 }
             }
 
 
             void remove_subscriber(Context* context) {
                 if (_role == Role::PRODUCER) {
-                    throw std::string("Producer stream can not remove subscribers");
+                    throw std::runtime_error("Producer stream can not remove subscribers");
                 }
 
                 if (!is_alive()) {
@@ -729,7 +729,7 @@ namespace MomentumX {
 
                     Buffer* buffer = _buffer_manager->find(stream->name(), buffer_state.buffer_id);
                     if (buffer == NULL) {
-                        throw std::string(
+                        throw std::runtime_error(
                             "Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'"
                         );
                     }
@@ -750,7 +750,7 @@ namespace MomentumX {
                 // weren't able to read any messages - is it because the stream is terminated?
                 if (!stream->is_alive()) {
                     // yes it was, so alert the caller
-                    throw std::string(
+                    throw std::runtime_error(
                         "Attempted to receive buffer state on stream that has been terminated"
                     );
                 }
@@ -764,7 +764,7 @@ namespace MomentumX {
 
                 Buffer* buffer = _buffer_manager->find(stream->name(), buffer_id);
                 if (buffer == NULL) {
-                    throw std::string(
+                    throw std::runtime_error(
                         "Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'"
                     );
                 }

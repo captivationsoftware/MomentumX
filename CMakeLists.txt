@@ -48,4 +48,4 @@ add_custom_command(
     VERBATIM
 )
 
-# install(FILES $<TARGET_FILE_DIR:_mx>/_mx.pyi DESTINATION .)
+install(FILES $<TARGET_FILE_DIR:_mx>/_mx.pyi DESTINATION .)

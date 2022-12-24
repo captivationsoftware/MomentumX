@@ -30,9 +30,9 @@ namespace MomentumX {
             {
                 if (_fd < 0) {
                     if (_is_create) {
-                        throw std::string("Failed to create shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to create shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
                     } else {
-                        throw std::string("Failed to open shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to open shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
                     }
                 } 
 
@@ -149,7 +149,7 @@ namespace MomentumX {
                     }
 
                     if (address == MAP_FAILED) {
-                        throw std::string("Failed to mmap shared memory file [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to mmap shared memory file [errno: " + std::to_string(errno) + "]");
                     } else {
                         _address = address;
                         _size = size_required;
@@ -209,7 +209,7 @@ namespace MomentumX {
 
             Buffer* find(std::string stream, uint16_t id) {
                 if (id <= 0) {
-                    throw std::string("Buffer id must be greater than 0");
+                    throw std::runtime_error("Buffer id must be greater than 0");
                 }
 
                 {

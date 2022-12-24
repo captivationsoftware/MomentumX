@@ -3,6 +3,7 @@
 
 #include <string>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <signal.h>
 #include <unistd.h>
@@ -36,15 +37,15 @@ namespace MomentumX {
             } 
             
             if (stream.size() > 32) {
-                throw std::string("Stream length must not exceed 32 characters");
+                throw std::runtime_error("Stream length must not exceed 32 characters");
             }
 
             for (size_t i = 0; i < stream.size(); i++) {
                 if (stream[i] == '.') {
-                    throw std::string("Stream must not contain '.' character");
+                    throw std::runtime_error("Stream must not contain '.' character");
                 }
                 else if (stream[i] == ' ' || stream[i] == '\n' || stream[i] == '\r') {
-                    throw std::string("Stream must not contain whitespace characters");
+                    throw std::runtime_error("Stream must not contain whitespace characters");
                 }
             }
         }
@@ -64,7 +65,7 @@ namespace MomentumX {
                     if (read_ts != NULL) *read_ts = 0;
                     if (write_ts != NULL) *write_ts = 0;
                 } else {
-                    throw std::string("Failed to stat file [errno: " + std::to_string(errno) + "]");
+                    throw std::runtime_error("Failed to stat file [errno: " + std::to_string(errno) + "]");
                 }
             } else {
                 if (read_ts != NULL) {
@@ -94,7 +95,7 @@ namespace MomentumX {
             updated_times[1].tv_nsec = next_write_ts - (updated_times[1].tv_sec * NANOS_PER_SECOND);
             
             if (futimens(fd, updated_times) < 0) {
-                throw std::string("Failed to update file timestamp [errno: " + std::to_string(errno) + "]");
+                throw std::runtime_error("Failed to update file timestamp [errno: " + std::to_string(errno) + "]");
             }
         }
 

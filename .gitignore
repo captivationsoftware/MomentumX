@@ -3,6 +3,7 @@ dev/
 __pycache__/
 *.egg-info
 *.so
+*.pyi
 *.o
 build
 _skbuild
