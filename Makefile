@@ -19,3 +19,19 @@ install: build
 .PHONY: test
 test: install
 	@pytest tests
+
+.PHONY: rocky8
+rocky8:
+	@docker build . -f package/Dockerfile.rocky8 -t momentum:rocky8
+
+.PHONY: rocky9
+rocky9:
+	@docker build . -f package/Dockerfile.rocky9 -t momentum:rocky9
+
+.PHONY: jammy
+jammy:
+	@docker build . -f package/Dockerfile.jammy -t momentum:jammy
+
+.PHONY: kinetic
+kinetic:
+	@docker build . -f package/Dockerfile.kinetic -t momentum:kinetic

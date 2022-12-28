@@ -20,6 +20,12 @@
 - Works on most modern versions of **Linux** using shared memory (via `/dev/shm`).
 - Seamlessly integrates into a **Docker** environment with minimal configuration, and readily enables lightweight container-to-container data sharing. 
 
+### Build from source
+- [Rockylinux 8](./package/Dockerfile.rocky8)
+- [Rockylinux 9](./package/Dockerfile.rocky9)
+- [Ubuntu Jammy](./package/Dockerfile.jammy)
+- [Ubuntu Kinetic](./package/Dockerfile.kinetic)
+
 
 ### License
 Captivation Software, LLC offers **MomentumX** under an **Unlimited Use License to the United States Government**, with **all other parties subject to the GPL-3.0 License**.

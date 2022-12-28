@@ -1,62 +1,57 @@
-from ctypes import *
 import threading
 import time
 
-from cv2 import log
-
-from momentum import Context, LogLevel
+from momentumx import Context, LogLevel
 
 
-def emitter():
-    context = Context(log_level=LogLevel.DEBUG)
-    stream = context.stream('emitter', 8, 4, True)
-    
+def emitter(cancel):
+    context = Context(LogLevel.DEBUG)
+    stream = context.stream("emitter", 8, 4, True)
+
     i = 0
-    while i <= 60 :
-        if context.send_string(stream, str(i)):
+    while i <= 60 and not cancel.is_set():
+        if stream.send_string(str(i)):
             i += 1
             time.sleep(0.25)
+    cancel.set()
 
 
-def doubler():
+def doubler(cancel):
     context = Context()
     time.sleep(1)
-    istream = context.subscribe('emitter')
-    ostream = context.stream('doubler', 8, 4, True)
-    while context.is_subscribed('emitter'):
-        sval = context.receive_string(istream)
+    istream = context.subscribe("emitter")
+    ostream = context.stream("doubler", 8, 4, True)
+    while context.is_subscribed("emitter") and not cancel.is_set():
+        sval = istream.receive_string()
         if sval:
             ival = int(sval.strip())
-            while not context.send_string(ostream, str(ival * 2)):
+            while not ostream.send_string(str(ival * 2)):
                 pass
 
-def printer():
+
+def printer(cancel):
     context = Context()
     time.sleep(2)
-    stream = context.subscribe('doubler')
-    while context.is_subscribed('doubler'):
-        val = context.receive_string(stream)
+    stream = context.subscribe("doubler")
+    while context.is_subscribed("doubler") and not cancel.is_set():
+        val = stream.receive_string()
         if val:
             print(val)
 
-
-
-t1 = threading.Thread(
-    target=emitter
-)
-
-t2 = threading.Thread(
-    target=doubler
-)
-
-t3 = threading.Thread(
-    target=printer
-)
+cancel = threading.Event()
+t1 = threading.Thread(target=emitter, args=(cancel,))
+t2 = threading.Thread(target=doubler, args=(cancel,))
+t3 = threading.Thread(target=printer, args=(cancel,))
 
 t1.start()
 t2.start()
 t3.start()
 
-t1.join()
-t2.join()
-t3.join()
+try:
+    while not cancel.wait(0.5):
+        pass
+finally:
+    cancel.set()
+    t1.join()
+    t2.join()
+    t3.join()

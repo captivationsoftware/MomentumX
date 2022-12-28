@@ -72,6 +72,11 @@ struct ContextShim
 
     ContextShim(LogLevel log_level = LogLevel::WARNING) { ctx = mx_context(static_cast<uint8_t>(log_level)); }
 
+    ~ContextShim() {
+        term();
+        destroy();
+    }
+
     // lifecycle
     auto term() -> bool { return mx_term(this->ctx); }
     auto is_terminated() -> bool { return mx_is_terminated(this->ctx); }
