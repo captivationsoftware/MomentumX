@@ -15,14 +15,14 @@ messages_sent = 0
 bytes_sent = 0
 
 try:
-    stream = context.stream(STREAM, data_length, 30)
+    stream = context.stream(STREAM, data_length, 30, True)
     while True:
-        buffer_state = context.next(stream)
+        buffer_state = stream.next()
 
         if buffer_state:
             buffer_state.data_size = data_length
 
-            context.send(stream, buffer_state)
+            stream.send(buffer_state)
             messages_sent += 1
             bytes_sent += data_length
 

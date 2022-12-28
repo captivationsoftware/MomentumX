@@ -11,7 +11,7 @@ messages_received = 0
 last_iteration = 0
 skip_count = 0
 
-STREAM = b'mx://streamer'
+STREAM = 'mx://streamer'
 THRESHOLD = 10000
 
 context = mx.Context()
@@ -19,7 +19,7 @@ context = mx.Context()
 stream = context.subscribe(STREAM)
 try:
     while context.is_subscribed(STREAM):
-        buffer_state = context.receive(stream)
+        buffer_state = stream.receive()
 
         if buffer_state is not None:
             messages_received += 1
@@ -40,7 +40,7 @@ try:
                 print(f"Missed: {skip_count}")
                 skip_count = 0
 
-            context.release(stream, buffer_state)
+            stream.release(buffer_state)
 
 
 except KeyboardInterrupt:

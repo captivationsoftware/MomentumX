@@ -11,7 +11,7 @@ i = 0
 try:
     stream = context.stream(STREAM, 100, 10, True)
     while i < 500000:
-        if context.send_string(stream, str(i)):
+        if stream.send_string(str(i)):
             print("Sent: ", i)
             i += 1
         

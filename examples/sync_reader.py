@@ -3,7 +3,7 @@ import time
 
 import momentumx as mx
 
-STREAM = b'mx://incrementer'
+STREAM = 'mx://incrementer'
 
 context = mx.Context()
 
@@ -11,8 +11,8 @@ stream = context.subscribe(STREAM)
 
 try:
     while context.is_subscribed(STREAM):
-        string = context.receive_string(stream)
-        if string is not None:
+        string = stream.receive_string()
+        if string:
             print('Received:', string)
 finally:
     context.term()
