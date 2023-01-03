@@ -5,6 +5,9 @@ all: test
 build:
 	@rm -rfv dist/momentumx-*.whl
 	@python3 setup.py bdist_wheel
+	@WHEEL_FILE=`ls dist/*.whl`; \
+	docker run --rm -v `pwd`:/io quay.io/pypa/manylinux_2_28_x86_64:latest auditwheel repair --plat manylinux_2_28_x86_64 /io/$$WHEEL_FILE -w /io/dist; \
+	rm $$WHEEL_FILE
 
 .PHONY: clean
 clean:
@@ -20,18 +23,18 @@ install: build
 test: install
 	@pytest tests
 
-.PHONY: rocky8
-rocky8:
-	@docker build . -f package/Dockerfile.rocky8 -t momentum:rocky8
+# .PHONY: rocky8
+# rocky8:
+# 	@docker build . -f package/Dockerfile.rocky8 -t momentum:rocky8
 
-.PHONY: rocky9
-rocky9:
-	@docker build . -f package/Dockerfile.rocky9 -t momentum:rocky9
+# .PHONY: rocky9
+# rocky9:
+# 	@docker build . -f package/Dockerfile.rocky9 -t momentum:rocky9
 
-.PHONY: jammy
-jammy:
-	@docker build . -f package/Dockerfile.jammy -t momentum:jammy
+# .PHONY: jammy
+# jammy:
+# 	@docker build . -f package/Dockerfile.jammy -t momentum:jammy
 
-.PHONY: kinetic
-kinetic:
-	@docker build . -f package/Dockerfile.kinetic -t momentum:kinetic
+# .PHONY: kinetic
+# kinetic:
+# 	@docker build . -f package/Dockerfile.kinetic -t momentum:kinetic

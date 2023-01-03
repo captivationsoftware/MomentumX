@@ -26,6 +26,8 @@ def producer(cancel):
         if stream.send_string(str(i)):
             print("Sent: ", i)
             i += 1
+    
+    time.sleep(1)
 
 cancel = threading.Event()
 t1 = threading.Thread(target=consumer, args=(cancel,))
