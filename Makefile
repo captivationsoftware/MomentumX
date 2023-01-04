@@ -14,7 +14,7 @@ clean:
 .PHONY: install
 install: build
 	@python3 -m pip uninstall --yes momentumx || echo "Nothing to remove"
-	@python3 -m pip install -e .
+	@python3 -m pip install -e .[test]
 
 .PHONY: test
 test: install
