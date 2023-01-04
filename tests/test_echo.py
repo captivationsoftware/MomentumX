@@ -148,29 +148,31 @@ def test_subscribers() -> None:
         del consumer2
         assert producer.subscriber_count == 0, "Should have no subscribers again"
 
-
-def test_one_thread_numpy() -> None:
-    import momentumx as mx
+try:
     import numpy as np
+    import momentumx as mx
 
-    with timeout_event() as event:
-        producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)
-        consumer = mx.Consumer(_STREAM_NAME, event)
+    def test_one_thread_numpy() -> None:
 
-        buf1 = producer.next_to_send()
-        a1 = np.frombuffer(buf1, dtype=np.uint8)
-        a1[:10] = list(range(10))
+        with timeout_event() as event:
+            producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)
+            consumer = mx.Consumer(_STREAM_NAME, event)
 
-        buf1.send(10)
+            buf1 = producer.next_to_send()
+            a1 = np.frombuffer(buf1, dtype=np.uint8)
+            a1[:10] = list(range(10))
 
-        buf2 = consumer.receive()
-        a2 = np.frombuffer(buf2, dtype=np.uint8)
+            buf1.send(10)
 
-        assert np.array_equal(a1[:10], a2)
+            buf2 = consumer.receive()
+            a2 = np.frombuffer(buf2, dtype=np.uint8)
 
-        assert producer is not None
-        assert consumer is not None
+            assert np.array_equal(a1[:10], a2)
 
+            assert producer is not None
+            assert consumer is not None
+except:
+    print("Numpy not found - skipping")
 
 def test_buffer_cleanup() -> None:
     import momentumx as mx  # import in subprocess
