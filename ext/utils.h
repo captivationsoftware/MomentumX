@@ -197,6 +197,10 @@ namespace MomentumX {
                     return logger;
                 }
 
+                Level get_level() const { 
+                    return _level;
+                }
+
                 void set_level(Level level) {
                     _level = level;
                 }

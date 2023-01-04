@@ -1,25 +1,36 @@
 import time
 
 import momentumx as mx
+import threading
+import signal
 
 
 STREAM = "mx://streamer"
 THRESHOLD = 10000
+
+cancel = threading.Event()
+signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel.set()))
 
 now = time.time()
 messages_sent = 0
 bytes_sent = 0
 data_length = int(100e6)
 
-context = mx.Context()
-stream = context.stream(STREAM, data_length, 30, True)
+stream = mx.Producer(cancel, STREAM, data_length, 30, True)
+
+while stream.subscriber_count == 0:
+    print("waiting for subscriber(s)")
+    if cancel.wait(0.5):
+        break
+
+buf_iter = iter(stream.next_to_send, None)
+
 while True:
-    buffer_state = stream.next()
+    buffer = next(buf_iter)
 
-    if buffer_state:
-        buffer_state.data_size = data_length
+    if buffer:
+        buffer.send(data_length)
 
-        stream.send(buffer_state)
         messages_sent += 1
         bytes_sent += data_length
 

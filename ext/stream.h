@@ -84,9 +84,9 @@ namespace MomentumX {
 
                 if (_fd < 0) {
                     if (role == Role::CONSUMER) {
-                        throw std::runtime_error("Failed to open shared memory stream file [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to open shared memory stream file '"+name+"' [errno: " + std::to_string(errno) + "]");
                     } else {
-                        throw std::runtime_error("Failed to create shared memory stream file [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to create shared memory stream file '"+name+"' [errno: " + std::to_string(errno) + "]");
                     }
                 } 
 
@@ -350,7 +350,7 @@ namespace MomentumX {
 
             void add_subscriber(Context* context) {
                 if (_role == Role::PRODUCER) {
-                    throw std::runtime_error("Producer stream can not add subscribers");
+                    throw std::runtime_error("Producer stream cannot add subscribers");
                 }
 
                 if (!is_alive()) {
@@ -381,7 +381,7 @@ namespace MomentumX {
 
             void remove_subscriber(Context* context) {
                 if (_role == Role::PRODUCER) {
-                    throw std::runtime_error("Producer stream can not remove subscribers");
+                    throw std::runtime_error("Producer stream cannot remove subscribers");
                 }
 
                 if (!is_alive()) {
