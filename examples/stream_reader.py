@@ -16,10 +16,8 @@ messages_received = 0
 last_iteration = 0
 skip_count = 0
 
-stream = mx.Consumer(cancel, STREAM)
+stream = mx.Consumer(cancel, STREAM, polling_interval=0.0)
 for buffer in iter(stream.receive, None):
-    print("got buffer")
-
     messages_received += 1
     bytes_received += len(bytearray(buffer))
 
@@ -36,4 +34,4 @@ for buffer in iter(stream.receive, None):
         print(f"Missed: {skip_count}")
         skip_count = 0
 
-    print("try buffer")
+    del buffer

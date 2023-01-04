@@ -108,8 +108,8 @@ def run_recv() -> int:
         return len(b)
 
 
-def disable_test_echo() -> None:
-    with cf.ProcessPoolExecutor(max_workers=2) as pool:
+def test_echo() -> None:
+    with cf.ThreadPoolExecutor(max_workers=2) as pool:
         send_future = pool.submit(run_send)
         recv_future = pool.submit(run_recv)
 
