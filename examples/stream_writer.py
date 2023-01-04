@@ -6,7 +6,7 @@ import signal
 
 
 STREAM = "mx://streamer"
-THRESHOLD = 100
+ts_old = round(time.time())
 
 cancel = threading.Event()
 signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel.set()))
@@ -30,7 +30,9 @@ for buffer in iter(stream.next_to_send, None):
     messages_sent += 1
     bytes_sent += data_length
 
-    if messages_sent % THRESHOLD == 0:
+    ts_new = round(time.time())
+    if ts_new != ts_old:
+        ts_old = ts_new
         elapsed = time.time() - now
         print("Sent {:.2f} msgs/sec".format(messages_sent / elapsed))
         print("Sent {:.2f} GB/sec".format(bytes_sent / elapsed / 1.0e9))
