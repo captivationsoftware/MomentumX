@@ -94,11 +94,12 @@ struct ThreadingEventWrapper
 
     bool wait(double timeout)
     {
+        py::gil_scoped_acquire lock; // acquire before calling into python code
         if (evt.is_none())
         {
             std::this_thread::sleep_for(std::chrono::nanoseconds(int(timeout * 1e9)));
+            return false;
         }
-        py::gil_scoped_acquire lock; // acquire before calling into python code
         return evt.attr("wait")(timeout).cast<bool>();
     }
 };
