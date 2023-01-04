@@ -16,7 +16,7 @@ messages_received = 0
 last_iteration = 0
 skip_count = 0
 
-stream = mx.Consumer(cancel, STREAM, polling_interval=0.0)
+stream = mx.Consumer(STREAM, cancel, polling_interval=0.0)
 for buffer in iter(stream.receive, None):
     messages_received += 1
     bytes_received += len(bytearray(buffer))

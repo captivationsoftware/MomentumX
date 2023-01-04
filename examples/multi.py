@@ -5,7 +5,7 @@ from momentumx import Producer, Consumer
 
 
 def emitter(cancel: threading.Event):
-    stream = Producer(cancel, "emitter", 8, 4, True)
+    stream = Producer("emitter", 8, 4, True, cancel)
     while stream.subscriber_count == 0:
         print("waiting for subscriber(s)")
         if cancel.wait(0.5):
@@ -22,8 +22,8 @@ def emitter(cancel: threading.Event):
 
 def doubler(cancel: threading.Event):
     time.sleep(1)
-    istream = Consumer(cancel, "emitter")
-    ostream = Producer(cancel, "doubler", 8, 4, True)
+    istream = Consumer("emitter", cancel)
+    ostream = Producer("doubler", 8, 4, True, cancel)
 
     while ostream.subscriber_count == 0:
         print("waiting for subscriber(s)")
@@ -40,7 +40,7 @@ def doubler(cancel: threading.Event):
 
 def printer(cancel: threading.Event):
     time.sleep(2)
-    stream = Consumer(cancel, "doubler")
+    stream = Consumer("doubler", cancel)
     while stream.is_alive and not cancel.is_set():
         val = stream.receive_string()
         if val:

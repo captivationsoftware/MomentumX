@@ -40,8 +40,8 @@ def run_send() -> int:
     import numpy as np
 
     with timeout_event() as event:
-        stream = mx.Producer(event, _STREAM_NAME, 1000, 20, True)
-        while stream.subscriber_count==0:
+        stream = mx.Producer(_STREAM_NAME, 1000, 20, True, event)
+        while stream.subscriber_count == 0:
             assert not event.wait(0.1), "no subscribers"
 
         assert os.path.exists(f"{_DEVSHM_NAME}.buffer.1")
@@ -85,8 +85,8 @@ def run_recv() -> int:
     import time
 
     with timeout_event() as event:
-        event.wait(0.5) # need producer to initialize first
-        stream = mx.Consumer(event, _STREAM_NAME)
+        event.wait(0.5)  # need producer to initialize first
+        stream = mx.Consumer(_STREAM_NAME, event)
 
         b = bytearray()
         return _EXPECTED_BYTES
@@ -132,13 +132,13 @@ def test_subscribers() -> None:
     import momentumx as mx
 
     with timeout_event() as event:
-        producer = mx.Producer(event, _STREAM_NAME, 20, 5, True)
+        producer = mx.Producer(_STREAM_NAME, 20, 5, True, event)
         assert producer.subscriber_count == 0, "Should have no subscribers yet"
 
-        consumer1 = mx.Consumer(event, _STREAM_NAME)
+        consumer1 = mx.Consumer(_STREAM_NAME, event)
         assert producer.subscriber_count == 1, "Should have single subscriber"
 
-        consumer2 = mx.Consumer(event, _STREAM_NAME)
+        consumer2 = mx.Consumer(_STREAM_NAME, event)
         # assert producer.subscriber_count == 2
         # TODO: This fails. subscriber_count stays a "1"
 
@@ -154,8 +154,8 @@ def test_one_thread_numpy() -> None:
     import numpy as np
 
     with timeout_event() as event:
-        producer = mx.Producer(event, _STREAM_NAME, 20, 2, True)
-        consumer = mx.Consumer(event, _STREAM_NAME)
+        producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)
+        consumer = mx.Consumer(_STREAM_NAME, event)
 
         buf1 = producer.next_to_send()
         a1 = np.frombuffer(buf1, dtype=np.uint8)
@@ -180,7 +180,7 @@ def test_buffer_cleanup() -> None:
         fname = f"{_DEVSHM_NAME}.buffer.1"
 
         # Verify buffer is created
-        producer = mx.Producer(event, _STREAM_NAME, 300, 20, True)
+        producer = mx.Producer(_STREAM_NAME, 300, 20, True, event)
         assert producer.is_alive
         assert producer.is_sync
         assert producer.buffer_size == 300

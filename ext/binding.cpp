@@ -83,12 +83,21 @@ struct ThreadingEventWrapper
 
     bool is_set()
     {
+        if (evt.is_none())
+        {
+            return false;
+        }
+
         py::gil_scoped_acquire lock; // acquire before calling into python code
         return evt.attr("is_set")().cast<bool>();
     }
 
     bool wait(double timeout)
     {
+        if (evt.is_none())
+        {
+            std::this_thread::sleep_for(std::chrono::nanoseconds(int(timeout * 1e9)));
+        }
         py::gil_scoped_acquire lock; // acquire before calling into python code
         return evt.attr("wait")(timeout).cast<bool>();
     }
@@ -140,16 +149,16 @@ struct WriteBufferShim : BufferStateShim
 
 struct StreamShim
 {
+    std::shared_ptr<Context> ctx;
+    std::shared_ptr<Stream> stream;
     ThreadingEventWrapper evt;
-    float polling_interval{0.0};
-    std::shared_ptr<Context> ctx{nullptr};
-    std::shared_ptr<Stream> stream{nullptr};
+    float polling_interval;
 
-    StreamShim(const ThreadingEventWrapper &evt,
-               double polling_interval,
-               const std::shared_ptr<Context> &ctx,
-               const std::shared_ptr<Stream> &stream)
-        : evt(evt), polling_interval(polling_interval), ctx(ctx), stream(stream) {}
+    StreamShim(const std::shared_ptr<Context> &ctx,
+               const std::shared_ptr<Stream> &stream,
+               const ThreadingEventWrapper &evt,
+               double polling_interval)
+        : ctx(ctx), stream(stream), evt(evt), polling_interval(polling_interval) {}
     ~StreamShim() = default;
 
     bool is_alive() { return this->stream->is_alive(); }
@@ -160,7 +169,7 @@ struct StreamShim
     size_t buffer_count() { return this->stream->buffer_count(); }
     size_t subscriber_count() { return this->stream->subscribers().size(); }
 
-    auto next_to_send() -> std::optional<WriteBufferShim>
+    auto next_to_send(bool blocking) -> std::optional<WriteBufferShim>
     {
         py::gil_scoped_release nogil;
         while (!evt.is_set())
@@ -168,7 +177,14 @@ struct StreamShim
             MomentumX::Stream::BufferState *buffer_info = mx_stream_next(ctx.get(), stream.get());
             if (buffer_info == nullptr)
             {
-                evt.wait(polling_interval);
+                if (blocking)
+                {
+                    evt.wait(polling_interval);
+                }
+                else
+                {
+                    return {};
+                }
             }
             else
             {
@@ -182,7 +198,7 @@ struct StreamShim
         return {};
     }
 
-    auto receive(uint64_t minimum_ts = 1) -> std::optional<ReadBufferShim>
+    auto receive(uint64_t minimum_ts, bool blocking) -> std::optional<ReadBufferShim>
     {
         py::gil_scoped_release nogil;
         while (!evt.is_set())
@@ -196,7 +212,14 @@ struct StreamShim
             BufferState *buffer_info = mx_stream_receive(ctx.get(), stream.get(), minimum_ts);
             if (buffer_info == nullptr)
             {
-                evt.wait(polling_interval);
+                if (blocking)
+                {
+                    evt.wait(polling_interval);
+                }
+                else
+                {
+                    return {};
+                }
             }
             else
             {
@@ -216,9 +239,9 @@ struct StreamShim
 
     auto flush() -> void { mx_stream_flush(ctx.get(), stream.get()); }
 
-    auto send_string(const std::string &str) -> bool
+    auto send_string(const std::string &str, bool blocking) -> bool
     {
-        std::optional<BufferStateShim> buffer = next_to_send();
+        std::optional<BufferStateShim> buffer = next_to_send(blocking);
         if (!buffer)
         {
             return false;
@@ -237,9 +260,9 @@ struct StreamShim
         return buffer->send(str_size);
     }
 
-    auto receive_string() -> std::string
+    auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string
     {
-        std::optional<BufferStateShim> buffer = receive();
+        std::optional<BufferStateShim> buffer = receive(minimum_ts, blocking);
         if (!buffer)
         {
             return "";
@@ -252,40 +275,41 @@ struct StreamShim
 
 struct ConsumerStreamShim : StreamShim
 {
-    ConsumerStreamShim(const ThreadingEventWrapper &evt,
-                       double polling_interval,
-                       const std::shared_ptr<Context> &ctx,
-                       const std::shared_ptr<Stream> &stream)
-        : StreamShim(evt, polling_interval, ctx, stream) {}
+    ConsumerStreamShim(const std::shared_ptr<Context> &ctx,
+                       const std::shared_ptr<Stream> &stream,
+                       const ThreadingEventWrapper &evt,
+                       double polling_interval)
+        : StreamShim(ctx, stream, evt, polling_interval) {}
 };
 struct ProducerStreamShim : StreamShim
 {
-    ProducerStreamShim(const ThreadingEventWrapper &evt,
-                       double polling_interval,
-                       const std::shared_ptr<Context> &ctx,
-                       const std::shared_ptr<Stream> &stream)
-        : StreamShim(evt, polling_interval, ctx, stream) {}
+    ProducerStreamShim(const std::shared_ptr<Context> &ctx,
+                       const std::shared_ptr<Stream> &stream,
+                       const ThreadingEventWrapper &evt,
+                       double polling_interval)
+        : StreamShim(ctx, stream, evt, polling_interval) {}
 };
 
-static ProducerStreamShim producer_stream(const py::object &evt,
-                                          const std::string &stream_name,
+static ProducerStreamShim producer_stream(const std::string &stream_name,
                                           size_t buffer_size,
                                           size_t buffer_count,
                                           bool sync,
+                                          const py::object &evt,
                                           double polling_interval)
 {
     auto c = Context::scoped_producer_singleton();
     auto wrapped_evt = ThreadingEventWrapper(evt);
     ProducerStreamShim shim(
-        wrapped_evt,
-        polling_interval,
         c,
-        std::shared_ptr<Stream>(mx_stream(c.get(), stream_name.c_str(), buffer_size, buffer_count, sync),
-                                [c](Stream *stream) { /* cleaned up via Context destructor */ }));
+        std::shared_ptr<Stream>(mx_stream(c.get(), stream_name.c_str(), buffer_size, buffer_count, sync), [c](Stream *stream) { /* cleaned up via Context destructor */ }),
+        wrapped_evt,
+        polling_interval);
     return shim;
 }
 
-static auto consumer_stream(const py::object &evt, const std::string &stream_name, double polling_interval) -> ConsumerStreamShim
+static auto consumer_stream(const std::string &stream_name,
+                            const py::object &evt,
+                            double polling_interval) -> ConsumerStreamShim
 {
     namespace sc = std::chrono;
     py::gil_scoped_release nogil; // release gil since the constructor blocks
@@ -300,11 +324,10 @@ static auto consumer_stream(const py::object &evt, const std::string &stream_nam
         if (stream)
         {
             return ConsumerStreamShim(
-                wrapped_evt,
-                polling_interval,
                 c,
-                std::shared_ptr<Stream>(stream,
-                                        [c](Stream *stream) { /* mx_unsubscribe(c.get(), stream); */ }));
+                std::shared_ptr<Stream>(stream, [c](Stream *stream) { /* mx_unsubscribe(c.get(), stream); */ }),
+                wrapped_evt,
+                polling_interval);
         }
     } while (!wrapped_evt.wait(0.1));
 
@@ -349,10 +372,10 @@ PYBIND11_MODULE(_mx, m)
         .def_property_readonly("iteration", &WriteBufferShim::iteration);
 
     py::class_<ProducerStreamShim>(m, "Producer")
-        .def(py::init(&producer_stream), "cancel_event"_a, "stream_name"_a, "buffer_size"_a, "buffer_count"_a, "sync"_a = false, "polling_interval"_a = 0.010)
-        .def("next_to_send", &ProducerStreamShim::next_to_send)
+        .def(py::init(&producer_stream), "stream_name"_a, "buffer_size"_a, "buffer_count"_a, "sync"_a = false, "cancel_event"_a = nullptr, "polling_interval"_a = 0.010)
+        .def("next_to_send", &ProducerStreamShim::next_to_send, py::kw_only(), "blocking"_a = true)
         .def("flush", &ProducerStreamShim::flush)
-        .def("send_string", &ProducerStreamShim::send_string, "message"_a)
+        .def("send_string", &ProducerStreamShim::send_string, "message"_a, py::kw_only(), "blocking"_a = true)
         .def_property_readonly("subscriber_count", &ProducerStreamShim::subscriber_count)
         .def_property_readonly("buffer_count", &ProducerStreamShim::buffer_count)
         .def_property_readonly("buffer_size", &ProducerStreamShim::buffer_size)
@@ -362,10 +385,10 @@ PYBIND11_MODULE(_mx, m)
         .def_property_readonly("name", &ProducerStreamShim::name);
 
     py::class_<ConsumerStreamShim>(m, "Consumer")
-        .def(py::init(&consumer_stream), "cancel_event"_a, "stream_name"_a, "polling_interval"_a = 0.010)
-        .def("receive", &ConsumerStreamShim::receive, "minimum_ts"_a = 1)
+        .def(py::init(&consumer_stream), "stream_name"_a, "cancel_event"_a = nullptr, "polling_interval"_a = 0.010)
+        .def("receive", &ConsumerStreamShim::receive, py::kw_only(), "minimum_ts"_a = 1, "blocking"_a = true)
         .def("flush", &ConsumerStreamShim::flush)
-        .def("receive_string", &ConsumerStreamShim::receive_string)
+        .def("receive_string", &ConsumerStreamShim::receive_string, py::kw_only(), "minimum_ts"_a = 1, "blocking"_a = true)
         .def_property_readonly("buffer_count", &ConsumerStreamShim::buffer_count)
         .def_property_readonly("buffer_size", &ConsumerStreamShim::buffer_size)
         .def_property_readonly("fd", &ConsumerStreamShim::fd)

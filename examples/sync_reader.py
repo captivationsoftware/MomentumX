@@ -7,7 +7,7 @@ STREAM = "mx://incrementer"
 cancel = threading.Event()
 signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel.set()))
 
-stream = mx.Consumer(cancel, STREAM)
+stream = mx.Consumer(STREAM, cancel)
 
 while stream.is_alive:
     string = stream.receive_string()

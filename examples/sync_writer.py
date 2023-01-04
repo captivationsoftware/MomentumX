@@ -7,7 +7,7 @@ STREAM = "mx://incrementer"
 cancel = threading.Event()
 signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel.set()))
 
-stream = mx.Producer(cancel, STREAM, 100, 10, True)
+stream = mx.Producer(STREAM, 100, 10, True, cancel)
 while stream.subscriber_count == 0:
     print("waiting for subscriber(s)")
     if cancel.wait(0.5):
