@@ -1,12 +1,16 @@
 import threading
 import time
 
-from momentumx import Context, LogLevel
+from momentumx import Producer, Consumer
 
 
-def emitter(cancel):
-    context = Context(LogLevel.DEBUG)
-    stream = context.stream("emitter", 8, 4, True)
+def emitter(cancel: threading.Event):
+    stream = Producer(cancel, "emitter", 8, 4, True)
+    while stream.subscriber_count == 0:
+        print("waiting for subscriber(s)")
+        if cancel.wait(0.5):
+            print("emitter canceled before starting")
+            return
 
     i = 0
     while i <= 60 and not cancel.is_set():
@@ -16,27 +20,32 @@ def emitter(cancel):
     cancel.set()
 
 
-def doubler(cancel):
-    context = Context()
+def doubler(cancel: threading.Event):
     time.sleep(1)
-    istream = context.subscribe("emitter")
-    ostream = context.stream("doubler", 8, 4, True)
-    while context.is_subscribed("emitter") and not cancel.is_set():
+    istream = Consumer(cancel, "emitter")
+    ostream = Producer(cancel, "doubler", 8, 4, True)
+
+    while ostream.subscriber_count == 0:
+        print("waiting for subscriber(s)")
+        if cancel.wait(0.5):
+            print("doubler canceled before starting")
+            return
+
+    while istream.is_alive and not cancel.is_set():
         sval = istream.receive_string()
         if sval:
             ival = int(sval.strip())
-            while not ostream.send_string(str(ival * 2)):
-                pass
+            assert ostream.send_string(str(ival * 2))
 
 
-def printer(cancel):
-    context = Context()
+def printer(cancel: threading.Event):
     time.sleep(2)
-    stream = context.subscribe("doubler")
-    while context.is_subscribed("doubler") and not cancel.is_set():
+    stream = Consumer(cancel, "doubler")
+    while stream.is_alive and not cancel.is_set():
         val = stream.receive_string()
         if val:
             print(val)
+
 
 cancel = threading.Event()
 t1 = threading.Thread(target=emitter, args=(cancel,))
@@ -50,6 +59,8 @@ t3.start()
 try:
     while not cancel.wait(0.5):
         pass
+except KeyboardInterrupt:
+    print("received ctrl-c")
 finally:
     cancel.set()
     t1.join()
