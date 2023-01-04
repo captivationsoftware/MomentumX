@@ -1,13 +1,22 @@
+docker_build_args = --rm -u `id -u`:`id -g` -v `pwd`:/io -w /io quay.io/pypa/manylinux_2_28_x86_64:latest
+auditwheel_args = --plat manylinux_2_28_x86_64
+
 .PHONY: all
 all: test
 
+.PHONY: build_wheel_%
+build_wheel_%:
+	@rm -rfv dist/momentumx-*-$*-*.whl
+	@docker run $(docker_build_args) /opt/python/$*/bin/python3 -m pip wheel -w /io/dist --no-deps .
+
+.PHONY: build_wheels
+build_wheels: build_wheel_cp37-cp37m build_wheel_cp38-cp38 build_wheel_cp39-cp39 build_wheel_cp310-cp310 build_wheel_cp311-cp311
+
 .PHONY: build
-build:
-	@rm -rfv dist/momentumx-*.whl
-	@python3 setup.py bdist_wheel
-	@WHEEL_FILE=`ls dist/*.whl`; \
-	docker run --rm -v `pwd`:/io quay.io/pypa/manylinux_2_28_x86_64:latest auditwheel repair --plat manylinux_2_28_x86_64 /io/$$WHEEL_FILE -w /io/dist; \
-	rm $$WHEEL_FILE
+build: build_wheels
+	@for WHEEL in dist/*.whl; do \
+		docker run $(docker_build_args) auditwheel repair $(auditwheel_args) /io/$$WHEEL -w /io/dist; \
+	done
 
 .PHONY: clean
 clean:

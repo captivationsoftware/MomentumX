@@ -1,4 +1,0 @@
-mypy
-pybind11
-pytest
-scikit-build
