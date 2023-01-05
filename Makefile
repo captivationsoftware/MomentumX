@@ -28,11 +28,12 @@ package: package_wheels
 	@for WHEEL in dist/*.whl; do \
 		docker run $(docker_build_args) auditwheel repair $(auditwheel_args) /io/$$WHEEL -w /io/dist; \
 	done
+	@rm -rfv dist/*-linux_*.whl
 
 .PHONY: install
 install: 
 	@python3 -m pip uninstall --yes momentumx || echo "Nothing to remove"
-	@python3 -m pip install .[test]
+	@python3 -m pip install .[test] --use-feature=in-tree-build --no-build-isolation -v
 
 .PHONY: test
 test: install
