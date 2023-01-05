@@ -21,7 +21,7 @@ while stream.is_alive:
 
     if buffer:
         messages_received += 1
-        bytes_received += len(bytearray(buffer))
+        bytes_received += buffer.data_size
 
         step = buffer.iteration - last_iteration
         if last_iteration > 0 and step > 1:

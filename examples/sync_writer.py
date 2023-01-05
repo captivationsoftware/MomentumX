@@ -1,6 +1,7 @@
 import momentumx as mx
 import threading
 import signal
+import time
 
 STREAM = "mx://incrementer"
 
@@ -15,5 +16,8 @@ while stream.subscriber_count == 0:
 
 for n in range(500000):
     assert stream.is_alive
-    if stream.send_string(str(n)):
+
+    if stream.subscriber_count == 0:
+        cancel.wait(0.5)
+    elif stream.send_string(str(n)):
         print(f"Sent: {n}")
