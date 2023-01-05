@@ -18,11 +18,12 @@ build_wheel_%:
 .PHONY: build_wheels
 build_wheels: build_wheel_cp37-cp37m build_wheel_cp38-cp38 build_wheel_cp39-cp39 build_wheel_cp310-cp310 build_wheel_cp311-cp311
 
-.PHONY: build
-build: build_wheels
+.PHONY: package
+package: build_wheels
 	@for WHEEL in dist/*.whl; do \
 		docker run $(docker_build_args) auditwheel repair $(auditwheel_args) /io/$$WHEEL -w /io/dist; \
 	done
+
 
 .PHONY: clean
 clean:
@@ -30,7 +31,7 @@ clean:
 	@rm -rfv _skbuild
 
 .PHONY: install
-install: build
+install:
 	@python3 -m pip uninstall --yes momentumx || echo "Nothing to remove"
 	@python3 -m pip install -e .[test]
 
