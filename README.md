@@ -27,6 +27,6 @@ Captivation Software, LLC offers **MomentumX** under an **Unlimited Use License 
 All inquiries and requests may be sent to <a href="mailto:opensource@captivation.us">opensource@captivation.us</a>.
 
 
-<small>
+<sub><sup>
     Copyright &copy; 2022-2023 - <a href="https://captivation.us" target="_blank">Captivation Software, LLC</a>.
-</small>
+</sup></sub>

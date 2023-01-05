@@ -1,7 +1,7 @@
 from setuptools import find_packages
 from skbuild import setup
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 from pathlib import Path
 long_description = (Path(__file__).parent / "README.md").read_text()
@@ -17,5 +17,7 @@ setup(
     package_dir={"": "src"},
     cmake_install_dir="src/momentumx",
     extras_require={"test": ["pytest", "numpy"]},
-    python_requires=">=3.6"
+    python_requires=">=3.6",
+    url="https://github.com/captivationsoftware/MomentumX",
+    keywords=["shm", "shared memory", "zero-copy", "numpy", "big data", "scipy", "pubsub", "pipeline"]
 )
