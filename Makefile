@@ -8,15 +8,10 @@ auditwheel_args = --plat manylinux_2_28_x86_64
 .PHONY: all
 all: test
 
-
 .PHONY: clean
 clean:
 	@rm -rfv dist
 	@rm -rfv _skbuild
-
-.PHONY: build
-build:
-	@python3 setup.py sdist
 
 .PHONY: package_wheel_%
 package_wheel_%:
@@ -35,9 +30,9 @@ package: package_wheels
 	done
 
 .PHONY: install
-install: build
+install: 
 	@python3 -m pip uninstall --yes momentumx || echo "Nothing to remove"
-	@python3 -m pip install -e .[test]
+	@python3 -m pip install .[test]
 
 .PHONY: test
 test: install
