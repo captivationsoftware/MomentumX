@@ -12,8 +12,5 @@ setup(
     package_dir={"": "src"},
     cmake_install_dir="src/momentumx",
     extras_require={"test": ["pytest", "numpy"]},
-    python_requires=">=3.8",
-    cmake_args=[
-        "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
-    ]
+    python_requires=">=3.7"
 )

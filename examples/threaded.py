@@ -24,6 +24,8 @@ def producer(cancel: threading.Event):
         if stream.send_string(str(i)):
             print("Sent: ", i)
             i += 1
+    
+    time.sleep(1)
 
 
 cancel = threading.Event()

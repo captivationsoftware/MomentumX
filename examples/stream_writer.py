@@ -11,7 +11,7 @@ messages_sent = 0
 bytes_sent = 0
 data_length = int(100e6)
 
-stream = mx.Producer(STREAM, data_length, 30, True)
+stream = mx.Producer(STREAM, data_length, 30, False)
 
 while stream.subscriber_count == 0:
     print("waiting for subscriber(s)")
