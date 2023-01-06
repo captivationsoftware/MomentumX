@@ -27,6 +27,12 @@ struct ReadBufferShim;
 struct StreamShim;
 struct WriteBufferShim;
 
+struct StreamUnavailableException : public std::exception {
+    const char *what() const noexcept override
+    {
+        return "Failed to create stream subscription";
+    }
+};
 
 struct ThreadingEventWrapper
 {
@@ -55,8 +61,6 @@ struct ThreadingEventWrapper
         return evt.attr("wait")(timeout).cast<bool>();
     }
 };
-
-// TODO: BufferState -> BufferInfo
 
 struct BufferStateShim
 {
@@ -280,7 +284,7 @@ static auto consumer_stream(const std::string &stream_name,
             polling_interval);
     }
 
-    throw std::runtime_error("Unable to create consumer stream: subscription timed out");
+    throw StreamUnavailableException();
 }
 
 inline LogLevel get_log_level() { return Logger::get_logger().get_level(); }
@@ -293,6 +297,8 @@ PYBIND11_MODULE(_mx, m)
         .value("INFO", LogLevel::INFO)
         .value("WARNING", LogLevel::WARNING)
         .value("ERROR", LogLevel::ERROR);
+
+    py::register_exception<StreamUnavailableException>(m, "StreamUnavailable", PyExc_RuntimeError);
 
     m.def("get_log_level", &get_log_level);
     m.def("set_log_level", &set_log_level, "level"_a);

@@ -5,6 +5,7 @@ import sys
 import threading
 from typing import Iterator
 import contextlib
+import pytest 
 
 _EXPECTED_BYTES = 10589  # arbitrary
 
@@ -79,7 +80,6 @@ def run_send() -> int:
             num_sent += len(data)
         return num_sent
 
-
 def run_recv() -> int:
     import momentumx as mx  # import in subprocess
     import time
@@ -147,6 +147,14 @@ def test_subscribers() -> None:
 
         del consumer2
         assert producer.subscriber_count == 0, "Should have no subscribers again"
+
+
+def test_stream_unavailable_exception() -> None:
+    import momentumx as mx
+
+    with pytest.raises(mx.StreamUnavailable):
+        mx.Consumer('__nonexistent__')
+    
 
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess
