@@ -20,6 +20,39 @@
 - Works on most modern versions of **Linux** using shared memory (via `/dev/shm`).
 - Seamlessly integrates into a **Docker** environment with minimal configuration, and readily enables lightweight container-to-container data sharing. 
 
+### Example:
+
+#### Streaming Mode (e.g. lossy)
+```python
+# Producer Process
+import momentumx as mx
+
+# Create a stream with a total capacity of 10MB
+stream = mx.Producer('my_stream', buffer_size=int(1e6), buffer_count=10, sync=False)
+
+# Write the 
+for i in range(0, 1000):
+    buffer = stream.next_to_send()
+    memview = memoryview(buffer[0:])
+    buffer[0:] = str(i % 10)
+    buffer.send(buffer.buffer_size)
+```
+
+```python
+# Consumer Process(es)
+import momentumx as mx
+
+stream = mx.Consumer('my_stream')
+
+while stream.is_available():
+    buffer = stream.receive()
+    if buffer:
+        print(buffer[i])
+    else:
+        break
+
+```
+
 ### License
 Captivation Software, LLC offers **MomentumX** under an **Unlimited Use License to the United States Government**, with **all other parties subject to the GPL-3.0 License**.
 

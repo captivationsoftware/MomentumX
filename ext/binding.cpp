@@ -1,3 +1,5 @@
+#define PYBIND11_DETAILED_ERROR_MESSAGES
+
 #include "buffer.h"
 #include "context.h"
 #include "momentumx.h"
@@ -22,7 +24,7 @@ using MomentumX::Context;
 using MomentumX::Stream;
 
 struct BufferShim;
-struct BufferStateShim;
+struct BufferShim;
 struct ReadBufferShim;
 struct StreamShim;
 struct WriteBufferShim;
@@ -69,21 +71,68 @@ struct ThreadingEventWrapper
     }
 };
 
-struct BufferStateShim
+struct BufferShim
 {
     std::shared_ptr<Context> ctx{nullptr};
     std::shared_ptr<Stream> stream{nullptr};
     std::shared_ptr<BufferState> buffer_state{nullptr};
 
-    BufferStateShim(const std::shared_ptr<Context> &ctx,
+    BufferShim(const std::shared_ptr<Context> &ctx,
                     const std::shared_ptr<Stream> &stream,
                     const std::shared_ptr<BufferState> &buffer_state)
         : ctx(ctx), stream(stream), buffer_state(buffer_state) {}
-    ~BufferStateShim() = default;
+    ~BufferShim() = default;
 
     const uint8_t *data() const { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
-    uint8_t *data() { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
+    uint8_t *data() { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); } 
 
+    const uint8_t get_byte(size_t index) const {
+        if (index >= buffer_size()) {
+            throw std::out_of_range("Index exceeds allocated buffer size");
+        }
+        return data()[index];
+    } 
+
+    py::list get_bytes(py::slice slice) const {
+        size_t start, stop, step, slicelength;
+        if (!slice.compute(buffer_size(), &start, &stop, &step, &slicelength))
+            throw py::error_already_set();
+
+        py::list result;
+        for (size_t i = 0; i < slicelength; i += step) {
+            result.append(data()[i]);
+        }
+        return result;
+    } 
+
+    void set_byte(size_t index, const py::bytes value)
+    {
+        if (index >= buffer_size()) {
+            throw std::out_of_range("Index exceeds allocated buffer size");
+        }
+        py::buffer_info info(py::buffer(value).request());
+        data()[index] = *((uint8_t*) info.ptr);        
+    }
+
+    void set_bytes(py::slice slice, const py::bytes value) 
+    { 
+        size_t start, stop, step, slicelength;
+        if (!slice.compute(buffer_size(), &start, &stop, &step, &slicelength))
+            throw py::error_already_set();
+
+        if (slicelength > py::len(value)) {
+            throw std::out_of_range("Incompatible sequence assignment");
+        }
+        
+        py::buffer_info info(py::buffer(value).request());
+
+        size_t index = 0;
+        for (size_t i = start; i < stop; i+= step) {
+            data()[i] = *(((uint8_t*) info.ptr) + index++ * sizeof(uint8_t));
+        }
+
+    }
+    
     uint16_t buffer_id() const { return buffer_state->buffer_id; }
     size_t buffer_size() const { return buffer_state->buffer_size; }
     size_t buffer_count() const { return buffer_state->buffer_count; }
@@ -107,13 +156,13 @@ struct BufferStateShim
     }
 };
 
-struct ReadBufferShim : BufferStateShim
+struct ReadBufferShim : BufferShim
 {
-    ReadBufferShim(const std::shared_ptr<Context> &ctx, const std::shared_ptr<Stream> &stream, const std::shared_ptr<BufferState> &buffer_state) : BufferStateShim(ctx, stream, buffer_state) {}
+    ReadBufferShim(const std::shared_ptr<Context> &ctx, const std::shared_ptr<Stream> &stream, const std::shared_ptr<BufferState> &buffer_state) : BufferShim(ctx, stream, buffer_state) {}
 };
-struct WriteBufferShim : BufferStateShim
-{
-    WriteBufferShim(const std::shared_ptr<Context> &ctx, const std::shared_ptr<Stream> &stream, const std::shared_ptr<BufferState> &buffer_state) : BufferStateShim(ctx, stream, buffer_state) {}
+struct WriteBufferShim : BufferShim
+{ 
+    WriteBufferShim(const std::shared_ptr<Context> &ctx, const std::shared_ptr<Stream> &stream, const std::shared_ptr<BufferState> &buffer_state) : BufferShim(ctx, stream, buffer_state) {}
 };
 
 struct StreamShim
@@ -210,7 +259,7 @@ struct StreamShim
 
     auto send_string(const std::string &str, bool blocking) -> bool
     {
-        std::optional<BufferStateShim> buffer = next_to_send(blocking);
+        std::optional<BufferShim> buffer = next_to_send(blocking);
         if (!buffer)
         {
             return false;
@@ -226,7 +275,7 @@ struct StreamShim
 
     auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string
     {
-        std::optional<BufferStateShim> buffer = receive(minimum_ts, blocking);
+        std::optional<BufferShim> buffer = receive(minimum_ts, blocking);
         if (!buffer)
         {
             return "";
@@ -286,7 +335,7 @@ static auto consumer_stream(const std::string &stream_name,
     {
         return ConsumerStreamShim(
             c,
-            std::shared_ptr<Stream>(stream, [c](Stream *stream) { /* mx_unsubscribe(c.get(), stream); */ }),
+            std::shared_ptr<Stream>(stream, [c](Stream *stream) { mx_unsubscribe(c.get(), stream); }),
             wrapped_evt,
             polling_interval);
     }
@@ -317,6 +366,8 @@ PYBIND11_MODULE(_mx, m)
 
     py::class_<ReadBufferShim, std::shared_ptr<ReadBufferShim>>(m, "ReadBuffer", py::buffer_protocol())
         .def_buffer(&ReadBufferShim::read_buffer_info)
+        .def("__getitem__", &ReadBufferShim::get_byte, "index"_a)
+        .def("__getitem__", &ReadBufferShim::get_bytes, "slice"_a)
         .def_property_readonly("buffer_id", &ReadBufferShim::buffer_id)
         .def_property_readonly("buffer_size", &ReadBufferShim::buffer_size)
         .def_property_readonly("buffer_count", &ReadBufferShim::buffer_count)
@@ -327,6 +378,10 @@ PYBIND11_MODULE(_mx, m)
     py::class_<WriteBufferShim, std::shared_ptr<WriteBufferShim>>(m, "WriteBuffer", py::buffer_protocol())
         .def_buffer(&WriteBufferShim::write_buffer_info)
         .def("send", &WriteBufferShim::send, "data_size"_a)
+        .def("__getitem__", &WriteBufferShim::get_byte, "index"_a)
+        .def("__getitem__", &WriteBufferShim::get_bytes, "slice"_a)
+        .def("__setitem__", &WriteBufferShim::set_byte, "index"_a, "value"_a)
+        .def("__setitem__", &WriteBufferShim::set_bytes, "slice"_a, "value"_a)
         .def_property_readonly("buffer_id", &WriteBufferShim::buffer_id)
         .def_property_readonly("buffer_size", &WriteBufferShim::buffer_size)
         .def_property_readonly("buffer_count", &WriteBufferShim::buffer_count)
