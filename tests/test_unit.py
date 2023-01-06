@@ -7,6 +7,8 @@ from typing import Iterator
 import contextlib
 import pytest 
 
+from mmap import PAGESIZE
+
 _EXPECTED_BYTES = 10589  # arbitrary
 
 _STREAM_NAME = b"mx://test_echo_mx_stream"
@@ -155,6 +157,21 @@ def test_stream_unavailable_exception() -> None:
     with pytest.raises(mx.StreamUnavailable):
         mx.Consumer('__nonexistent__')
     
+def test_string_overflow_exception() -> None:
+    import momentumx as mx
+    
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    with pytest.raises(mx.DataOverflow):
+        producer.send_string('x' * (PAGESIZE + 1))
+
+
+def test_buffer_overflow_exception() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    buffer = producer.next_to_send()
+    with pytest.raises(mx.DataOverflow):
+        buffer.send(PAGESIZE + 1)
 
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess

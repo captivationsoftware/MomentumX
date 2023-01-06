@@ -34,6 +34,13 @@ struct StreamUnavailableException : public std::exception {
     }
 };
 
+struct DataOverflowException : public std::exception {
+    const char *what() const noexcept override
+    {
+        return "Data size exceeds allocated buffer size";
+    }
+};
+
 struct ThreadingEventWrapper
 {
     py::object evt;
@@ -89,6 +96,11 @@ struct BufferStateShim
 
     auto send(size_t data_size) -> bool
     {
+        if (data_size > this->buffer_size()) 
+        {
+            throw DataOverflowException();
+        }
+
         BufferState *copy = new BufferState(*buffer_state); // mx_stream_send takes ownership and deletes
         copy->data_size = data_size;
         return mx_stream_send(ctx.get(), stream.get(), copy);
@@ -204,11 +216,6 @@ struct StreamShim
             return false;
         }
 
-        if (str.size() > buffer->buffer_state->buffer_size)
-        {
-            throw std::runtime_error("Cannot send string: larger than buffer");
-        }
-
         const size_t str_size = str.size();
         const size_t buf_size = buffer->buffer_state->buffer_size;
         char *data = reinterpret_cast<char *>(buffer->data());
@@ -292,13 +299,14 @@ inline void set_log_level(LogLevel level) { return Logger::get_logger().set_leve
 
 PYBIND11_MODULE(_mx, m)
 {
+    py::register_exception<DataOverflowException>(m, "DataOverflow", PyExc_RuntimeError);
+    py::register_exception<StreamUnavailableException>(m, "StreamUnavailable", PyExc_RuntimeError);
+
     py::enum_<LogLevel>(m, "LogLevel")
         .value("DEBUG", LogLevel::DEBUG)
         .value("INFO", LogLevel::INFO)
         .value("WARNING", LogLevel::WARNING)
         .value("ERROR", LogLevel::ERROR);
-
-    py::register_exception<StreamUnavailableException>(m, "StreamUnavailable", PyExc_RuntimeError);
 
     m.def("get_log_level", &get_log_level);
     m.def("set_log_level", &set_log_level, "level"_a);
