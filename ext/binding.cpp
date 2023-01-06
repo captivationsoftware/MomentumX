@@ -18,7 +18,6 @@ using namespace py::literals; // provides `_a` literal for parameter names
 using BufferState = MomentumX::Stream::BufferState;
 using Logger = MomentumX::Utils::Logger;
 using LogLevel = Logger::Level;
-using MomentumX::Buffer;
 using MomentumX::Context;
 using MomentumX::Stream;
 
@@ -28,53 +27,6 @@ struct ReadBufferShim;
 struct StreamShim;
 struct WriteBufferShim;
 
-template <typename T>
-class ReusableStack
-{
-public:
-    void emplace(std::unique_ptr<T> &&ptr)
-    {
-        _ctx->holder.emplace_back(std::move(ptr));
-        _ctx->avail.push_back(ptr.get());
-        _ctx->cv.notify_one();
-    }
-
-    bool checkout(std::shared_ptr<T> &out)
-    {
-        auto ctx = _ctx; // copy to maintain ownership throughout checkout
-        std::unique_lock<std::mutex> lock(ctx->m);
-
-        if (ctx->holder.empty())
-        {
-            return false;
-        }
-
-        ctx->cv.wait(lock, [&ctx]
-                     { return !ctx->avail.empty(); });
-
-        auto checkin_deleter = [ctx](T *t)
-        {
-            std::unique_lock<std::mutex> lock(ctx->m);
-            ctx->avail.push(t);
-            ctx->cv.notify_one();
-        };
-
-        out = std::shared_ptr<T>(ctx->avail.top(), checkin_deleter);
-        ctx->avail.pop();
-        return true;
-    }
-
-private:
-    struct Context
-    {
-        std::mutex m;
-        std::condition_variable cv;
-        std::list<std::unique_ptr<T>> holder;
-        std::stack<T *> avail;
-    };
-
-    std::shared_ptr<Context> _ctx{std::make_shared<Context>()};
-};
 
 struct ThreadingEventWrapper
 {
@@ -312,25 +264,21 @@ static auto consumer_stream(const std::string &stream_name,
                             const py::object &evt,
                             double polling_interval) -> ConsumerStreamShim
 {
-    namespace sc = std::chrono;
     py::gil_scoped_release nogil; // release gil since the constructor blocks
 
     auto c = Context::scoped_consumer_singleton();
     auto wrapped_evt = ThreadingEventWrapper(evt);
     Stream *stream = nullptr;
 
-    do
+    stream = mx_subscribe(c.get(), stream_name.c_str());
+    if (stream)
     {
-        stream = mx_subscribe(c.get(), stream_name.c_str());
-        if (stream)
-        {
-            return ConsumerStreamShim(
-                c,
-                std::shared_ptr<Stream>(stream, [c](Stream *stream) { /* mx_unsubscribe(c.get(), stream); */ }),
-                wrapped_evt,
-                polling_interval);
-        }
-    } while (!wrapped_evt.wait(0.1));
+        return ConsumerStreamShim(
+            c,
+            std::shared_ptr<Stream>(stream, [c](Stream *stream) { /* mx_unsubscribe(c.get(), stream); */ }),
+            wrapped_evt,
+            polling_interval);
+    }
 
     throw std::runtime_error("Unable to create consumer stream: subscription timed out");
 }

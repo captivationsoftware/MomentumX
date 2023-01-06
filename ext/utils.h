@@ -1,6 +1,7 @@
 #ifndef MOMENTUMX_UTILS_H
 #define MOMENTUMX_UTILS_H
 
+#include <cstring>
 #include <string>
 #include <chrono>
 #include <cmath>
