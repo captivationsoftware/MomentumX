@@ -6,7 +6,7 @@ docker_build_args = --rm \
 auditwheel_args = --plat manylinux2014_x86_64
 
 .PHONY: all
-all: test
+all: install
 
 .PHONY: clean
 clean:
@@ -41,5 +41,5 @@ install:
 	@(python3 -m pip install .[test] --use-feature=in-tree-build --no-build-isolation -v) || (python3 -m pip install .[test] --no-build-isolation -v)
 
 .PHONY: test
-test: install
+test:
 	@python3 -m pytest tests -s

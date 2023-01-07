@@ -173,6 +173,62 @@ def test_buffer_overflow_exception() -> None:
     with pytest.raises(mx.DataOverflow):
         buffer.send(PAGESIZE + 1)
 
+def test_buffer_seek_tell_write_truncate_producer() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    buffer = producer.next_to_send()
+    assert buffer.tell() == 0
+
+    buffer.seek(5)
+    assert buffer.tell() == 5
+
+    assert buffer.data_size == 0
+    buffer.truncate()
+    assert buffer.data_size == 5
+
+    buffer.write(b'foo')
+    assert buffer.data_size == 8
+    assert buffer.tell() == 8
+    assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00foo'
+    assert buffer[:] == b'\x00\x00\x00\x00\x00foo'
+
+    buffer.truncate(6)
+    assert buffer.data_size == 6
+    assert buffer.tell() == 6
+    assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00f'
+
+
+    del producer
+
+
+def test_single_getitem_setitem_producer() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    buffer = producer.next_to_send()
+    buffer[0] = b'a' # set
+    assert buffer[0] == b'a'
+    del producer
+
+def test_slice_getitem_setitem_producer() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    buffer = producer.next_to_send()
+    buffer[0:3] = b'abc' 
+    assert buffer[0:3] == b'abc'
+    del producer
+
+def test_empty_slice_matches_buffer_length_producer() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    buffer = producer.next_to_send()
+    assert len(buffer[:]) == buffer.buffer_size
+
+    del producer
+
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess
     import numpy as np
