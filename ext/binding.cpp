@@ -83,9 +83,6 @@ struct BufferShim
         : ctx(ctx), stream(stream), buffer_state(buffer_state) {}
     ~BufferShim() = default;
 
-    const uint8_t *data() const { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
-    uint8_t *data() { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); } 
-
     const uint8_t get_byte(size_t index) const {
         if (index >= buffer_size()) {
             throw std::out_of_range("Index exceeds allocated buffer size");
@@ -135,6 +132,7 @@ struct BufferShim
     
     uint16_t buffer_id() const { return buffer_state->buffer_id; }
     size_t buffer_size() const { return buffer_state->buffer_size; }
+    uint8_t *data() const { return buffer_state->buffer_address; }
     size_t buffer_count() const { return buffer_state->buffer_count; }
     size_t data_size() const { return buffer_state->data_size; }
     uint64_t data_timestamp() const { return buffer_state->data_timestamp; }
@@ -269,6 +267,11 @@ struct StreamShim
         const size_t buf_size = buffer->buffer_state->buffer_size;
         char *data = reinterpret_cast<char *>(buffer->data());
 
+        if (str_size > buf_size) 
+        {
+            throw DataOverflowException();
+        }
+
         std::copy(str.begin(), str.end(), data);
         return buffer->send(str_size);
     }
@@ -335,7 +338,7 @@ static auto consumer_stream(const std::string &stream_name,
     {
         return ConsumerStreamShim(
             c,
-            std::shared_ptr<Stream>(stream, [c](Stream *stream) { mx_unsubscribe(c.get(), stream); }),
+            std::shared_ptr<Stream>(stream, [c](Stream *stream) { /*mx_unsubscribe(c.get(), stream);*/ }),
             wrapped_evt,
             polling_interval);
     }

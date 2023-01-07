@@ -128,13 +128,3 @@ bool mx_stream_release(MomentumX::Context* ctx, MomentumX::Stream* stream, Momen
 bool mx_is_stream_sync(MomentumX::Context* ctx, MomentumX::Stream* stream) {
     return stream->sync();
 }
-
-
-uint8_t* mx_data_address(MomentumX::Context* ctx, MomentumX::Stream* stream, uint16_t buffer_id) {
-    try {
-        return ctx->data_address(stream, buffer_id);
-    } catch (std::exception& ex) {
-        MomentumX::Utils::Logger::get_logger().error(ex.what());
-        return NULL;
-    }
-}
