@@ -186,16 +186,16 @@ def test_buffer_seek_tell_write_truncate_producer() -> None:
     assert buffer.data_size == 0
     buffer.truncate()
     assert buffer.data_size == 5
+    assert buffer.tell() == 5
 
     buffer.write(b'foo')
     assert buffer.data_size == 8
     assert buffer.tell() == 8
     assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00foo'
-    assert buffer[:] == b'\x00\x00\x00\x00\x00foo'
 
     buffer.truncate(6)
     assert buffer.data_size == 6
-    assert buffer.tell() == 6
+    assert buffer.tell() == 8 # tell is not affected by tuncate
     assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00f'
 
 

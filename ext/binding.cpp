@@ -98,14 +98,13 @@ struct BufferShim
             throw py::error_already_set();
         }
 
-        char *data_pointer = reinterpret_cast<char *>(data());
-        std::string result;
+        std::string bytes;
         for (size_t i = start; i < stop; i += step) 
         {
-            result.append(std::string(data_pointer + i * sizeof(char), 1));
-            std::cout << result << std::endl;
+            bytes.append(std::string(reinterpret_cast<char*>(data()) + i * sizeof(char), 1));
         }
-        return py::bytes(result);
+
+        return py::bytes(bytes);
     } 
 
     void set_byte(size_t index, const py::bytes value)
@@ -134,13 +133,11 @@ struct BufferShim
             throw std::out_of_range("Index exceeds allocated buffer size");
         }
     
-        std::cout << "Value size is " << value_size << std::endl;
-        uint8_t *data_pointer = data();
+        uint8_t *data_pointer = data() + write_index * sizeof(uint8_t);
         py::buffer_info info(py::buffer(value).request());
         for (size_t i = 0; i < value_size; i++) {
             *(data_pointer + i * sizeof(uint8_t)) = *(reinterpret_cast<uint8_t *>(info.ptr) + i * sizeof(uint8_t));
         }
-        std::cout << "setting write index from " << write_index << " to " << write_index + value_size << std::endl;
 
         write_index += value_size;
         if (write_index > max_write_index) {
@@ -156,7 +153,6 @@ struct BufferShim
         if (index >= buffer_size()) {
             throw std::out_of_range("Index exceeds allocated buffer size");
         }
-        std::cout << "Seeking to " << index << std::endl;
         write_index = index;
         return index;
     }
@@ -164,7 +160,6 @@ struct BufferShim
     const size_t truncate_to_current() {
         max_write_index = tell();
 
-        std::cout << "Truncated to " << max_write_index << std::endl;
         return max_write_index;
     }
 
@@ -173,7 +168,6 @@ struct BufferShim
             throw std::out_of_range("Index exceeds allocated buffer size");
         }
         max_write_index = index;
-        std::cout << "Truncated to " << max_write_index << std::endl;
         return max_write_index;
     }
 
@@ -188,6 +182,14 @@ struct BufferShim
     py::buffer_info read_buffer_info() const { return py::buffer_info(data(), data_size()); }
     py::buffer_info write_buffer_info() { return py::buffer_info(data(), buffer_size(), false); }
 
+    auto send_from_current() -> bool
+    {
+        BufferState *copy = new BufferState(*buffer_state); // mx_stream_send takes ownership and deletes
+        copy->data_size = max_write_index;
+        return mx_stream_send(ctx.get(), stream.get(), copy);
+    }
+
+
     auto send(size_t data_size = 0) -> bool
     {
         if (data_size > this->buffer_size()) 
@@ -195,10 +197,8 @@ struct BufferShim
             throw DataOverflowException();
         }
 
-        size_t send_data_size = data_size || this->data_size();
-
         BufferState *copy = new BufferState(*buffer_state); // mx_stream_send takes ownership and deletes
-        copy->data_size = send_data_size;
+        copy->data_size = data_size;
         return mx_stream_send(ctx.get(), stream.get(), copy);
     }
 };
@@ -429,7 +429,6 @@ PYBIND11_MODULE(_mx, m)
 
     py::class_<WriteBufferShim, std::shared_ptr<WriteBufferShim>>(m, "WriteBuffer", py::buffer_protocol())
         .def_buffer(&WriteBufferShim::write_buffer_info)
-        .def("send", &WriteBufferShim::send, "data_size"_a)
         .def("__getitem__", &WriteBufferShim::get_byte, "index"_a)
         .def("__getitem__", &WriteBufferShim::get_bytes, "slice"_a)
         .def("__setitem__", &WriteBufferShim::set_byte, "index"_a, "value"_a)
@@ -439,6 +438,8 @@ PYBIND11_MODULE(_mx, m)
         .def("tell", &WriteBufferShim::tell)
         .def("truncate", &WriteBufferShim::truncate_to_current)
         .def("truncate", &WriteBufferShim::truncate, "index"_a)
+        .def("send", &WriteBufferShim::send, "data_size"_a)
+        .def("send", &WriteBufferShim::send_from_current)
         .def_property_readonly("buffer_id", &WriteBufferShim::buffer_id)
         .def_property_readonly("buffer_size", &WriteBufferShim::buffer_size)
         .def_property_readonly("buffer_count", &WriteBufferShim::buffer_count)
