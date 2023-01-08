@@ -28,6 +28,7 @@ extern "C" {
     void mx_stream_flush(MomentumX::Context* ctx, MomentumX::Stream* stream);
     bool mx_stream_release(MomentumX::Context* ctx, MomentumX::Stream* stream, MomentumX::Stream::BufferState* buffer_state);
     bool mx_is_stream_sync(MomentumX::Context* ctx, MomentumX::Stream* stream);
+    uint8_t* mx_data_address(MomentumX::Context* ctx, MomentumX::Stream* stream, uint16_t buffer_id);
 }
 
 

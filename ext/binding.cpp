@@ -84,11 +84,14 @@ struct BufferShim
         : ctx(ctx), stream(stream), buffer_state(buffer_state), write_index(0), max_write_index(0) {}
     ~BufferShim() = default;
 
-    const py::bytes get_byte(size_t index) const {
+    const uint8_t *data() const { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
+    uint8_t *data() { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); } 
+
+    py::bytes get_byte(size_t index) const {
         if (index >= buffer_size()) {
             throw std::out_of_range("Index exceeds allocated buffer size");
         }
-        return reinterpret_cast<char *>(data() + index * sizeof(char));
+        return reinterpret_cast<const char *>(data() + index * sizeof(char));
     } 
 
     py::bytes get_bytes(py::slice slice) const {
@@ -101,10 +104,10 @@ struct BufferShim
         std::string bytes;
         for (size_t i = start; i < stop; i += step) 
         {
-            bytes.append(std::string(reinterpret_cast<char*>(data()) + i * sizeof(char), 1));
+            bytes.append(std::string(reinterpret_cast<const char*>(data()) + i * sizeof(char), 1));
         }
 
-        return py::bytes(bytes);
+        return bytes;
     } 
 
     void set_byte(size_t index, const py::bytes value)
@@ -173,7 +176,6 @@ struct BufferShim
 
     uint16_t buffer_id() const { return buffer_state->buffer_id; }
     size_t buffer_size() const { return buffer_state->buffer_size; }
-    uint8_t *data() const { return buffer_state->buffer_address; }
     size_t buffer_count() const { return buffer_state->buffer_count; }
     size_t data_size() const { return max_write_index > buffer_state->data_size ? max_write_index : buffer_state->data_size; }
     uint64_t data_timestamp() const { return buffer_state->data_timestamp; }
@@ -312,17 +314,14 @@ struct StreamShim
             return false;
         }
 
-        const size_t str_size = str.size();
-        const size_t buf_size = buffer->buffer_state->buffer_size;
-        char *data = reinterpret_cast<char *>(buffer->data());
-
-        if (str_size > buf_size) 
+        if (str.size() > this->buffer_size()) 
         {
             throw DataOverflowException();
         }
 
+        char *data = reinterpret_cast<char *>(buffer->data());
         std::copy(str.begin(), str.end(), data);
-        return buffer->send(str_size);
+        return buffer->send(str.size());
     }
 
     auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string

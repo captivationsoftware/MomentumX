@@ -169,6 +169,15 @@ namespace MomentumX
             _stream_manager.release_buffer_state(stream, buffer_state);
         }
 
+        uint8_t *data_address(Stream *stream, uint16_t buffer_id) {
+            Buffer *buffer = _buffer_manager.find(stream->name(), buffer_id);
+            if (buffer != NULL) {
+                return buffer->address();
+            }
+
+            return NULL;
+        }
+
         size_t subscriber_count(Stream *stream) {
             return _stream_manager.subscriber_count(stream);
         }
