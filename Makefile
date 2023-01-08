@@ -42,4 +42,4 @@ install:
 
 .PHONY: test
 test:
-	@python3 -m pytest tests -s
+	@python3 -m pytest tests 

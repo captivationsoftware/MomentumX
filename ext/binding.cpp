@@ -43,6 +43,13 @@ struct DataOverflowException : public std::exception {
     }
 };
 
+struct AlreadySentException : public std::exception {
+    const char *what() const noexcept override
+    {
+        return "Buffer has already been sent and can no longer be modified and/or sent again";
+    }
+};
+
 struct ThreadingEventWrapper
 {
     py::object evt;
@@ -77,11 +84,12 @@ struct BufferShim
     std::shared_ptr<Stream> stream{nullptr};
     std::shared_ptr<BufferState> buffer_state{nullptr};
     size_t write_index, max_write_index;
+    bool is_sent;
 
     BufferShim(const std::shared_ptr<Context> &ctx,
                     const std::shared_ptr<Stream> &stream,
                     const std::shared_ptr<BufferState> &buffer_state)
-        : ctx(ctx), stream(stream), buffer_state(buffer_state), write_index(0), max_write_index(0) {}
+        : ctx(ctx), stream(stream), buffer_state(buffer_state), write_index(0), max_write_index(0), is_sent(false) {}
     ~BufferShim() = default;
 
     const uint8_t *data() const { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
@@ -89,7 +97,7 @@ struct BufferShim
 
     py::bytes get_byte(size_t index) const {
         if (index >= buffer_size()) {
-            throw std::out_of_range("Index exceeds allocated buffer size");
+            throw DataOverflowException();
         }
         return reinterpret_cast<const char *>(data() + index * sizeof(char));
     } 
@@ -131,9 +139,14 @@ struct BufferShim
     }
 
     void write(const py::bytes &value) {
+        if (is_sent) 
+        {
+            throw AlreadySentException();
+        }
+
         size_t value_size = py::len(value);
         if (write_index + value_size > buffer_size()) {
-            throw std::out_of_range("Index exceeds allocated buffer size");
+            throw DataOverflowException();
         }
     
         uint8_t *data_pointer = data() + write_index * sizeof(uint8_t);
@@ -154,7 +167,7 @@ struct BufferShim
 
     const size_t seek(const size_t &index) {
         if (index >= buffer_size()) {
-            throw std::out_of_range("Index exceeds allocated buffer size");
+            throw DataOverflowException();
         }
         write_index = index;
         return index;
@@ -168,7 +181,7 @@ struct BufferShim
 
     const size_t truncate(const size_t &index) {
         if (index >= buffer_size()) {
-            throw std::out_of_range("Index exceeds allocated buffer size");
+            throw DataOverflowException();
         }
         max_write_index = index;
         return max_write_index;
@@ -186,22 +199,21 @@ struct BufferShim
 
     auto send_from_current() -> bool
     {
-        BufferState *copy = new BufferState(*buffer_state); // mx_stream_send takes ownership and deletes
-        copy->data_size = max_write_index;
-        return mx_stream_send(ctx.get(), stream.get(), copy);
-    }
-
-
-    auto send(size_t data_size = 0) -> bool
-    {
-        if (data_size > this->buffer_size()) 
+        if (is_sent) 
         {
-            throw DataOverflowException();
+            throw AlreadySentException();
         }
 
         BufferState *copy = new BufferState(*buffer_state); // mx_stream_send takes ownership and deletes
-        copy->data_size = data_size;
-        return mx_stream_send(ctx.get(), stream.get(), copy);
+        copy->data_size = max_write_index;
+        is_sent = mx_stream_send(ctx.get(), stream.get(), copy);
+        return is_sent;
+    }
+
+    auto send(size_t data_size) -> bool
+    {
+        truncate(data_size);
+        return send_from_current();
     }
 };
 
@@ -399,8 +411,9 @@ inline void set_log_level(LogLevel level) { return Logger::get_logger().set_leve
 
 PYBIND11_MODULE(_mx, m)
 {
-    py::register_exception<DataOverflowException>(m, "DataOverflow", PyExc_RuntimeError);
+    py::register_exception<DataOverflowException>(m, "DataOverflow", PyExc_IndexError);
     py::register_exception<StreamUnavailableException>(m, "StreamUnavailable", PyExc_RuntimeError);
+    py::register_exception<AlreadySentException>(m, "AlreadySent", PyExc_RuntimeError);
 
     py::enum_<LogLevel>(m, "LogLevel")
         .value("DEBUG", LogLevel::DEBUG)

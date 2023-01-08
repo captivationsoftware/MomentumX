@@ -229,6 +229,32 @@ def test_empty_slice_matches_buffer_length_producer() -> None:
 
     del producer
 
+def test_exception_on_double_send() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+
+    buffer = producer.next_to_send()
+    buffer.send(1)
+
+    with pytest.raises(mx.AlreadySent):
+        buffer.send()
+
+def test_exception_on_write_after_send() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+
+    buffer = producer.next_to_send()
+    buffer.send(1)
+
+    with pytest.raises(mx.AlreadySent):
+        buffer.write(b'foo')
+
+    with pytest.raises(mx.AlreadySent):
+        buffer[0:2] = b'foo' 
+
+
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess
     import numpy as np
