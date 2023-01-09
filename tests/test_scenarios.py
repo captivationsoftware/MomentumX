@@ -254,6 +254,14 @@ def test_exception_on_write_after_send() -> None:
     with pytest.raises(mx.AlreadySent):
         buffer[0:2] = b'foo' 
 
+def test_less_than_page_size() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, 1, 1, False)
+
+    buffer = producer.next_to_send()
+    assert buffer.buffer_size == 1
+
 
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess

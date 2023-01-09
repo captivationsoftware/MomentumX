@@ -152,7 +152,7 @@ namespace MomentumX {
                         throw std::runtime_error("Failed to mmap shared memory file [errno: " + std::to_string(errno) + "]");
                     } else {
                         _address = address;
-                        _size = size_required;
+                        _size = size;
                     }
                 }
             }

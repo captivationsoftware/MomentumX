@@ -24,7 +24,7 @@ package_wheel_%:
 package_wheels: package_wheel_cp36-cp36m package_wheel_cp37-cp37m package_wheel_cp38-cp38 package_wheel_cp39-cp39 package_wheel_cp310-cp310 package_wheel_cp311-cp311
 
 .PHONY: package
-package: test package_wheels
+package: test clean package_wheels
 	@for WHEEL in dist/*.whl; do \
 		docker run $(docker_build_args) auditwheel repair $(auditwheel_args) /io/$$WHEEL -w /io/dist; \
 		rm -fv $$WHEEL; \
