@@ -108,7 +108,7 @@ namespace MomentumX {
 
                 if (_role == PRODUCER) {
                     // initialize to 0s
-                    memset(_data, 0, size_required);
+                    std::memset(_data, 0, size_required);
                     
                     this->buffer_size(buffer_size);
                     this->buffer_count(buffer_count);
@@ -655,6 +655,11 @@ namespace MomentumX {
                         if (next_buffer != NULL) {
                             std::lock_guard<std::mutex> lock(_mutex);
                             _current_buffer_by_stream[stream] = next_buffer;
+
+                            // 0 out the buffer before making it available for re-use
+                            std::memset(next_buffer->address(), 0, next_buffer->size());
+
+                            // create a new buffer state pointer and break out to the caller
                             buffer_state = new Stream::BufferState(
                                 next_buffer->id(),
                                 next_buffer->size(),
