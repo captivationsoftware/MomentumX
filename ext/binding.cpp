@@ -16,6 +16,7 @@
 
 namespace py = pybind11;
 using namespace py::literals; // provides `_a` literal for parameter names
+using namespace std::string_literals;
 
 using BufferState = MomentumX::Stream::BufferState;
 using Logger = MomentumX::Utils::Logger;
@@ -145,18 +146,21 @@ struct BufferShim
         }
 
         size_t value_size = py::len(value);
-        if (write_index + value_size > buffer_size()) {
+        if (write_index + value_size > buffer_size()) 
+        {
             throw DataOverflowException();
         }
-    
+
         uint8_t *data_pointer = data() + write_index * sizeof(uint8_t);
         py::buffer_info info(py::buffer(value).request());
-        for (size_t i = 0; i < value_size; i++) {
+        for (size_t i = 0; i < value_size; i++) 
+        {
             *(data_pointer + i * sizeof(uint8_t)) = *(reinterpret_cast<uint8_t *>(info.ptr) + i * sizeof(uint8_t));
         }
 
         write_index += value_size;
-        if (write_index > max_write_index) {
+        if (write_index > max_write_index) 
+        {
             max_write_index = write_index;
         }
     }   
@@ -166,16 +170,16 @@ struct BufferShim
     }
 
     const size_t seek(const size_t &index) {
-        if (index >= buffer_size()) {
-            throw DataOverflowException();
-        }
         write_index = index;
-        return index;
+        return tell();
     }
     
     const size_t truncate_to_current() {
-        max_write_index = tell();
-
+        size_t current = tell();
+        for (size_t i = write_index; i < max_write_index; i++) {
+            write("\x00"s);
+        }
+        max_write_index = current;
         return max_write_index;
     }
 
@@ -183,8 +187,11 @@ struct BufferShim
         if (index >= buffer_size()) {
             throw DataOverflowException();
         }
-        max_write_index = index;
-        return max_write_index;
+        size_t current = tell();
+        seek(index);
+        size_t return_val = truncate_to_current();
+        seek(current);
+        return return_val;
     }
 
     uint16_t buffer_id() const { return buffer_state->buffer_id; }
@@ -375,6 +382,7 @@ static ProducerStreamShim producer_stream(const std::string &stream_name,
 {
     auto c = Context::scoped_producer_singleton();
     auto wrapped_evt = ThreadingEventWrapper(evt);
+
     ProducerStreamShim shim(
         c,
         std::shared_ptr<Stream>(mx_stream(c.get(), stream_name.c_str(), buffer_size, buffer_count, sync), [c](Stream *stream) { /* cleaned up via Context destructor */ }),

@@ -14,7 +14,6 @@ _EXPECTED_BYTES = 10589  # arbitrary
 _STREAM_NAME = b"mx://test_echo_mx_stream"
 _DEVSHM_NAME = "/dev/shm/mx.test_echo_mx_stream"
 
-
 @contextlib.contextmanager
 def timeout_event(timeout: float = 5.0) -> Iterator[threading.Event]:
     def sleep_then_trigger(inner_evt: threading.Event, inner_timeout: float):
@@ -198,7 +197,6 @@ def test_buffer_seek_tell_write_truncate_producer() -> None:
     assert buffer.tell() == 8 # tell is not affected by tuncate
     assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00f'
 
-
     del producer
 
 
@@ -278,6 +276,45 @@ def test_buffer_is_fresh_after_cycling() -> None:
         assert buffer[0] == test_bytes
         buffer.send()
 
+def test_overwrite_region_after_truncate() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, 3, 1, False)
+
+    buffer = producer.next_to_send()
+    buffer.write(b'123')
+    assert buffer[:] == b'123'
+
+    buffer.truncate(2)
+    assert buffer[:] == b'12\x00'
+
+    del buffer
+    del producer
+
+def test_truncate_to_buffer_size() -> None:
+    import momentumx as mx
+
+    size = 2
+    producer = mx.Producer(_STREAM_NAME, size, 1, False)
+
+    buffer = producer.next_to_send()
+    buffer.seek(size)
+    buffer.truncate()
+    assert buffer.data_size == buffer.buffer_size
+
+def test_write_to_buffer_size() -> None:
+    import momentumx as mx
+
+    size = 5
+    producer = mx.Producer(_STREAM_NAME, size, 1, False)
+
+    buffer = producer.next_to_send()
+    
+    for i in range(0, size):
+        buffer.write(b'\xff')
+
+    assert size == buffer.data_size == buffer.buffer_size
+    assert buffer[:] == b'\xff' * size
 
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess
