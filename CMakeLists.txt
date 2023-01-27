@@ -27,10 +27,13 @@ find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(_mx MODULE
     ext/binding.cpp
+    ext/buffer.cpp
     ext/buffer.h
+    ext/context.cpp
     ext/context.h
     ext/momentumx.cpp
     ext/momentumx.h
+    ext/stream.cpp
     ext/stream.h
     ext/utils.h
 )
