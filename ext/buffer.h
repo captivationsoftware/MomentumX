@@ -46,7 +46,6 @@ namespace MomentumX {
         uint8_t* _address;
 
         void resize_remap(size_t size);
-        static std::string path(const std::string& stream, uint16_t id = 0);
     };
 
     class BufferManager {

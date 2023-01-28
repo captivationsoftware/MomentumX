@@ -133,11 +133,6 @@ namespace MomentumX {
                 }
             }
 
-            std::string Buffer::path(const std::string& stream, uint16_t id) {
-                // Build the path to the underlying shm file s
-                return std::string("mx.") + stream + ".buffer." + std::to_string(id);
-            }
-
             BufferManager::BufferManager() {}
 
             BufferManager::~BufferManager() {
