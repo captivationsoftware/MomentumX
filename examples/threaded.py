@@ -8,7 +8,7 @@ STREAM = "mx://threaded"
 
 def consumer(cancel: threading.Event):
     time.sleep(1)
-    stream = mx.Consumer(STREAM, cancel)
+    stream = mx.Consumer(STREAM, cancel, context='/tmp')
 
     while stream.is_alive and not cancel.is_set():
         string = stream.receive_string()
@@ -18,7 +18,7 @@ def consumer(cancel: threading.Event):
 
 
 def producer(cancel: threading.Event):
-    stream = mx.Producer(STREAM, 100, 10, True, cancel)
+    stream = mx.Producer(STREAM, 100, 10, True, cancel, context='/tmp')
     i = 0
     while i < 1000 and not cancel.is_set():
         if stream.send_string(str(i)):

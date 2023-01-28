@@ -4,7 +4,6 @@
 #include <errno.h>
 #include <sys/file.h>
 #include <sys/mman.h>
-#include <sys/shm.h>
 #include <cstring>
 #include <iostream>
 #include <list>
@@ -19,10 +18,9 @@ namespace MomentumX {
         static const uint16_t MAX_UINT16_T;
 
        public:
-        Buffer(std::string stream, uint16_t id, size_t size = 0, bool create = false);
+        Buffer(const Utils::PathConfig& paths, uint16_t id, size_t size = 0, bool create = false);
         ~Buffer();
         const uint16_t id();
-        const std::string& stream();
         size_t size();
         int fd();
         const uint64_t read_ts();
@@ -31,19 +29,24 @@ namespace MomentumX {
         const void write_ts(uint64_t ts);
         uint8_t* address();
 
+        Buffer(Buffer&&) = delete;
+        Buffer(const Buffer&) = delete;
+        Buffer& operator=(Buffer&&) = delete;
+        Buffer& operator=(const Buffer&) = delete;
+
        private:
         friend class BufferManager;
 
-        std::string _stream;
+        const Utils::PathConfig _paths;
+        const std::string _backing_filepath;
         uint16_t _id;
         size_t _size;
         bool _is_create;
         int _fd;
         uint8_t* _address;
 
-        int shm_allocate(uint16_t id, int flags);
         void resize_remap(size_t size);
-        std::string path(uint16_t id = 0);
+        static std::string path(const std::string& stream, uint16_t id = 0);
     };
 
     class BufferManager {
@@ -51,13 +54,13 @@ namespace MomentumX {
         BufferManager();
         ~BufferManager();
 
-        Buffer* allocate(std::string stream, uint16_t id, size_t size = 0, bool create = false);
+        Buffer* allocate(const Utils::PathConfig& paths, uint16_t id, size_t size = 0, bool create = false);
         void deallocate(Buffer* buffer);
-        void deallocate_stream(std::string stream);
-        Buffer* find(std::string stream, uint16_t id);
-        bool next_is_head(std::string stream);
-        Buffer* next(std::string stream);
-        Buffer* head_by_stream(std::string stream);
+        void deallocate_stream(const Utils::PathConfig& paths);
+        Buffer* find(const Utils::PathConfig& paths, uint16_t id);
+        bool next_is_head(const Utils::PathConfig& paths);
+        Buffer* next(const Utils::PathConfig& paths);
+        Buffer* head_by_stream(const Utils::PathConfig& paths);
 
        private:
         std::map<std::string, std::list<Buffer*>> _buffers_by_stream;

@@ -18,7 +18,8 @@
 
 namespace MomentumX {
 
-    Context::Context() : _terminated(false), _buffer_manager(), _stream_manager(this, &_buffer_manager) {
+    Context::Context(const std::string& context_path)
+        : _terminated(false), _context_path(context_path), _buffer_manager(), _stream_manager(this, &_buffer_manager) {
         Utils::Logger::get_logger().info(std::string("Created Context (" + std::to_string((uint64_t)this) + ")"));
     };
 
@@ -32,7 +33,7 @@ namespace MomentumX {
         if (_terminated)
             return;
 
-        for (auto const& stream : _subscriptions) {
+        for (Stream* stream : _subscriptions) {
             _stream_manager.unsubscribe(stream);
         }
 
@@ -147,7 +148,7 @@ namespace MomentumX {
     }
 
     uint8_t* Context::data_address(Stream* stream, uint16_t buffer_id) {
-        Buffer* buffer = _buffer_manager.find(stream->name(), buffer_id);
+        Buffer* buffer = _buffer_manager.find(stream->paths(), buffer_id);
         if (buffer != NULL) {
             return buffer->address();
         }
@@ -161,6 +162,10 @@ namespace MomentumX {
 
     void Context::log_level(Utils::Logger::Level level) {
         Utils::Logger::get_logger().set_level(level);
+    }
+
+    std::string Context::context_path() const {
+        return _context_path;
     }
 
 }  // namespace MomentumX

@@ -3,11 +3,11 @@
 #include <errno.h>
 #include <sys/file.h>
 #include <sys/mman.h>
-#include <sys/shm.h>
 #include <sys/stat.h>
 
 #include <condition_variable>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <list>
 #include <map>
@@ -16,15 +16,15 @@
 #include <tuple>
 
 #include "buffer.h"
+#include "context.h"
 #include "utils.h"
 
 namespace MomentumX {
 
-    Stream::Stream(std::string name, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role)
-        : _name(name),
+    Stream::Stream(const Utils::PathConfig& paths, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role)
+        : _paths(paths),
           _role(role),
-          _path("mx." + name),
-          _fd(shm_open(_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT : 0), S_IRWXU)),
+          _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT : 0), S_IRWXU)),
 
           _stream_data_size(sizeof(bool) + sizeof(size_t) + sizeof(size_t)),
           _buffer_state_size(512 * sizeof(BufferState)),
@@ -37,9 +37,9 @@ namespace MomentumX {
           _acknowledgements_offset(_subscribers_offset + _subscribers_size) {
         if (_fd < 0) {
             if (role == Role::CONSUMER) {
-                throw std::runtime_error("Failed to open shared memory stream file '" + name + "' [errno: " + std::to_string(errno) + "]");
+                throw std::runtime_error("Failed to open shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
             } else {
-                throw std::runtime_error("Failed to create shared memory stream file '" + name + "' [errno: " + std::to_string(errno) + "]");
+                throw std::runtime_error("Failed to create shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
             }
         }
 
@@ -75,7 +75,17 @@ namespace MomentumX {
             close(_fd);
 
             if (_role == Role::PRODUCER) {
-                shm_unlink(_path.c_str());
+                std::error_code ec;
+                std::filesystem::remove(_paths.stream_path, ec);
+                if (ec) {
+                    std::stringstream ss;
+                    ss << "Unable to delete context file \"" << _paths.stream_path << "\" with error: " << ec.message();
+                    Utils::Logger::get_logger().error(ss.str());
+                }
+
+                const auto code = ::remove(_paths.stream_name.c_str());
+                if (code) {
+                }
             }
         }
 
@@ -96,7 +106,11 @@ namespace MomentumX {
     }
 
     const std::string& Stream::name() {
-        return _name;
+        return _paths.stream_name;
+    }
+
+    Utils::PathConfig Stream::paths() {
+        return _paths;
     }
 
     int Stream::fd() {
@@ -391,7 +405,8 @@ namespace MomentumX {
             // if we already know about this stream, return it
             stream = _stream_by_name[name];
         } else {
-            stream = new Stream(name);
+            Utils::PathConfig paths(_context->context_path(), name);
+            stream = new Stream(paths);
             _stream_by_name[name] = stream;
         }
 
@@ -400,11 +415,13 @@ namespace MomentumX {
 
     Stream* StreamManager::create(std::string name, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role) {
         std::lock_guard<std::mutex> lock(_mutex);
-        Stream* stream = new Stream(name, buffer_size, buffer_count, sync, role);
+        const Utils::PathConfig paths(_context->context_path(), name);
+
+        Stream* stream = new Stream(paths, buffer_size, buffer_count, sync, role);
         _stream_by_name[name] = stream;
 
         for (size_t i = 1; i <= buffer_count; i++) {
-            Buffer* buffer = _buffer_manager->allocate(name, i, buffer_size, true);
+            Buffer* buffer = _buffer_manager->allocate(paths, i, buffer_size, true);
 
             Stream::BufferState* buffer_state = new Stream::BufferState(buffer->id(), buffer_size, buffer_count, 0, 0, 0);
 
@@ -463,7 +480,7 @@ namespace MomentumX {
         stream->add_subscriber(_context);
 
         for (auto const& buffer_state : stream->buffer_states()) {
-            _buffer_manager->allocate(name, buffer_state.buffer_id, stream->buffer_size());
+            _buffer_manager->allocate(stream->paths(), buffer_state.buffer_id, stream->buffer_size());
         }
 
         return stream;
@@ -474,7 +491,7 @@ namespace MomentumX {
         stream->remove_pending_acknowledgement(_context);
         stream->remove_subscriber(_context);
 
-        _buffer_manager->deallocate_stream(stream->name());
+        _buffer_manager->deallocate_stream(stream->paths());
     }
 
     Stream::BufferState* StreamManager::next_buffer_state(Stream* stream) {
@@ -493,7 +510,7 @@ namespace MomentumX {
 
         // attempt to get a lock (blocking if in sync mode)
         for (size_t _ = 0; _ < stream->buffer_count(); _++) {
-            next_buffer = _buffer_manager->next(stream->name());
+            next_buffer = _buffer_manager->next(stream->paths());
 
             if (next_buffer != current_buffer) {
                 if (stream->sync()) {
@@ -540,7 +557,7 @@ namespace MomentumX {
             Utils::Logger::get_logger().warning("Sending buffer state without having set data_size property");
         }
 
-        Buffer* buffer = _buffer_manager->find(stream->name(), buffer_state->buffer_id);
+        Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state->buffer_id);
 
         // update the buffer write timestamp
         if (buffer_state->data_timestamp == 0) {
@@ -583,7 +600,7 @@ namespace MomentumX {
                 }
             }
 
-            Buffer* buffer = _buffer_manager->find(stream->name(), buffer_state.buffer_id);
+            Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
             if (buffer == NULL) {
                 throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
             }
@@ -617,7 +634,7 @@ namespace MomentumX {
     }
 
     Stream::BufferState* StreamManager::get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
-        Buffer* buffer = _buffer_manager->find(stream->name(), buffer_id);
+        Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_id);
         if (buffer == NULL) {
             throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
         }
@@ -665,7 +682,7 @@ namespace MomentumX {
             stream->remove_pending_acknowledgement(_context);
         }
 
-        Buffer* buffer = _buffer_manager->find(stream->name(), buffer_state->buffer_id);
+        Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state->buffer_id);
         Utils::unlock(buffer->fd());
 
         delete buffer_state;

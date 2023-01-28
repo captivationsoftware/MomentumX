@@ -6,6 +6,7 @@ import threading
 from typing import Iterator
 import contextlib
 import pytest 
+from tempfile import TemporaryDirectory
 
 from mmap import PAGESIZE
 
@@ -358,6 +359,72 @@ def test_buffer_cleanup() -> None:
         del producer
         assert not os.path.exists(fname)
 
+
+def test_buffer_cleanup_tmp() -> None:
+    import momentumx as mx  # import in subprocess
+
+    with timeout_event() as event, TemporaryDirectory() as tdir:
+
+        shm_ctrl_fname = "/dev/shm/mx.test_echo_mx_stream"
+        shm_buff_fname = "/dev/shm/mx.test_echo_mx_stream.buffer.1"
+
+        tmp_ctrl_fname = f"{tdir}/mx.test_echo_mx_stream"
+        tmp_buff_fname = f"{tdir}/mx.test_echo_mx_stream.buffer.1"
+
+        # Verify buffer is created (in `/dev/shm`)
+        producer = mx.Producer(_STREAM_NAME, 300, 20, True, event)
+        assert os.path.exists(shm_ctrl_fname)  # default location
+        assert os.path.exists(shm_buff_fname)  # default location
+        assert not os.path.exists(tmp_ctrl_fname)
+        assert not os.path.exists(tmp_buff_fname)
+
+        # Verify shm buffers are destroyed (in `/dev/shm`)
+        del producer
+        assert not os.path.exists(shm_ctrl_fname)  # default location
+        assert not os.path.exists(shm_buff_fname)  # default location
+        assert not os.path.exists(tmp_ctrl_fname)
+        assert not os.path.exists(tmp_buff_fname)
+
+        # Verify buffer is created (in `/tmp`)
+        producer = mx.Producer(_STREAM_NAME, 300, 20, True, event, context=tdir)
+        assert not os.path.exists(shm_ctrl_fname)
+        assert not os.path.exists(shm_buff_fname)
+        assert os.path.exists(tmp_ctrl_fname)  # override location
+        assert os.path.exists(tmp_buff_fname)  # override location
+
+        # Verify shm buffers are destroyed (in `/tmp`)
+        del producer
+        assert not os.path.exists(shm_ctrl_fname)
+        assert not os.path.exists(shm_buff_fname)
+        assert not os.path.exists(tmp_ctrl_fname)  # override location
+        assert not os.path.exists(tmp_buff_fname)  # override location
+
+def test_buffer_cleanup_both()->None:
+    import momentumx as mx  # import in subprocess
+
+    with timeout_event() as event, TemporaryDirectory() as tdir:
+        shm_buff_fname = "/dev/shm/mx.test_echo_mx_stream.buffer.1"
+        tmp_buff_fname = f"{tdir}/mx.test_echo_mx_stream.buffer.1"
+
+        # `/dev/shm` only
+        shm_producer = mx.Producer(_STREAM_NAME, 300, 20, True, event)
+        assert os.path.exists(shm_buff_fname)  
+        assert not os.path.exists(tmp_buff_fname)
+
+        # `/dev/shm` and `/tmp`
+        tmp_producer =  mx.Producer(_STREAM_NAME, 300, 20, True, event, context=tdir)
+        assert os.path.exists(shm_buff_fname)
+        assert os.path.exists(tmp_buff_fname)  
+
+        # `/tmp` only
+        del shm_producer
+        assert not os.path.exists(shm_buff_fname)  # default location
+        assert os.path.exists(tmp_buff_fname)
+
+        # none
+        del tmp_producer
+        assert not os.path.exists(shm_buff_fname)
+        assert not os.path.exists(tmp_buff_fname)  # override location
 
 if __name__ == "__main__":
     test_buffer_cleanup()

@@ -16,7 +16,10 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     cmake_install_dir="src/momentumx",
-    cmake_args=["-DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=ON"],
+    cmake_args=[
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=ON",
+        "-DCMAKE_BUILD_TYPE:STRING=Release", # set to Debug to run interactive debugger
+    ],
     extras_require={"test": ["pytest", "numpy"]},
     python_requires=">=3.6",
     url="https://github.com/captivationsoftware/MomentumX",

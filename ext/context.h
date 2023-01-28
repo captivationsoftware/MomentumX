@@ -19,7 +19,7 @@ namespace MomentumX {
 
     class Context {
        public:
-        Context();
+        Context(const std::string& context_path);
         ~Context();
         void term();
         bool is_terminated();
@@ -38,27 +38,35 @@ namespace MomentumX {
         void log_level(Utils::Logger::Level level);
 
         template <Stream::Role TRole>
-        static std::shared_ptr<Context> scoped_singleton_impl() {
+        static std::shared_ptr<Context> scoped_singleton_impl(const std::string& context) {
             static std::mutex m;
             std::lock_guard<std::mutex> lock(m);
 
-            static std::weak_ptr<Context> as_weak;
+            static std::map<std::string, std::weak_ptr<Context>> as_weak_set;
+            std::weak_ptr<Context>& as_weak = as_weak_set[context];
             std::shared_ptr<Context> as_strong = as_weak.lock();
             if (!as_strong) {
-                as_strong = std::make_shared<Context>();
+                as_strong = std::make_shared<Context>(context);
                 as_weak = as_strong;
             }
 
             return as_strong;
         }
 
-        static std::shared_ptr<Context> scoped_producer_singleton() { return scoped_singleton_impl<Stream::Role::PRODUCER>(); }  // DRY hack
-        static std::shared_ptr<Context> scoped_consumer_singleton() { return scoped_singleton_impl<Stream::Role::CONSUMER>(); }  // DRY hack
+        static std::shared_ptr<Context> scoped_producer_singleton(const std::string& context) {
+            return scoped_singleton_impl<Stream::Role::PRODUCER>(context);  // DRY hack
+        }
+        static std::shared_ptr<Context> scoped_consumer_singleton(const std::string& context) {
+            return scoped_singleton_impl<Stream::Role::CONSUMER>(context);  // DRY hack
+        }
+
+        std::string context_path() const;
 
        private:
         friend class StreamManager;
 
         std::atomic<bool> _terminated;
+        std::string _context_path;
         BufferManager _buffer_manager;
         StreamManager _stream_manager;
         std::set<Stream*> _subscriptions;

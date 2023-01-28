@@ -1,7 +1,7 @@
 #include "momentumx.h"
 
 MomentumX::Context* mx_context() {
-    return new MomentumX::Context();
+    return new MomentumX::Context("/dev/shm");
 }
 
 void mx_log_level(MomentumX::Context* ctx, uint8_t log_level) {

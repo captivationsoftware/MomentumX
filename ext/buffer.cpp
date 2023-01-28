@@ -4,7 +4,6 @@
 #include <cstring>
 #include <list>
 #include <iostream>
-#include <sys/shm.h>
 #include <sys/mman.h>
 #include <sys/file.h>
 
@@ -15,18 +14,19 @@ namespace MomentumX {
 
     const uint16_t Buffer::MAX_UINT16_T = -1; // intentionally wrap
 
-            Buffer::Buffer(std::string stream, uint16_t id, size_t size, bool create) :
-                _stream(stream),
+            Buffer::Buffer(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) :
+                _paths(paths),
+                _backing_filepath(paths.buffer_path(id)),
                 _id(id),
                 _size(0),
                 _is_create(create),
-                _fd(shm_allocate(id, O_RDWR | (create ? O_CREAT : 0)))
+                _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU))
             {
                 if (_fd < 0) {
                     if (_is_create) {
-                        throw std::runtime_error("Failed to create shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to create shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
                     } else {
-                        throw std::runtime_error("Failed to open shared memory buffer for stream '" + stream + "' [errno: " + std::to_string(errno) + "]");
+                        throw std::runtime_error("Failed to open shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
                     }
                 } 
 
@@ -50,7 +50,7 @@ namespace MomentumX {
                     close(_fd);
 
                     if (_is_create) {
-                        shm_unlink(path(_id).c_str());
+                        ::remove(_backing_filepath.c_str());
                     }
                 }
 
@@ -67,10 +67,6 @@ namespace MomentumX {
 
             const uint16_t Buffer::id() {
                 return _id;
-            }
-
-            const std::string& Buffer::stream() {
-                return _stream;
             }
 
             size_t Buffer::size() {
@@ -105,11 +101,6 @@ namespace MomentumX {
                 return _address;
             }
             
-
-            int Buffer::shm_allocate(uint16_t id, int flags) {
-                return shm_open(path(id).c_str(), flags, S_IRWXU);
-            } 
-
             void Buffer::resize_remap(size_t size) {
                 size_t size_required = Utils::page_aligned_size(size);
                 if (_size < size_required) {
@@ -124,7 +115,7 @@ namespace MomentumX {
                     // Mmap the file, or remap if previously mapped
                     uint8_t* address;
                     if (_size == 0) {
-                        address = (uint8_t* ) mmap(NULL, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
+                        address = (uint8_t* ) mmap(nullptr, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
                     } else {
                         address = (uint8_t* ) mremap(_address, _size, size_required, MREMAP_MAYMOVE);
                     }
@@ -142,9 +133,9 @@ namespace MomentumX {
                 }
             }
 
-            std::string Buffer::path(uint16_t id) {
+            std::string Buffer::path(const std::string& stream, uint16_t id) {
                 // Build the path to the underlying shm file s
-                return std::string("mx." + _stream + ".buffer." + std::to_string(id));
+                return std::string("mx.") + stream + ".buffer." + std::to_string(id);
             }
 
             BufferManager::BufferManager() {}
@@ -163,38 +154,40 @@ namespace MomentumX {
                 }
             };
 
-            Buffer* BufferManager::allocate(std::string stream, uint16_t id, size_t size, bool create) {
+            Buffer* BufferManager::allocate(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) {
                 std::lock_guard<std::mutex> lock(_mutex); 
-                Buffer* buffer = new Buffer(stream, id, size, create);
-                _buffers_by_stream[stream].push_back(buffer);
+                Buffer* buffer = new Buffer(paths, id, size, create);
+                _buffers_by_stream[paths.stream_name].push_back(buffer);
                 
-                if (_head_buffer_by_stream.count(stream) == 0) {
-                    _head_buffer_by_stream[stream] = buffer;
+                if (_head_buffer_by_stream.count(paths.stream_name) == 0) {
+                    _head_buffer_by_stream[paths.stream_name] = buffer;
                 }
                 return buffer;
             }
 
             void BufferManager::deallocate(Buffer* buffer) {
                 std::lock_guard<std::mutex> lock(_mutex);
-                _buffers_by_stream[buffer->_stream].remove(buffer);
+                _buffers_by_stream[buffer->_paths.stream_name].remove(buffer);
                 delete buffer;
             }
 
-            void BufferManager::deallocate_stream(std::string stream) {
+            void BufferManager::deallocate_stream(const Utils::PathConfig& paths) {
                 std::lock_guard<std::mutex> lock(_mutex);
+                const auto& stream = paths.stream_name;
                 for (auto const& buffer : _buffers_by_stream[stream]) {
                     delete buffer;
                 }
                 _buffers_by_stream.erase(stream);
             }
 
-            Buffer* BufferManager::find(std::string stream, uint16_t id) {
+            Buffer* BufferManager::find(const Utils::PathConfig& paths, uint16_t id) {
                 if (id <= 0) {
                     throw std::runtime_error("Buffer id must be greater than 0");
                 }
 
                 {
                     std::lock_guard<std::mutex> lock(_mutex);
+                    const auto& stream = paths.stream_name;
                     for (auto const& buffer : _buffers_by_stream[stream]) {
                         if (buffer->_id == id) {
                             return buffer;
@@ -205,19 +198,21 @@ namespace MomentumX {
                 return NULL;
             }
 
-            bool BufferManager::next_is_head(std::string stream) {
+            bool BufferManager::next_is_head(const Utils::PathConfig& paths) {
                 std::lock_guard<std::mutex> lock(_mutex);
                 Buffer* next_buffer = NULL;
+                const auto& stream = paths.stream_name;
                 next_buffer = _buffers_by_stream[stream].front();
                 return next_buffer == _head_buffer_by_stream[stream];             
             }
 
-            Buffer* BufferManager::next(std::string stream) {
+            Buffer* BufferManager::next(const Utils::PathConfig& paths) {
                 std::lock_guard<std::mutex> lock(_mutex);
 
                 Buffer* next_buffer = NULL;
 
                 // rotate the buffers
+                const auto& stream = paths.stream_name;
                 next_buffer = _buffers_by_stream[stream].front();
                 _buffers_by_stream[stream].pop_front();
                 _buffers_by_stream[stream].push_back(next_buffer);
@@ -226,8 +221,9 @@ namespace MomentumX {
             
             }
 
-            Buffer* BufferManager::head_by_stream(std::string stream) {
+            Buffer* BufferManager::head_by_stream(const Utils::PathConfig& paths) {
                 std::lock_guard<std::mutex> lock(_mutex);
+                const auto& stream = paths.stream_name;
                 return _head_buffer_by_stream[stream];
             }
 } // namespace MomentumX

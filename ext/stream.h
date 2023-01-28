@@ -4,7 +4,6 @@
 #include <errno.h>
 #include <sys/file.h>
 #include <sys/mman.h>
-#include <sys/shm.h>
 #include <sys/stat.h>
 #include <condition_variable>
 #include <cstring>
@@ -59,13 +58,15 @@ namespace MomentumX {
 
         enum Role { CONSUMER, PRODUCER };
 
-        Stream(std::string name, size_t buffer_size = 0, size_t buffer_count = 0, bool sync = false, Role role = Role::CONSUMER);
+        Stream(const Utils::PathConfig& paths, size_t buffer_size = 0, size_t buffer_count = 0, bool sync = false, Role role = Role::CONSUMER);
 
         ~Stream();
 
         bool is_alive();
 
         const std::string& name();
+
+        Utils::PathConfig paths();
 
         int fd();
 
@@ -100,9 +101,8 @@ namespace MomentumX {
        private:
         friend class StreamManager;
 
-        std::string _name;
+        Utils::PathConfig _paths;
         Role _role;
-        std::string _path;
         int _fd;
         size_t _stream_data_size, _buffer_state_size, _subscribers_size, _acknowledgements_size;
         size_t _stream_data_offset, _buffer_state_offset, _subscribers_offset, _acknowledgements_offset;
