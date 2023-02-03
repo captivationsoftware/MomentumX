@@ -5,7 +5,6 @@ import momentumx as mx
 
 STREAM = "mx://threaded"
 
-
 def consumer(cancel: threading.Event):
     time.sleep(1)
     stream = mx.Consumer(STREAM, cancel, context='/tmp')
