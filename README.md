@@ -109,6 +109,24 @@ buffer = stream.receive()
 # Create a numpy array directly from the memory without any copying
 np_buff = np.frombuffer(buffer, dtype=uint8)
 
+```
+
+
+#### Isolated Contexts
+MomentumX allows for the usage of streams outside of `/dev/shm` (the default location). Pass the `context` kwarg pointing  
+to a directory on the filesystem for both the `Producer` and all `Consumer` instances to create isolated contexts.
+
+This option is useful if access to `/dev/shm` is unsuitable.
+
+```python
+import momentumx as mx
+
+# Create a producer attached to the context path /my/path
+stream = mx.Producer('my_stream', ..., context='/my/path/')
+...
+
+# Create Consumer elsewhere attached to the same context of /my/path
+stream = mx.Consumer('my_stream', context='/my/path/')
 
 ```
 

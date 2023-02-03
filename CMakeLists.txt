@@ -40,7 +40,7 @@ pybind11_add_module(_mx MODULE
 
 install(TARGETS _mx DESTINATION .)
 
-target_link_libraries(_mx PRIVATE rt stdc++fs)
+target_link_libraries(_mx PRIVATE rt)
 
 add_custom_command(
     TARGET _mx

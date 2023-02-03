@@ -50,7 +50,12 @@ namespace MomentumX {
                     close(_fd);
 
                     if (_is_create) {
-                        ::remove(_backing_filepath.c_str());
+                        int return_val = std::remove(_backing_filepath.c_str()); 
+                        if (return_val != 0) {
+                            std::stringstream ss;
+                            ss << "Unable to delete buffer file \"" << _backing_filepath << "\" with error: " << return_val;
+                            Utils::Logger::get_logger().error(ss.str());
+                        }
                     }
                 }
 

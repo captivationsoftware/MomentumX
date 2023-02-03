@@ -7,7 +7,6 @@
 
 #include <condition_variable>
 #include <cstring>
-#include <filesystem>
 #include <iostream>
 #include <list>
 #include <map>
@@ -75,16 +74,11 @@ namespace MomentumX {
             close(_fd);
 
             if (_role == Role::PRODUCER) {
-                std::error_code ec;
-                std::filesystem::remove(_paths.stream_path, ec);
-                if (ec) {
+                int return_val = std::remove(_paths.stream_path.c_str()); 
+                if (return_val != 0) {
                     std::stringstream ss;
-                    ss << "Unable to delete context file \"" << _paths.stream_path << "\" with error: " << ec.message();
+                    ss << "Unable to delete stream file \"" << _paths.stream_path << "\" with error: " << return_val;
                     Utils::Logger::get_logger().error(ss.str());
-                }
-
-                const auto code = ::remove(_paths.stream_name.c_str());
-                if (code) {
                 }
             }
         }
