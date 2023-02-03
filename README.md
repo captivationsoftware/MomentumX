@@ -113,8 +113,7 @@ np_buff = np.frombuffer(buffer, dtype=uint8)
 
 
 #### Isolated Contexts
-MomentumX allows for the usage of streams outside of `/dev/shm` (the default location). Pass the `context` kwarg pointing  
-to a directory on the filesystem for both the `Producer` and all `Consumer` instances to create isolated contexts.
+MomentumX allows for the usage of streams outside of `/dev/shm` (the default location). Pass the `context` kwarg pointing to a directory on the filesystem for both the `Producer` and all `Consumer` instances to create isolated contexts.
 
 This option is useful if access to `/dev/shm` is unsuitable.
 

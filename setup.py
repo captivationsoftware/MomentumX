@@ -1,7 +1,7 @@
 from setuptools import find_packages
 from skbuild import setup
 
-__version__ = "2.3.1"
+__version__ = "2.3.2"
 
 from pathlib import Path
 long_description = (Path(__file__).parent / "README.md").read_text()
