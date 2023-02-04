@@ -15,8 +15,9 @@
 #include <iostream>
 #include <mutex>
 #include <set>
-#include <string>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <tuple>
 
 namespace MomentumX {
@@ -259,6 +260,98 @@ namespace MomentumX {
 
                 return os;
             }
+        };
+
+        class ScopedReadLock {
+           public:
+            ScopedReadLock(int fd, off_t start = 0, off_t len = 0) : _fd(fd), _start(start), _len(len) { read_lock(fd, start, len); }
+            ~ScopedReadLock() { unlock(_fd, _start, _len); }
+
+           private:
+            int _fd;
+            off_t _start;
+            off_t _len;
+        };
+
+        struct ScopedWriteLock {
+           public:
+            ScopedWriteLock(int fd, off_t start = 0, off_t len = 0) : _fd(fd), _start(start), _len(len) { write_lock(fd, start, len); }
+            ~ScopedWriteLock() { unlock(_fd, _start, _len); }
+
+           private:
+            int _fd;
+            off_t _start;
+            off_t _len;
+        };
+
+        // boost-less version of boost::static_vector for trivial types
+        template <typename T, size_t Capacity>
+        class StaticVector {
+           public:
+            size_t capacity() const { return Capacity; }
+            size_t size() const { return _size; }
+
+            bool empty() const { return _size == 0; }
+            bool full() const { return _size == Capacity; }
+
+            void push_back(const T& value) {
+                if (_size == Capacity) {
+                    throw std::out_of_range("Cannot push back onto full StaticVector");
+                }
+                _data.at(_size) = value;
+                _size++;
+            }
+
+            void pop_back() {
+                if (_size == 0) {
+                    throw std::out_of_range("Cannot pop back from empty StaticVector");
+                }
+                _size--;
+            }
+
+            T* erase(T* t) {
+                if (t < begin() || end() <= t) {
+                    throw std::out_of_range("Cannot erase out of bounds iterator");
+                }
+
+                std::memmove(t, t + 1, end() - t);  // Shift everything left, clobbering `t`
+                pop_back();                         // Delete final value from end
+                return t;
+            }
+
+            T& at(size_t i) {
+                if (i >= _size) {
+                    throw std::out_of_range("bad index");
+                }
+                return _data.at(i);
+            }
+
+            const T& at(size_t i) const {
+                if (i >= _size) {
+                    throw std::out_of_range("bad index");
+                }
+                return _data.at(i);
+            }
+
+            T* begin() { return _data.begin(); }
+            const T* begin() const { return _data.begin(); }
+
+            T* end() { return begin() + _size; }
+            const T* end() const { return begin() + _size; }
+
+            T& front() { return _data.at(0); }
+            const T& front() const { return _data.at(0); }
+
+            T& back() { return _data.at(_size - 1); }
+            const T& back() const { return _data.at(_size - 1); }
+
+           private:
+            size_t _size;
+            std::array<T, Capacity> _data;
+
+            static_assert(std::is_trivially_copyable<T>::value, "Trivally-copyable required for std::memcpy");
+            // static_assert(std::is_trivially_copyable<StaticVector<T, Capacity>>::value, "Trivally-copyable required for std::memcpy");
+            // static_assert(sizeof(StaticVector<T, Capacity>) == sizeof(T) * Capacity, "Serialized size is unexpected");
         };
 
     }  // namespace Utils
