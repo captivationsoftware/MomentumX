@@ -43,3 +43,5 @@ install:
 .PHONY: test
 test:
 	@python3 -m pytest tests
+	@cd _skbuild/linux-x86_64*/cmake-build && ./mx_test
+

@@ -366,8 +366,8 @@ namespace MomentumX {
             }
 
            private:
-            size_t _size;
-            std::array<T, Capacity> _data;
+            size_t _size{0};
+            std::array<T, Capacity> _data{};
 
             static_assert(std::is_trivially_copyable<T>::value, "Trivally-copyable required for std::memcpy");
             // static_assert(std::is_trivially_copyable<StaticVector<T, Capacity>>::value, "Trivally-copyable required for std::memcpy");
