@@ -523,9 +523,6 @@ namespace MomentumX {
                     std::lock_guard<std::mutex> lock(_mutex);
                     _current_buffer_by_stream[stream] = next_buffer;
 
-                    // 0 out the buffer before making it available for re-use
-                    std::memset(next_buffer->address(), 0, next_buffer->size());
-
                     // create a new buffer state pointer and break out to the
                     // caller
                     buffer_state =

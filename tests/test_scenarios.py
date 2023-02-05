@@ -261,22 +261,6 @@ def test_less_than_page_size() -> None:
     buffer = producer.next_to_send()
     assert buffer.buffer_size == 1
 
-def test_buffer_is_fresh_after_cycling() -> None:
-    import momentumx as mx
-
-    count = 3
-    producer = mx.Producer(_STREAM_NAME, 1, count, False)
-
-    for i in range(0, count * 2):
-        buffer = producer.next_to_send()
-        
-        # buffer should be null and not contain previously written data
-        assert buffer[0] == b''
-        test_bytes = bytes(str(i), 'utf8')
-        buffer.write(test_bytes)
-        assert buffer[0] == test_bytes
-        buffer.send()
-
 def test_overwrite_region_after_truncate() -> None:
     import momentumx as mx
 
