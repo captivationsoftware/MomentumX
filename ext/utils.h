@@ -339,11 +339,31 @@ namespace MomentumX {
             T* end() { return begin() + _size; }
             const T* end() const { return begin() + _size; }
 
-            T& front() { return _data.at(0); }
-            const T& front() const { return _data.at(0); }
+            T& front() {
+                if (_size == 0) {
+                    throw std::out_of_range("bad index");
+                }
+                return _data.at(0);
+            }
+            const T& front() const {
+                if (_size == 0) {
+                    throw std::out_of_range("bad index");
+                }
+                return _data.at(0);
+            }
 
-            T& back() { return _data.at(_size - 1); }
-            const T& back() const { return _data.at(_size - 1); }
+            T& back() {
+                if (_size == 0) {
+                    throw std::out_of_range("bad index");
+                }
+                return _data.at(_size - 1);
+            }
+            const T& back() const {
+                if (_size == 0) {
+                    throw std::out_of_range("bad index");
+                }
+                return _data.at(_size - 1);
+            }
 
            private:
             size_t _size;
