@@ -22,11 +22,9 @@ if(SKBUILD)
   list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 endif()
 
-
 find_package(pybind11 CONFIG REQUIRED)
 
-pybind11_add_module(_mx MODULE
-    ext/binding.cpp
+set(SRCS
     ext/buffer.cpp
     ext/buffer.h
     ext/context.cpp
@@ -37,6 +35,10 @@ pybind11_add_module(_mx MODULE
     ext/stream.h
     ext/utils.h
 )
+
+pybind11_add_module(_mx MODULE ${SRCS} ext/binding.cpp)
+target_include_directories(_mx PRIVATE ext)
+target_link_libraries(_mx PRIVATE rt)
 
 install(TARGETS _mx DESTINATION .)
 
@@ -52,3 +54,21 @@ add_custom_command(
 )
 
 install(FILES $<TARGET_FILE_DIR:_mx>/_mx.pyi DESTINATION .)
+
+# Enable C++ unit tests
+
+include(FetchContent)
+
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        2ab20a0e008845e02bd06248e61ca6e5ad1aba33 # v3.3.1
+)
+
+FetchContent_MakeAvailable(Catch2)
+
+enable_testing()
+include(CTest)
+add_executable(mx_test  tests/cxx_test.cpp)
+target_include_directories(mx_test PRIVATE ext)
+target_link_libraries(mx_test PRIVATE Catch2::Catch2WithMain)
