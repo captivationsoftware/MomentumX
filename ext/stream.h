@@ -8,39 +8,28 @@
 #include <condition_variable>
 #include <cstring>
 #include <iostream>
-#include <list>
 #include <map>
 #include <mutex>
 #include <set>
 #include <tuple>
+#include <type_traits>
+#include <vector>
 
 #include "buffer.h"
 #include "utils.h"
 
 namespace MomentumX {
 
+    struct ControlBlock;
+
     class Stream {
        public:
         struct BufferState {
-            uint16_t buffer_id;
-            size_t buffer_size, buffer_count, data_size;
-            uint64_t data_timestamp, iteration;
+            uint16_t buffer_id{0};
+            size_t buffer_size{0}, buffer_count{0}, data_size{0};
+            uint64_t data_timestamp{0}, iteration{0};
 
-            BufferState()
-                : buffer_id(0),
-                  buffer_size(0),
-                  buffer_count(0),
-                  data_size(0),
-                  data_timestamp(0),
-                  iteration(0){};
-
-            BufferState(const BufferState& bs)
-                : buffer_id(bs.buffer_id),
-                  buffer_size(bs.buffer_size),
-                  buffer_count(bs.buffer_count),
-                  data_size(bs.data_size),
-                  data_timestamp(bs.data_timestamp),
-                  iteration(bs.iteration) {}
+            BufferState() = default;
 
             BufferState(uint16_t id,
                         size_t buffer_size,
@@ -72,15 +61,9 @@ namespace MomentumX {
 
         bool sync();
 
-        void sync(bool _sync);
-
         size_t buffer_size();
 
-        void buffer_size(size_t _buffer_size);
-
         size_t buffer_count();
-
-        void buffer_count(size_t _buffer_count);
 
         std::list<BufferState> buffer_states(bool sort = false, uint64_t minimum_timestamp = 0);
 
@@ -104,10 +87,8 @@ namespace MomentumX {
         Utils::PathConfig _paths;
         Role _role;
         int _fd;
-        size_t _stream_data_size, _buffer_state_size, _subscribers_size, _acknowledgements_size;
-        size_t _stream_data_offset, _buffer_state_offset, _subscribers_offset, _acknowledgements_offset;
-
         char* _data;
+        ControlBlock* _control;
     };
 
     class StreamManager {
