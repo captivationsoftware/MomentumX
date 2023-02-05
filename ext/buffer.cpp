@@ -31,7 +31,7 @@ namespace MomentumX {
                 } 
 
                 // do the ftruncate to resize and (re)mmap
-                resize_remap(size);          
+                resize_remap(size);     
 
                 if (_is_create) {
                     Utils::Logger::get_logger().info(
@@ -125,6 +125,7 @@ namespace MomentumX {
                         address = (uint8_t* ) mremap(_address, _size, size_required, MREMAP_MAYMOVE);
                     }
 
+
                     if (_is_create) {
                         std::memset(address, 0, size_required);
                     }
@@ -158,7 +159,7 @@ namespace MomentumX {
                 std::lock_guard<std::mutex> lock(_mutex); 
                 Buffer* buffer = new Buffer(paths, id, size, create);
                 _buffers_by_stream[paths.stream_name].push_back(buffer);
-                
+
                 if (_head_buffer_by_stream.count(paths.stream_name) == 0) {
                     _head_buffer_by_stream[paths.stream_name] = buffer;
                 }

@@ -15,6 +15,19 @@ _EXPECTED_BYTES = 10589  # arbitrary
 _STREAM_NAME = b"mx://test_echo_mx_stream"
 _DEVSHM_NAME = "/dev/shm/mx.test_echo_mx_stream"
 
+@pytest.fixture(autouse=True, scope="function")
+def test_pre_post_fixture():    
+    with timeout_event(timeout=1) as cancel:
+        while os.path.exists(f"{_DEVSHM_NAME}") and not cancel.is_set():
+            print('Waiting!!!!!!!!!!!!!!!!!!!!!!!!!')
+            cancel.wait(0.1)
+
+
+        if cancel.is_set():
+            assert False, "Test failed to start due to lingering stream"
+
+    yield
+
 @contextlib.contextmanager
 def timeout_event(timeout: float = 5.0) -> Iterator[threading.Event]:
     def sleep_then_trigger(inner_evt: threading.Event, inner_timeout: float):
@@ -228,6 +241,15 @@ def test_empty_slice_matches_buffer_length_producer() -> None:
 
     del producer
 
+def test_exception_on_duplicate_stream() -> None:
+    import momentumx as mx
+
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+
+    with pytest.raises(mx.StreamExists):
+        mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+
+
 def test_exception_on_double_send() -> None:
     import momentumx as mx
 
@@ -300,6 +322,39 @@ def test_write_to_buffer_size() -> None:
 
     assert size == buffer.data_size == buffer.buffer_size
     assert buffer[:] == b'\xff' * size
+
+def test_send_data_size_equal_to_buffer_size_implicit() -> None:
+    import momentumx as mx
+
+    size = int(5)
+    producer = mx.Producer(_STREAM_NAME, size, 1, False)
+    
+    # Implicit data_size...
+    buffer = producer.next_to_send()
+    try:
+        assert buffer.tell() == 0
+        for _ in range(0, size):
+            buffer.write(b'\xff')
+        assert buffer.data_size == size
+        buffer.send()
+    except mx.DataOverflow:
+        assert False, f"Sending where data_size == buffer_size should not throw Overflow error"
+
+
+def test_send_data_size_equal_to_buffer_size_explicit() -> None:
+    import momentumx as mx
+
+    size = int(5)
+    producer = mx.Producer(_STREAM_NAME, size, 1, False)
+
+    buffer = producer.next_to_send()
+    try:
+        assert buffer.tell() == 0
+        buffer.send(size)
+        assert buffer.tell() == 0
+    except mx.DataOverflow:
+        assert False, f"Sending where data_size == buffer_size should not throw Overflow error"
+
 
 def test_one_thread_numpy() -> None:
     import momentumx as mx  # import in subprocess

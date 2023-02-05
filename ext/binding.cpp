@@ -32,6 +32,10 @@ struct ReadBufferShim;
 struct StreamShim;
 struct WriteBufferShim;
 
+struct StreamExistsException : public std::exception {
+    const char* what() const noexcept override { return "Stream already exists"; }
+};
+
 struct StreamUnavailableException : public std::exception {
     const char* what() const noexcept override { return "Failed to create stream subscription"; }
 };
@@ -183,19 +187,22 @@ struct BufferShim {
     py::buffer_info write_buffer_info() { return py::buffer_info(data(), buffer_size(), false); }
 
     auto send_from_current() -> bool {
+        return send(max_write_index);
+    }
+
+    auto send(size_t data_size) -> bool {
         if (is_sent) {
             throw AlreadySentException();
         }
 
+        if (data_size > buffer_size()) {
+            throw DataOverflowException();
+        }
+
         BufferState* copy = new BufferState(*buffer_state);  // mx_stream_send takes ownership and deletes
-        copy->data_size = max_write_index;
+        copy->data_size = data_size;
         is_sent = mx_stream_send(ctx.get(), stream.get(), copy);
         return is_sent;
-    }
-
-    auto send(size_t data_size) -> bool {
-        truncate(data_size);
-        return send_from_current();
     }
 };
 
@@ -318,11 +325,17 @@ static ProducerStreamShim producer_stream(const std::string& stream_name,
     auto c = Context::scoped_producer_singleton(context);
     auto wrapped_evt = ThreadingEventWrapper(evt);
 
-    ProducerStreamShim shim(c,
-                            std::shared_ptr<Stream>(mx_stream(c.get(), stream_name.c_str(), buffer_size, buffer_count, sync),
-                                                    [c](Stream* stream) { /* cleaned up via Context destructor */ }),
-                            wrapped_evt, polling_interval);
-    return shim;
+    auto stream = mx_stream(c.get(), stream_name.c_str(), buffer_size, buffer_count, sync);
+
+    if (!stream) {
+        throw StreamExistsException();
+    } else {
+        ProducerStreamShim shim(c,
+                                std::shared_ptr<Stream>(stream, [c](Stream* stream) { /* cleaned up via Context destructor */ }),
+                                wrapped_evt, polling_interval);
+        return shim;
+    }
+
 }
 
 static ConsumerStreamShim consumer_stream(const std::string& stream_name, const py::object& evt, double polling_interval, const std::string& context) {
@@ -352,6 +365,7 @@ PYBIND11_MODULE(_mx, m) {
     py::register_exception<DataOverflowException>(m, "DataOverflow", PyExc_IndexError);
     py::register_exception<StreamUnavailableException>(m, "StreamUnavailable", PyExc_RuntimeError);
     py::register_exception<AlreadySentException>(m, "AlreadySent", PyExc_RuntimeError);
+    py::register_exception<StreamExistsException>(m, "StreamExists", PyExc_RuntimeError);
 
     py::enum_<LogLevel>(m, "LogLevel")
         .value("DEBUG", LogLevel::DEBUG)

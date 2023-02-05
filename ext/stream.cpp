@@ -37,7 +37,7 @@ namespace MomentumX {
     static_assert(std::is_trivially_copy_constructible<ControlBlock>::value, "needed for std::memcpy");
 
     Stream::Stream(const Utils::PathConfig& paths, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role)
-        : _paths(paths), _role(role), _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT : 0), S_IRWXU)) {
+        : _paths(paths), _role(role), _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT | O_EXCL : 0), S_IRWXU)) {
         if (_fd < 0) {
             if (role == Role::CONSUMER) {
                 throw std::runtime_error("Failed to open shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
