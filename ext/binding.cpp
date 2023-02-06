@@ -78,11 +78,11 @@ struct BufferShim {
     std::shared_ptr<Context> ctx{nullptr};
     std::shared_ptr<Stream> stream{nullptr};
     std::shared_ptr<BufferState> buffer_state{nullptr};
-    size_t write_index, max_write_index;
+    size_t cursor_index, max_cursor_index;
     bool is_sent;
 
     BufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
-        : ctx(ctx), stream(stream), buffer_state(buffer_state), write_index(0), max_write_index(0), is_sent(false) {}
+        : ctx(ctx), stream(stream), buffer_state(buffer_state), cursor_index(0), max_cursor_index(0), is_sent(false) {}
     ~BufferShim() = default;
 
     const uint8_t* data() const { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
@@ -106,6 +106,20 @@ struct BufferShim {
             bytes.append(std::string(reinterpret_cast<const char*>(data()) + i * sizeof(char), 1));
         }
 
+        return bytes;
+    }
+
+    py::bytes read_all() {
+        seek(0);
+        return read(data_size());        
+    }
+
+    py::bytes read(size_t count) {
+        size_t from_index = tell();
+        size_t to_index = from_index + count;
+                
+        auto bytes = get_bytes(py::slice(from_index, to_index, 1));
+        seek(to_index);
         return bytes;
     }
 
@@ -133,39 +147,39 @@ struct BufferShim {
         }
 
         size_t value_size = py::len(value);
-        if (write_index + value_size > buffer_size()) {
+        if (cursor_index + value_size > buffer_size()) {
             throw DataOverflowException();
         }
 
-        uint8_t* data_pointer = data() + write_index * sizeof(uint8_t);
+        uint8_t* data_pointer = data() + cursor_index * sizeof(uint8_t);
         py::buffer_info info(py::buffer(value).request());
         for (size_t i = 0; i < value_size; i++) {
             *(data_pointer + i * sizeof(uint8_t)) = *(reinterpret_cast<uint8_t*>(info.ptr) + i * sizeof(uint8_t));
         }
 
-        write_index += value_size;
-        if (write_index > max_write_index) {
-            max_write_index = write_index;
+        cursor_index += value_size;
+        if (cursor_index > max_cursor_index) {
+            max_cursor_index = cursor_index;
         }
     }
 
-    const size_t tell() const { return write_index; }
+    const size_t tell() const { return cursor_index; }
 
-    const size_t seek(const size_t& index) {
-        write_index = index;
+    const size_t seek(size_t index) {
+        cursor_index = index;
         return tell();
     }
 
     const size_t truncate_to_current() {
         size_t current = tell();
-        for (size_t i = write_index; i < max_write_index; i++) {
+        for (size_t i = cursor_index; i < max_cursor_index; i++) {
             write("\x00"s);
         }
-        max_write_index = current;
-        return max_write_index;
+        max_cursor_index = current;
+        return max_cursor_index;
     }
 
-    const size_t truncate(const size_t& index) {
+    const size_t truncate(size_t index) {
         if (index >= buffer_size()) {
             throw DataOverflowException();
         }
@@ -179,7 +193,7 @@ struct BufferShim {
     uint16_t buffer_id() const { return buffer_state->buffer_id; }
     size_t buffer_size() const { return buffer_state->buffer_size; }
     size_t buffer_count() const { return buffer_state->buffer_count; }
-    size_t data_size() const { return max_write_index > buffer_state->data_size ? max_write_index : buffer_state->data_size; }
+    size_t data_size() const { return max_cursor_index > buffer_state->data_size ? max_cursor_index : buffer_state->data_size; }
     uint64_t data_timestamp() const { return buffer_state->data_timestamp; }
     uint64_t iteration() const { return buffer_state->iteration; }
 
@@ -187,7 +201,7 @@ struct BufferShim {
     py::buffer_info write_buffer_info() { return py::buffer_info(data(), buffer_size(), false); }
 
     auto send_from_current() -> bool {
-        return send(max_write_index);
+        return send(max_cursor_index);
     }
 
     auto send(size_t data_size) -> bool {
@@ -382,6 +396,10 @@ PYBIND11_MODULE(_mx, m) {
         .def_buffer(&ReadBufferShim::read_buffer_info)
         .def("__getitem__", &ReadBufferShim::get_byte, "index"_a)
         .def("__getitem__", &ReadBufferShim::get_bytes, "slice"_a)
+        .def("read", &ReadBufferShim::read_all)
+        .def("read", &ReadBufferShim::read, "count"_a)
+        .def("seek", &ReadBufferShim::seek, "index"_a)
+        .def("tell", &ReadBufferShim::tell)
         .def_property_readonly("buffer_id", &ReadBufferShim::buffer_id)
         .def_property_readonly("buffer_size", &ReadBufferShim::buffer_size)
         .def_property_readonly("buffer_count", &ReadBufferShim::buffer_count)
@@ -395,9 +413,11 @@ PYBIND11_MODULE(_mx, m) {
         .def("__getitem__", &WriteBufferShim::get_bytes, "slice"_a)
         .def("__setitem__", &WriteBufferShim::set_byte, "index"_a, "value"_a)
         .def("__setitem__", &WriteBufferShim::set_bytes, "slice"_a, "value"_a)
-        .def("write", &WriteBufferShim::write, "value"_a)
+        .def("read", &WriteBufferShim::read_all)
+        .def("read", &WriteBufferShim::read, "count"_a)
         .def("seek", &WriteBufferShim::seek, "index"_a)
         .def("tell", &WriteBufferShim::tell)
+        .def("write", &WriteBufferShim::write, "value"_a)
         .def("truncate", &WriteBufferShim::truncate_to_current)
         .def("truncate", &WriteBufferShim::truncate, "index"_a)
         .def("send", &WriteBufferShim::send, "data_size"_a)

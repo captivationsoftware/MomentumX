@@ -17,10 +17,10 @@ _DEVSHM_NAME = "/dev/shm/mx.test_echo_mx_stream"
 
 @pytest.fixture(autouse=True, scope="function")
 def test_pre_post_fixture():    
-    with timeout_event(timeout=1) as cancel:
+    with timeout_event(timeout=0.1) as cancel:
         while os.path.exists(f"{_DEVSHM_NAME}") and not cancel.is_set():
             print('Waiting!!!!!!!!!!!!!!!!!!!!!!!!!')
-            cancel.wait(0.1)
+            cancel.wait(0.01)
 
 
         if cancel.is_set():
@@ -186,7 +186,7 @@ def test_buffer_overflow_exception() -> None:
     with pytest.raises(mx.DataOverflow):
         buffer.send(PAGESIZE + 1)
 
-def test_buffer_seek_tell_write_truncate_producer() -> None:
+def test_buffer_file_api_producer() -> None:
     import momentumx as mx
 
     producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
@@ -206,13 +206,32 @@ def test_buffer_seek_tell_write_truncate_producer() -> None:
     assert buffer.tell() == 8
     assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00foo'
 
+    buffer.seek(5)
+    assert buffer.read(3) == b'foo'
+    assert buffer.tell() == 8
+
     buffer.truncate(6)
     assert buffer.data_size == 6
     assert buffer.tell() == 8 # tell is not affected by tuncate
     assert buffer[:buffer.data_size] == b'\x00\x00\x00\x00\x00f'
 
-    del producer
+def test_buffer_file_api_consumer() -> None:
+    import momentumx as mx
 
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    tx_buffer = producer.next_to_send()
+    tx_buffer.write(b'foobar')
+    tx_buffer.send()
+
+    consumer = mx.Consumer(_STREAM_NAME)
+    rx_buffer = consumer.receive()
+
+    assert rx_buffer.tell() == 0
+    rx_buffer.seek(3)
+    assert rx_buffer.read(3) == b'bar'
+    assert rx_buffer.tell() == rx_buffer.data_size
+    rx_buffer.seek(0)
+    assert rx_buffer.read() == b'foobar'
 
 def test_single_getitem_setitem_producer() -> None:
     import momentumx as mx
