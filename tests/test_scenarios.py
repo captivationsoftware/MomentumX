@@ -1,7 +1,6 @@
 import concurrent.futures as cf
 import random
 import os
-import sys
 import threading
 from typing import Iterator
 import contextlib
@@ -19,7 +18,6 @@ _DEVSHM_NAME = "/dev/shm/mx.test_echo_mx_stream"
 def test_pre_post_fixture():    
     with timeout_event(timeout=0.1) as cancel:
         while os.path.exists(f"{_DEVSHM_NAME}") and not cancel.is_set():
-            print('Waiting!!!!!!!!!!!!!!!!!!!!!!!!!')
             cancel.wait(0.01)
 
 
@@ -76,25 +74,6 @@ def run_send() -> int:
             num_sent += len(data)
         return num_sent
 
-        # time.sleep(2)
-        # return _EXPECTED_BYTES
-
-        import time
-        from datetime import datetime, timezone
-
-        print(f"created: {datetime.now(timezone.utc)}")
-        time.sleep(5)
-        print(f"slept:   {datetime.now(timezone.utc)}")
-        del stream
-        print(f"deleted: {datetime.now(timezone.utc)}")
-
-        assert not os.path.exists(f"{_DEVSHM_NAME}.buffer.1")
-
-        num_sent = 0
-        for data in chunked_data():
-            num_sent += len(data)
-        return num_sent
-
 def run_recv() -> int:
     import momentumx as mx  # import in subprocess
     import time
@@ -105,22 +84,6 @@ def run_recv() -> int:
 
         b = bytearray()
         return _EXPECTED_BYTES
-        while True:
-            alive = stream.is_alive
-            buf = stream.receive()
-            if buf is None and not alive:
-                break
-            elif buf is None:
-                time.sleep(0.1)
-                continue
-            else:
-                b += bytearray(buf)
-
-        # for buf in iter(stream.receive, None):
-        #     as_bytearray = bytearray(buf)
-        #     b += as_bytearray
-
-        return len(b)
 
 
 def disable_test_echo() -> None:
@@ -374,8 +337,7 @@ def test_send_data_size_equal_to_buffer_size_explicit() -> None:
     except mx.DataOverflow:
         assert False, f"Sending where data_size == buffer_size should not throw Overflow error"
 
-
-def test_one_thread_numpy() -> None:
+def test_numpy_compatibility() -> None:
     import momentumx as mx  # import in subprocess
     import numpy as np
 
@@ -396,6 +358,27 @@ def test_one_thread_numpy() -> None:
 
         assert producer is not None
         assert consumer is not None
+
+
+def test_synced_buffers() -> None:
+    import momentumx as mx 
+
+    buffer_count = 5
+
+    with timeout_event(timeout=1) as event:
+        producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
+        consumer = mx.Consumer(_STREAM_NAME, event)
+
+        for n in range(1, buffer_count + 1):
+            tx_buffer = producer.next_to_send()
+            assert tx_buffer.buffer_id == n
+            tx_buffer.write(n.to_bytes(1, 'big'))
+            tx_buffer.send()
+
+            rx_buffer = consumer.receive()
+            data = rx_buffer.read()
+            assert data == n.to_bytes(1, 'big')
+
 
 def test_buffer_cleanup() -> None:
     import momentumx as mx  # import in subprocess
