@@ -218,6 +218,10 @@ struct BufferShim {
         is_sent = mx_stream_send(ctx.get(), stream.get(), copy);
         return is_sent;
     }
+    
+    auto release() -> bool {
+        return mx_stream_release(ctx.get(), stream.get(), buffer_state.get());
+    }
 };
 
 struct ReadBufferShim : BufferShim {
@@ -265,12 +269,12 @@ struct StreamShim {
         return {};
     }
 
-    auto receive(uint64_t minimum_ts, bool blocking) -> std::optional<ReadBufferShim> {
+    auto receive(uint64_t minimum_ts, bool blocking) -> py::handle {
         py::gil_scoped_release nogil;
         while (!evt.is_set()) {
             if (!stream->is_alive()) {
                 Logger::get_logger().info("cannot receive: stream not alive");
-                return {};
+                return py::none();
             }
 
             BufferState* buffer_info = mx_stream_receive(ctx.get(), stream.get(), minimum_ts);
@@ -278,18 +282,20 @@ struct StreamShim {
                 if (blocking) {
                     evt.wait(polling_interval);
                 } else {
-                    return {};
+                    return py::none();
                 }
             } else {
                 auto ctx_cp = ctx;        // copy for lambda
                 auto stream_cp = stream;  // copy for lambda
-                return ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [ctx_cp, stream_cp](BufferState* buffer_state) {
-                                          mx_stream_release(ctx_cp.get(), stream_cp.get(), buffer_state);
-                                      }));
+                return py::handle(
+                    ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [ctx_cp, stream_cp](BufferState* buffer_state) {
+                    //   mx_stream_release(ctx_cp.get(), stream_cp.get(), buffer_state);
+                    }))
+                );
             }
         }
 
-        return {};
+        return py::none();
     }
 
     auto flush() -> void { mx_stream_flush(ctx.get(), stream.get()); }
@@ -400,6 +406,7 @@ PYBIND11_MODULE(_mx, m) {
         .def("read", &ReadBufferShim::read, "count"_a)
         .def("seek", &ReadBufferShim::seek, "index"_a)
         .def("tell", &ReadBufferShim::tell)
+        .def("release", &ReadBufferShim::release)
         .def_property_readonly("buffer_id", &ReadBufferShim::buffer_id)
         .def_property_readonly("buffer_size", &ReadBufferShim::buffer_size)
         .def_property_readonly("buffer_count", &ReadBufferShim::buffer_count)

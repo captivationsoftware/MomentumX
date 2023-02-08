@@ -362,6 +362,7 @@ def test_numpy_compatibility() -> None:
 
 def test_synced_buffers() -> None:
     import momentumx as mx 
+    import numpy as np 
 
     buffer_count = 5
 
@@ -376,8 +377,14 @@ def test_synced_buffers() -> None:
             tx_buffer.send()
 
             rx_buffer = consumer.receive()
-            data = rx_buffer.read()
-            assert data == n.to_bytes(1, 'big')
+            np_buffer = np.frombuffer(rx_buffer, dtype=np.uint8)
+
+            # release the buffer, which would trigger pending acknowledgements and then invalidate this reference
+            rx_buffer.release()
+
+            # assert that the buffer is invalidated post-release
+            with pytest.raises(RuntimeError):
+                np_buffer.sum()
 
 
 def test_buffer_cleanup() -> None:
