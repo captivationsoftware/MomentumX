@@ -20,6 +20,7 @@
 
 namespace MomentumX {
 
+    struct PendingAcknowledgement;
     struct ControlBlock;
 
     class Stream {
@@ -75,11 +76,13 @@ namespace MomentumX {
 
         void remove_subscriber(Context* context);
 
-        std::set<Context*> pending_acknowledgements();
+        bool has_pending_acknowledgements(size_t buffer_id);
 
-        void set_pending_acknowledgements();
+        void set_pending_acknowledgements(size_t buffer_id);
 
-        void remove_pending_acknowledgement(Context* context);
+        void remove_all_pending_acknowledgements(Context* context);
+
+        void remove_pending_acknowledgement(size_t buffer_id, Context* context);
 
        private:
         friend class StreamManager;

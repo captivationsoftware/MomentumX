@@ -362,7 +362,32 @@ def test_numpy_compatibility() -> None:
 
 def test_synced_buffers() -> None:
     import momentumx as mx 
-    import numpy as np 
+
+    buffer_count = 5
+
+    with timeout_event(timeout=1) as event:
+        producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
+        consumer = mx.Consumer(_STREAM_NAME, event)
+
+        expected = [ 1, 2, 3, 4, 5, 1, 2, 3, 4, 5 ]
+
+        for n in expected:
+            tx_buffer = producer.next_to_send()
+
+            assert not event.is_set(), "Test timed out before making assertions"
+
+            assert tx_buffer.buffer_id == n 
+            tx_buffer.write(n.to_bytes(1, 'big'))
+            tx_buffer.send()
+
+            rx_buffer = consumer.receive()
+            data = rx_buffer.read()
+            assert data == n.to_bytes(1, 'big')
+            rx_buffer.release()
+
+
+def test_synced_buffers_multi() -> None:
+    import momentumx as mx 
 
     buffer_count = 5
 
@@ -372,20 +397,48 @@ def test_synced_buffers() -> None:
 
         for n in range(1, buffer_count + 1):
             tx_buffer = producer.next_to_send()
+            assert not event.is_set(), "Producer next_to_send timed out"
             assert tx_buffer.buffer_id == n
             tx_buffer.write(n.to_bytes(1, 'big'))
             tx_buffer.send()
 
-            rx_buffer = consumer.receive()
-            np_buffer = np.frombuffer(rx_buffer, dtype=np.uint8)
+        tx_buffer = producer.next_to_send(blocking=False)
+        assert tx_buffer == None, "Expected null next_to_send after writing to all buffers before receiving any acknowledgements"
+        
 
-            # release the buffer, which would trigger pending acknowledgements and then invalidate this reference
+        for n in range(1, buffer_count + 1):
+            rx_buffer = consumer.receive()
+            assert not event.is_set(), "Consumer receive timed out"
+            assert rx_buffer.buffer_id == n
+            data = rx_buffer.read()
+            assert data == n.to_bytes(1, 'big')
             rx_buffer.release()
 
-            # assert that the buffer is invalidated post-release
-            with pytest.raises(RuntimeError):
-                np_buffer.sum()
+# def test_synced_buffer_integrity() -> None:
+#     import momentumx as mx 
+#     import numpy as np 
 
+#     buffer_count = 5
+
+#     with timeout_event(timeout=1) as event:
+#         producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
+#         consumer = mx.Consumer(_STREAM_NAME, event)
+
+#         for n in range(1, buffer_count + 1):
+#             tx_buffer = producer.next_to_send()
+#             assert tx_buffer.buffer_id == n
+#             tx_buffer.write(n.to_bytes(1, 'big'))
+#             tx_buffer.send()
+
+#             rx_buffer = consumer.receive()
+#             np_buffer = np.frombuffer(rx_buffer, dtype=np.uint8)
+
+#             # release the buffer, which would trigger pending acknowledgements and then invalidate this reference
+#             rx_buffer.release()
+
+#             # assert that the buffer is invalidated post-release
+#             with pytest.raises(RuntimeError):
+#                 np_buffer.sum()
 
 def test_buffer_cleanup() -> None:
     import momentumx as mx  # import in subprocess

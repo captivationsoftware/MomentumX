@@ -269,12 +269,12 @@ struct StreamShim {
         return {};
     }
 
-    auto receive(uint64_t minimum_ts, bool blocking) -> py::handle {
+    auto receive(uint64_t minimum_ts, bool blocking) -> std::optional<ReadBufferShim> {
         py::gil_scoped_release nogil;
         while (!evt.is_set()) {
             if (!stream->is_alive()) {
                 Logger::get_logger().info("cannot receive: stream not alive");
-                return py::none();
+                return {};
             }
 
             BufferState* buffer_info = mx_stream_receive(ctx.get(), stream.get(), minimum_ts);
@@ -282,20 +282,18 @@ struct StreamShim {
                 if (blocking) {
                     evt.wait(polling_interval);
                 } else {
-                    return py::none();
+                    return {};
                 }
             } else {
                 auto ctx_cp = ctx;        // copy for lambda
                 auto stream_cp = stream;  // copy for lambda
-                return py::handle(
-                    ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [ctx_cp, stream_cp](BufferState* buffer_state) {
+                return ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [ctx_cp, stream_cp](BufferState* buffer_state) {
                     //   mx_stream_release(ctx_cp.get(), stream_cp.get(), buffer_state);
-                    }))
-                );
+                    }));
             }
         }
 
-        return py::none();
+        return {};
     }
 
     auto flush() -> void { mx_stream_flush(ctx.get(), stream.get()); }

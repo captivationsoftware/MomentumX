@@ -22,16 +22,28 @@
 
 namespace MomentumX {
 
+    struct PendingAcknowledgement { 
+        size_t buffer_id = 0;
+        Context* context = nullptr;
+
+        PendingAcknowledgement() = default;
+        
+        PendingAcknowledgement(size_t _buffer_id, Context* _context) :
+            buffer_id(_buffer_id),
+            context(_context)
+        { }
+    };
+
     struct ControlBlock {
         static constexpr size_t MAX_BUFFERS = 512;
-        static constexpr size_t MAX_CONTEXTS = 256;
+        static constexpr size_t MAX_SUBSCRIPTIONS = 256;
 
         bool sync{};
         size_t buffer_size{};
         size_t buffer_count{};
         Utils::StaticVector<Stream::BufferState, MAX_BUFFERS> buffers{};
-        Utils::StaticVector<Context*, MAX_CONTEXTS> subscribers{};
-        Utils::StaticVector<Context*, MAX_CONTEXTS> acknowledgements{};
+        Utils::StaticVector<Context*, MAX_SUBSCRIPTIONS> subscribers{};
+        Utils::StaticVector<PendingAcknowledgement, MAX_SUBSCRIPTIONS * MAX_BUFFERS> pending_acknowledgements{};
     };
 
     static_assert(std::is_trivially_copy_constructible<ControlBlock>::value, "needed for std::memcpy");
@@ -228,42 +240,68 @@ namespace MomentumX {
         }
     }
 
-    std::set<Context*> Stream::pending_acknowledgements() {
+    bool Stream::has_pending_acknowledgements(size_t buffer_id) {
         if (!is_alive()) {
             return {};
         }
 
         Utils::ScopedReadLock lock(_fd);
-        const auto beg = _control->acknowledgements.begin();
-        const auto end = _control->acknowledgements.end();
-        return std::set<Context*>(beg, end);
+        const auto beg = _control->pending_acknowledgements.begin();
+        const auto end = _control->pending_acknowledgements.end();
+
+        return std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; }) != end;
     }
 
-    void Stream::set_pending_acknowledgements() {
+    void Stream::set_pending_acknowledgements(size_t buffer_id) {
         if (!is_alive()) {
             return;
         }
 
         Utils::ScopedWriteLock lock(_fd);
-        _control->acknowledgements = _control->subscribers;
+        for (auto const subscriber : _control->subscribers) {
+            _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
+        } 
 
-        Utils::Logger::get_logger().debug(std::string("Reset pending acknowledgements to mirror current subscribers"));
+        Utils::Logger::get_logger().debug(std::string("Reset pending acknowledgements to mirror current subscribers for buffer id " + buffer_id));
     }
 
-    void Stream::remove_pending_acknowledgement(Context* context) {
+    void Stream::remove_all_pending_acknowledgements(Context* context) {
+        while(is_alive()) {
+            Utils::ScopedWriteLock lock(_fd);
+            auto const beg = _control->pending_acknowledgements.begin();
+            auto const end = _control->pending_acknowledgements.end();
+            auto const loc = std::find_if(
+                beg, 
+                end,
+                [&](const PendingAcknowledgement& pa) -> bool { return pa.context == context; }
+            );
+
+            if (loc != end) {
+                _control->pending_acknowledgements.erase(loc);
+            } else {
+                return;
+            }
+        }
+    }
+
+    void Stream::remove_pending_acknowledgement(size_t buffer_id, Context* context) {
         if (!is_alive()) {
             return;
         }
 
         Utils::ScopedWriteLock lock(_fd);
-        const auto beg = _control->acknowledgements.begin();
-        const auto end = _control->acknowledgements.end();
-        const auto loc = std::find(beg, end, context);
+        const auto beg = _control->pending_acknowledgements.begin();
+        const auto end = _control->pending_acknowledgements.end();
+        const auto loc = std::find_if(
+            beg, 
+            end, 
+            [&](const PendingAcknowledgement& pa) -> bool { return pa.buffer_id == buffer_id && pa.context == context; }
+        ); 
 
         if (loc != end) {
-            _control->acknowledgements.erase(loc);
+            _control->pending_acknowledgements.erase(loc);
         } else {
-            Utils::Logger::get_logger().warning("Attempted to remove acknowledgement that doesn't exist");
+            Utils::Logger::get_logger().warning("Attempted to remove pending acknowledgement that does not exist");
         }
     }
 
@@ -372,7 +410,7 @@ namespace MomentumX {
 
     void StreamManager::unsubscribe(Stream* stream) {
         std::lock_guard<std::mutex> lock(_mutex);
-        stream->remove_pending_acknowledgement(_context);
+        stream->remove_all_pending_acknowledgements(_context);
         stream->remove_subscriber(_context);
 
         _buffer_manager->deallocate_stream(stream->paths());
@@ -388,16 +426,17 @@ namespace MomentumX {
         Stream::BufferState* buffer_state = NULL;
         Buffer* next_buffer;
 
-        if (stream->sync() && stream->pending_acknowledgements().size() > 0) {
-            return NULL;
-        }
-
         // attempt to get a lock (blocking if in sync mode)
         for (size_t _ = 0; _ < stream->buffer_count(); _++) {
             next_buffer = _buffer_manager->next(stream->paths());
 
             if (next_buffer != current_buffer) {
+
                 if (stream->sync()) {
+                    if (stream->has_pending_acknowledgements(next_buffer->id())) {
+                        return NULL;
+                    }
+
                     // When synchronous, block until we can obtain this buffer's
                     // lock...
                     Utils::write_lock(next_buffer->fd());
@@ -449,7 +488,7 @@ namespace MomentumX {
         Utils::unlock(buffer->fd());
 
         if (stream->sync()) {
-            stream->set_pending_acknowledgements();
+            stream->set_pending_acknowledgements(buffer->id());
         }
 
         stream->update_buffer_state(buffer_state);
@@ -560,7 +599,7 @@ namespace MomentumX {
         std::lock_guard<std::mutex> lock(_mutex);
 
         if (stream->sync()) {
-            stream->remove_pending_acknowledgement(_context);
+            stream->remove_pending_acknowledgement(buffer_state->buffer_id, _context);
         }
 
         Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state->buffer_id);
