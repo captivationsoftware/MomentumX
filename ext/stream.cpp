@@ -301,7 +301,9 @@ namespace MomentumX {
         if (loc != end) {
             _control->pending_acknowledgements.erase(loc);
         } else {
-            Utils::Logger::get_logger().warning("Attempted to remove pending acknowledgement that does not exist");
+            Utils::Logger::get_logger().warning(
+                std::string("Attempted to remove pending acknowledgement that does not exist for buffer: ") + std::to_string(buffer_id)
+            );
         }
     }
 

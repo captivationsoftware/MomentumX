@@ -55,22 +55,28 @@ struct ThreadingEventWrapper {
     py::object evt;
     ThreadingEventWrapper(py::object evt) : evt(evt) {}
 
-    bool is_set() {
-        if (evt.is_none()) {
-            return false;
-        }
-
+    bool is_none() {
         py::gil_scoped_acquire lock;  // acquire before calling into python code
-        return evt.attr("is_set")().cast<bool>();
+        return evt.is_none();
+    }
+
+    bool is_set() {
+        if (is_none()) {
+            return false;
+        } else {
+            py::gil_scoped_acquire lock;  // acquire before calling into python code
+            return evt.attr("is_set")().cast<bool>();
+        }
     }
 
     bool wait(double timeout) {
-        py::gil_scoped_acquire lock;  // acquire before calling into python code
-        if (evt.is_none()) {
+        if (is_none()) {
             std::this_thread::sleep_for(std::chrono::nanoseconds(int(timeout * 1e9)));
             return false;
+        } else {
+            py::gil_scoped_acquire lock;  // acquire before calling into python code
+            return evt.attr("wait")(timeout).cast<bool>();
         }
-        return evt.attr("wait")(timeout).cast<bool>();
     }
 };
 
@@ -219,8 +225,8 @@ struct BufferShim {
         return is_sent;
     }
     
-    auto release() -> bool {
-        return mx_stream_release(ctx.get(), stream.get(), buffer_state.get());
+    void release() {
+        buffer_state.reset();
     }
 };
 
@@ -288,7 +294,7 @@ struct StreamShim {
                 auto ctx_cp = ctx;        // copy for lambda
                 auto stream_cp = stream;  // copy for lambda
                 return ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [ctx_cp, stream_cp](BufferState* buffer_state) {
-                    //   mx_stream_release(ctx_cp.get(), stream_cp.get(), buffer_state);
+                      mx_stream_release(ctx_cp.get(), stream_cp.get(), buffer_state);
                     }));
             }
         }
