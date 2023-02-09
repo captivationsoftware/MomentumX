@@ -454,10 +454,6 @@ namespace MomentumX {
             // lock...
             Utils::write_lock(next_buffer->fd());
 
-            for (auto const& x : stream->_control->pending_acknowledgements) {
-                std::cout << "Still waiting for " << x.buffer_id << " and context " << x.context << " to clear" <<std::endl;
-            }
-
         } else {
             for (size_t _ = 0; _ < stream->buffer_count(); _++) {
                 next_buffer = _buffer_manager->next(stream->paths());
