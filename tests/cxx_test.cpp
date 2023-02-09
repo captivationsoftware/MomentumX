@@ -103,3 +103,71 @@ TEST_CASE("Iterator check") {
     REQUIRE(copied.at(3) == 30);
     REQUIRE(copied.at(4) == 40);
 }
+
+TEST_CASE("Remove check") {
+    using namespace MomentumX::Utils;
+    StaticVector<int32_t, 10> sv;
+
+    sv.push_back(10);
+    sv.push_back(11);
+    sv.push_back(12);
+    sv.push_back(13);
+    sv.push_back(14);
+    sv.push_back(15);
+
+    // Verify test setup
+    REQUIRE(sv.size() == 6);
+    REQUIRE(sv.at(0) == 10);
+    REQUIRE(sv.at(1) == 11);
+    REQUIRE(sv.at(2) == 12);
+    REQUIRE(sv.at(3) == 13);
+    REQUIRE(sv.at(4) == 14);
+    REQUIRE(sv.at(5) == 15);
+
+    // First element test
+    sv.erase(sv.begin());
+    REQUIRE(sv.size() == 5);
+    REQUIRE(sv.at(0) == 11);
+    REQUIRE(sv.at(1) == 12);
+    REQUIRE(sv.at(2) == 13);
+    REQUIRE(sv.at(3) == 14);
+    REQUIRE(sv.at(4) == 15);
+
+    // Middle element test
+    sv.erase(sv.begin() + 2);
+    REQUIRE(sv.size() == 4);
+    REQUIRE(sv.at(0) == 11);
+    REQUIRE(sv.at(1) == 12);
+    REQUIRE(sv.at(2) == 14);
+    REQUIRE(sv.at(3) == 15);
+
+    // Last element
+    sv.erase(sv.end() - 1);
+    REQUIRE(sv.size() == 3);
+    REQUIRE(sv.at(0) == 11);
+    REQUIRE(sv.at(1) == 12);
+    REQUIRE(sv.at(2) == 14);
+
+    // Setup full vector
+    sv.push_back(20);
+    sv.push_back(21);
+    sv.push_back(22);
+    sv.push_back(23);
+    sv.push_back(24);
+    sv.push_back(25);
+    sv.push_back(26);
+    REQUIRE(sv.size() == 10);
+
+    // Last element when full
+    sv.erase(sv.end() - 1);
+    REQUIRE(sv.size() == 9);
+    REQUIRE(sv.at(0) == 11);
+    REQUIRE(sv.at(1) == 12);
+    REQUIRE(sv.at(2) == 14);
+    REQUIRE(sv.at(3) == 20);
+    REQUIRE(sv.at(4) == 21);
+    REQUIRE(sv.at(5) == 22);
+    REQUIRE(sv.at(6) == 23);
+    REQUIRE(sv.at(7) == 24);
+    REQUIRE(sv.at(8) == 25);
+}
