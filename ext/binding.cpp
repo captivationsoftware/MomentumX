@@ -226,7 +226,6 @@ struct BufferShim {
     }
     
     void release() {
-        buffer_state.reset();
     }
 };
 
@@ -326,8 +325,10 @@ struct StreamShim {
         }
 
         char* data = reinterpret_cast<char*>(buffer->data());
-        return std::string(data, buffer->data_size());
-    }
+        std::string str(data, buffer->data_size());
+        buffer->release();
+        return str;
+    }   
 };
 
 struct ConsumerStreamShim : StreamShim {

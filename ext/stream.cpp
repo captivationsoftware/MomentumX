@@ -131,6 +131,7 @@ namespace MomentumX {
             return false;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedReadLock lock(_fd);
         return _control->sync;
     }
@@ -140,6 +141,7 @@ namespace MomentumX {
             return 0;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedReadLock lock(_fd);
         return _control->buffer_size;
     }
@@ -149,6 +151,7 @@ namespace MomentumX {
             return 0;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedReadLock lock(_fd);
         return _control->buffer_count;
     }
@@ -158,6 +161,7 @@ namespace MomentumX {
             return {};
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedReadLock lock(_fd);
         std::list<Stream::BufferState> buffer_states(_control->buffers.begin(), _control->buffers.end());
         if (sort) {
@@ -177,6 +181,7 @@ namespace MomentumX {
             return;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedWriteLock lock(_fd);
         const auto beg = _control->buffers.begin();
         const auto end = _control->buffers.end();
@@ -195,6 +200,7 @@ namespace MomentumX {
             return {};
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedReadLock lock(_fd);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
@@ -210,6 +216,7 @@ namespace MomentumX {
             return;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedWriteLock lock(_fd);
         try {
             _control->subscribers.push_back(context);
@@ -230,6 +237,7 @@ namespace MomentumX {
             return;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedWriteLock lock(_fd);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
@@ -245,11 +253,13 @@ namespace MomentumX {
             return {};
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedReadLock lock(_fd);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
-
-        return std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; }) != end;
+        const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; });
+        
+        return loc != end;
     }
 
     void Stream::set_pending_acknowledgements(size_t buffer_id) {
@@ -257,6 +267,7 @@ namespace MomentumX {
             return;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedWriteLock lock(_fd);
         for (auto const subscriber : _control->subscribers) {
             _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
@@ -267,6 +278,7 @@ namespace MomentumX {
 
     void Stream::remove_all_pending_acknowledgements(Context* context) {
         while(is_alive()) {
+            std::lock_guard<std::mutex> thread_lock(_mutex);
             Utils::ScopedWriteLock lock(_fd);
             auto const beg = _control->pending_acknowledgements.begin();
             auto const end = _control->pending_acknowledgements.end();
@@ -289,6 +301,7 @@ namespace MomentumX {
             return;
         }
 
+        std::lock_guard<std::mutex> thread_lock(_mutex);
         Utils::ScopedWriteLock lock(_fd);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
@@ -425,43 +438,53 @@ namespace MomentumX {
             current_buffer = _current_buffer_by_stream[stream];
         }
 
-        Stream::BufferState* buffer_state = NULL;
+        Stream::BufferState* buffer_state = nullptr;
         Buffer* next_buffer;
 
-        // attempt to get a lock (blocking if in sync mode)
-        for (size_t _ = 0; _ < stream->buffer_count(); _++) {
-            next_buffer = _buffer_manager->next(stream->paths());
+        if (stream->sync()) {
+            next_buffer = _buffer_manager->peek_next(stream->paths()); // peek
 
-            if (next_buffer != current_buffer) {
+            if (stream->has_pending_acknowledgements(next_buffer->id())) {
+                return nullptr;
+            }
+            
+            next_buffer = _buffer_manager->next(stream->paths()); // actually rotate the buffers
 
-                if (stream->sync()) {
-                    if (stream->has_pending_acknowledgements(next_buffer->id())) {
-                        return NULL;
-                    }
+            // When synchronous, block until we can obtain this buffer's
+            // lock...
+            Utils::write_lock(next_buffer->fd());
 
-                    // When synchronous, block until we can obtain this buffer's
-                    // lock...
-                    Utils::write_lock(next_buffer->fd());
-                } else {
-                    // Otherwise make a nonblocking attempt to get the write
-                    // lock
-                    if (!Utils::try_write_lock(next_buffer->fd())) {
-                        next_buffer = NULL;
-                    }
+            for (auto const& x : stream->_control->pending_acknowledgements) {
+                std::cout << "Still waiting for " << x.buffer_id << " and context " << x.context << " to clear" <<std::endl;
+            }
+
+        } else {
+            for (size_t _ = 0; _ < stream->buffer_count(); _++) {
+                next_buffer = _buffer_manager->next(stream->paths());
+
+                // ensure that we don't write to the same buffer repeatedly
+                if (next_buffer == current_buffer) {
+                    continue;
                 }
 
-                if (next_buffer != NULL) {
-                    std::lock_guard<std::mutex> lock(_mutex);
-                    _current_buffer_by_stream[stream] = next_buffer;
+                if (!Utils::try_write_lock(next_buffer->fd())) {
+                    next_buffer = nullptr;
+                }
 
-                    // create a new buffer state pointer and break out to the
-                    // caller
-                    buffer_state =
-                        new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(), 0, 0, ++_iteration_by_stream[stream]);
+                if (next_buffer != nullptr) {
                     break;
                 }
             }
         }
+        
+        std::lock_guard<std::mutex> lock(_mutex);
+        _current_buffer_by_stream[stream] = next_buffer;
+
+        // create a new buffer state pointer and break out to the
+        // caller
+        buffer_state =
+            new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(), 0, 0, ++_iteration_by_stream[stream]);
+
 
         return buffer_state;
     }
@@ -487,13 +510,13 @@ namespace MomentumX {
         }
         buffer->write_ts(buffer_state->data_timestamp);
 
-        Utils::unlock(buffer->fd());
-
         if (stream->sync()) {
             stream->set_pending_acknowledgements(buffer->id());
         }
 
         stream->update_buffer_state(buffer_state);
+
+        Utils::unlock(buffer->fd());
 
         delete buffer_state;
 
@@ -590,7 +613,7 @@ namespace MomentumX {
 
     void StreamManager::flush_buffer_state(Stream* stream) {
         if (stream->sync()) {
-            Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");
+        Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");
         } else {
             std::lock_guard<std::mutex> lock(_mutex);
             _iteration_by_stream[stream] = stream->buffer_states(true).back().iteration;

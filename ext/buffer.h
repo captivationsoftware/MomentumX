@@ -57,13 +57,11 @@ namespace MomentumX {
         void deallocate(Buffer* buffer);
         void deallocate_stream(const Utils::PathConfig& paths);
         Buffer* find(const Utils::PathConfig& paths, uint16_t id);
-        bool next_is_head(const Utils::PathConfig& paths);
+        Buffer* peek_next(const Utils::PathConfig& paths);
         Buffer* next(const Utils::PathConfig& paths);
-        Buffer* head_by_stream(const Utils::PathConfig& paths);
 
        private:
         std::map<std::string, std::list<Buffer*>> _buffers_by_stream;
-        std::map<std::string, Buffer*> _head_buffer_by_stream;
         std::mutex _mutex;
     };
 };  // namespace MomentumX

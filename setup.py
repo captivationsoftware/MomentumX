@@ -19,6 +19,7 @@ setup(
     cmake_args=[
         "-DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=ON",
         "-DCMAKE_BUILD_TYPE:STRING=Release", # set to Debug to run interactive debugger
+        # "-DCMAKE_BUILD_TYPE:STRING=Debug", # set to Debug to run interactive debugger
     ],
     extras_require={"test": ["pytest", "numpy"]},
     python_requires=">=3.6",

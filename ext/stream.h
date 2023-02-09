@@ -92,6 +92,7 @@ namespace MomentumX {
         int _fd;
         char* _data;
         ControlBlock* _control;
+        std::mutex _mutex;
     };
 
     class StreamManager {

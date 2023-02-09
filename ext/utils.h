@@ -314,7 +314,7 @@ namespace MomentumX {
                     throw std::out_of_range("Cannot erase out of bounds iterator");
                 }
 
-                std::memmove(t, t + 1, end() - t);  // Shift everything left, clobbering `t`
+                std::memmove(t, t + 1, (end() - t) * sizeof(T));  // Shift everything left, clobbering `t`
                 pop_back();                         // Delete final value from end
                 return t;
             }

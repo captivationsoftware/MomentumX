@@ -14,7 +14,7 @@ while stream.subscriber_count == 0:
     if cancel.wait(0.5):
         break
 
-for n in range(500000):
+for n in range(1, 500000):
     assert stream.is_alive
 
     if stream.subscriber_count == 0:
