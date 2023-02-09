@@ -17,3 +17,4 @@ while stream.is_alive:
         if cancel.wait(0.5):
             break
         print("Waiting for data")
+    

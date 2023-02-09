@@ -13,7 +13,6 @@
 
 #include "buffer.h"
 #include "context.h"
-#include "momentumx.h"
 #include "stream.h"
 
 namespace py = pybind11;
@@ -91,8 +90,23 @@ struct BufferShim {
         : ctx(ctx), stream(stream), buffer_state(buffer_state), cursor_index(0), max_cursor_index(0), is_sent(false) {}
     ~BufferShim() = default;
 
-    const uint8_t* data() const { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
-    uint8_t* data() { return mx_data_address(ctx.get(), stream.get(), buffer_state->buffer_id); }
+    const uint8_t* data() const { 
+        try {
+            return ctx->data_address(stream.get(), buffer_state->buffer_id); 
+        } catch (std::exception& ex) {
+            Logger::get_logger().error(ex.what());
+            return NULL;
+        }
+    }
+
+    uint8_t* data() { 
+        try {
+            return ctx->data_address(stream.get(), buffer_state->buffer_id); 
+        } catch (std::exception& ex) {
+            Logger::get_logger().error(ex.what());
+            return NULL;
+        }
+    }
 
     py::bytes get_byte(size_t index) const {
         if (index >= buffer_size()) {
@@ -219,13 +233,23 @@ struct BufferShim {
             throw DataOverflowException();
         }
 
-        BufferState* copy = new BufferState(*buffer_state);  // mx_stream_send takes ownership and deletes
+        BufferState* copy = new BufferState(*buffer_state);  // context->send takes ownership and deletes
         copy->data_size = data_size;
-        is_sent = mx_stream_send(ctx.get(), stream.get(), copy);
-        return is_sent;
+        try {
+            is_sent = ctx->send(stream.get(), copy);
+            return is_sent;
+        } catch (std::exception& ex) {
+            Logger::get_logger().error(ex.what());
+            return false;
+        }
     }
     
     void release() {
+        try {
+            ctx->release(stream.get(), buffer_state.get());
+        } catch (std::exception& ex) {
+            Logger::get_logger().error(ex.what());
+        }
     }
 };
 
@@ -259,7 +283,14 @@ struct StreamShim {
     auto next_to_send(bool blocking) -> std::optional<WriteBufferShim> {
         py::gil_scoped_release nogil;
         while (!evt.is_set()) {
-            MomentumX::Stream::BufferState* buffer_info = mx_stream_next(ctx.get(), stream.get());
+            BufferState* buffer_info = nullptr;
+            
+            try {
+                buffer_info = ctx->next(stream.get());
+            } catch (std::exception& ex) {
+                Logger::get_logger().error(ex.what());
+            }
+
             if (buffer_info == nullptr) {
                 if (blocking) {
                     evt.wait(polling_interval);
@@ -282,7 +313,14 @@ struct StreamShim {
                 return {};
             }
 
-            BufferState* buffer_info = mx_stream_receive(ctx.get(), stream.get(), minimum_ts);
+            BufferState* buffer_info = nullptr;
+            
+            try {
+                buffer_info = ctx->receive(stream.get(), minimum_ts);
+            } catch (std::exception& ex) {
+                Logger::get_logger().error(ex.what());
+            }
+
             if (buffer_info == nullptr) {
                 if (blocking) {
                     evt.wait(polling_interval);
@@ -290,18 +328,22 @@ struct StreamShim {
                     return {};
                 }
             } else {
-                auto ctx_cp = ctx;        // copy for lambda
-                auto stream_cp = stream;  // copy for lambda
-                return ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [ctx_cp, stream_cp](BufferState* buffer_state) {
-                      mx_stream_release(ctx_cp.get(), stream_cp.get(), buffer_state);
-                    }));
+                return ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [&](BufferState* buffer_state) {
+
+                }));
             }
         }
 
         return {};
     }
 
-    auto flush() -> void { mx_stream_flush(ctx.get(), stream.get()); }
+    auto flush() -> void { 
+        try {
+            return ctx->flush(stream.get());
+        } catch (std::exception& ex) {
+            Logger::get_logger().error(ex.what());
+        }
+    }
 
     auto send_string(const std::string& str, bool blocking) -> bool {
         std::optional<BufferShim> buffer = next_to_send(blocking);
@@ -315,6 +357,7 @@ struct StreamShim {
 
         char* data = reinterpret_cast<char*>(buffer->data());
         std::copy(str.begin(), str.end(), data);
+        
         return buffer->send(str.size());
     }
 
@@ -350,7 +393,13 @@ static ProducerStreamShim producer_stream(const std::string& stream_name,
     auto c = Context::scoped_producer_singleton(context);
     auto wrapped_evt = ThreadingEventWrapper(evt);
 
-    auto stream = mx_stream(c.get(), stream_name.c_str(), buffer_size, buffer_count, sync);
+    Stream* stream = nullptr;
+
+    try {
+        stream = c->stream(stream_name, buffer_size, buffer_count, sync);
+    } catch (std::exception& ex) {
+        Logger::get_logger().error(ex.what());
+    }
 
     if (!stream) {
         throw StreamExistsException();
@@ -370,10 +419,22 @@ static ConsumerStreamShim consumer_stream(const std::string& stream_name, const 
     auto wrapped_evt = ThreadingEventWrapper(evt);
     Stream* stream = nullptr;
 
-    stream = mx_subscribe(c.get(), stream_name.c_str());
+    try {
+         stream = c->subscribe(std::string(stream_name));
+    } catch (std::exception& ex) {
+        Logger::get_logger().error(ex.what());
+    }
+
     if (stream) {
-        return ConsumerStreamShim(c, std::shared_ptr<Stream>(stream, [c](Stream* stream) { /*mx_unsubscribe(c.get(), stream);*/ }), wrapped_evt,
-                                  polling_interval);
+        return ConsumerStreamShim(c, std::shared_ptr<Stream>(stream, [c](Stream* stream) { 
+            // try {
+            //     ctx->unsubscribe(stream.get()) 
+            // } catch (std::exception& ex) {
+            //     Logger::get_logger().error(ex.what());
+            // }
+        }), 
+        wrapped_evt,
+        polling_interval);
     }
 
     throw StreamUnavailableException();

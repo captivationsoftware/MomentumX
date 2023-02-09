@@ -29,8 +29,6 @@ set(SRCS
     ext/buffer.h
     ext/context.cpp
     ext/context.h
-    ext/momentumx.cpp
-    ext/momentumx.h
     ext/stream.cpp
     ext/stream.h
     ext/utils.h

@@ -35,3 +35,5 @@ while stream.is_alive:
             print("Received {:.2f} GB/sec".format(bytes_received / elapsed / 1.0e9))
             print(f"Missed: {skip_count}")
             skip_count = 0
+
+        buffer.release()
