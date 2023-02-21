@@ -37,29 +37,6 @@ namespace MomentumX {
         size_t subscriber_count(Stream* stream);
         void log_level(Utils::Logger::Level level);
 
-        template <Stream::Role TRole>
-        static std::shared_ptr<Context> scoped_singleton_impl(const std::string& context) {
-            static std::mutex m;
-            std::lock_guard<std::mutex> lock(m);
-
-            static std::map<std::string, std::weak_ptr<Context>> as_weak_set;
-            std::weak_ptr<Context>& as_weak = as_weak_set[context];
-            std::shared_ptr<Context> as_strong = as_weak.lock();
-            if (!as_strong) {
-                as_strong = std::make_shared<Context>(context);
-                as_weak = as_strong;
-            }
-
-            return as_strong;
-        }
-
-        static std::shared_ptr<Context> scoped_producer_singleton(const std::string& context) {
-            return scoped_singleton_impl<Stream::Role::PRODUCER>(context);  // DRY hack
-        }
-        static std::shared_ptr<Context> scoped_consumer_singleton(const std::string& context) {
-            return scoped_singleton_impl<Stream::Role::CONSUMER>(context);  // DRY hack
-        }
-
         std::string context_path() const;
 
        private:

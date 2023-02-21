@@ -511,5 +511,27 @@ def test_buffer_cleanup_both()->None:
         assert not os.path.exists(shm_buff_fname)
         assert not os.path.exists(tmp_buff_fname)  # override location
 
+def test_two_consumer_copies()->None:
+    import momentumx as mx
+
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)
+        consumer1 = mx.Consumer(_STREAM_NAME, event)
+        consumer2 = mx.Consumer(_STREAM_NAME, event)
+
+        def push_some()->None:
+            for idx in range(3):
+                producer.send_string(f"{idx}")
+
+        with cf.ThreadPoolExecutor(max_workers=1) as pool:
+            f = pool.submit(push_some)
+
+            assert consumer1.receive_string() == "0"
+            assert consumer2.receive_string() == "0"
+            assert consumer1.receive_string() == "1"
+            assert consumer2.receive_string() == "1"
+            assert consumer1.receive_string() == "2"
+            assert consumer2.receive_string() == "2"
+
 if __name__ == "__main__":
     test_buffer_cleanup()
