@@ -533,5 +533,75 @@ def test_two_consumer_copies()->None:
             assert consumer1.receive_string() == "2"
             assert consumer2.receive_string() == "2"
 
+def disabled_test_grab_oldest()->None:
+    import momentumx as mx    
+    import datetime
+
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 5, False, event)
+        consumer = mx.Consumer(_STREAM_NAME, event)
+
+        def push(val: int) -> None:
+            buf = producer.next_to_send()
+            buf[0] = bytes([val])
+            buf.send()
+
+        # First buffer should be in order
+        push(0)
+        push(0)
+        assert consumer.receive().buffer_id == 1
+        assert consumer.receive().buffer_id == 2
+
+        # Consume 4 buffers and verify wrap-around
+        push(10)
+        push(20)
+        push(30)
+        push(40)
+        push(50)
+        b3 = consumer.receive()
+        b4 = consumer.receive()
+        b5 = consumer.receive()
+        b1 = consumer.receive()
+        b2 = consumer.receive()
+        assert b3.buffer_id == 3
+        assert b4.buffer_id == 4 # buffer to be held
+        assert b5.buffer_id == 5
+        assert b1.buffer_id == 1
+        assert b2.buffer_id == 2
+        assert b3[0] == bytes([10])
+        assert b4[0] == bytes([20]) # value to be held
+        assert b5[0] == bytes([30])
+        assert b1[0] == bytes([40])
+        assert b2[0] == bytes([50])
+
+        # Retain a buffer, and purge remaining (out of order)
+        del b5
+        del b3
+        del b2
+        del b1
+
+        # Consume 4 more buffers and verify oldest is used first
+        push(60)
+        push(70)
+        push(80)
+        push(90)
+        b3 = consumer.receive()
+        b5 = consumer.receive()
+        # b4 still held, skipped
+        b1 = consumer.receive()
+        b2 = consumer.receive()
+        assert b3.buffer_id == 3
+        assert b5.buffer_id == 5
+        assert b1.buffer_id == 1
+        assert b2.buffer_id == 2
+        assert b3[0] == bytes([60])
+        assert b5[0] == bytes([70])
+        assert b1[0] == bytes([80])
+        assert b2[0] == bytes([90])
+
+        # verify b4 not modified
+        assert b4[0] == bytes([20])
+
+
 if __name__ == "__main__":
     test_buffer_cleanup()
