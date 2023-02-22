@@ -390,7 +390,7 @@ static ProducerStreamShim producer_stream(const std::string& stream_name,
                                           const py::object& evt,
                                           double polling_interval,
                                           const std::string& context) {
-    auto c = Context::scoped_producer_singleton(context);
+    auto c = std::make_shared<Context>(context);
     auto wrapped_evt = ThreadingEventWrapper(evt);
 
     Stream* stream = nullptr;
@@ -415,7 +415,7 @@ static ProducerStreamShim producer_stream(const std::string& stream_name,
 static ConsumerStreamShim consumer_stream(const std::string& stream_name, const py::object& evt, double polling_interval, const std::string& context) {
     py::gil_scoped_release nogil;  // release gil since the constructor blocks
 
-    auto c = Context::scoped_consumer_singleton(context);
+    auto c = std::make_shared<Context>(context);
     auto wrapped_evt = ThreadingEventWrapper(evt);
     Stream* stream = nullptr;
 
