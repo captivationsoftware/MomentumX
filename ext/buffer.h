@@ -42,6 +42,7 @@ namespace MomentumX {
 
         const Utils::PathConfig _paths;
         const std::string _backing_filepath;
+        const std::string _backing_mutex_name;
         uint16_t _id;
         size_t _size;
         bool _is_create;

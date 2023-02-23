@@ -44,14 +44,11 @@ struct DataOverflowException : public std::exception {
 };
 
 struct AlreadySentException : public std::exception {
-    const char* what() const noexcept override {
-        return "Buffer has already been sent and can no longer be modified and/or "
-               "sent again";
-    }
+    const char* what() const noexcept override { return "Buffer has already been sent and can no longer be modified and/or sent again"; }
 };
 
 struct ReleasedBufferException : public std::exception {
-    const char* what() const noexcept override { return "Buffer has already been released and can not longer be accessed"; }
+    const char* what() const noexcept override { return "Buffer has been released and can not longer be accessed"; }
 };
 
 struct ThreadingEventWrapper {
@@ -256,13 +253,19 @@ struct BufferShim {
             return false;
         }
     }
-
-    void release() { _unchecked_buffer_state.reset(); }
 };
 
 struct ReadBufferShim : BufferShim {
     ReadBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
         : BufferShim(ctx, stream, buffer_state) {}
+
+    void release() {
+        const auto copy = _unchecked_buffer_state;  // copy (could be none if previously released)
+        if (copy) {
+            ctx->release(stream.get(), *copy);
+        }
+        _unchecked_buffer_state.reset();
+    }
 };
 struct WriteBufferShim : BufferShim {
     WriteBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
@@ -367,7 +370,7 @@ struct StreamShim {
     }
 
     auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string {
-        std::optional<BufferShim> buffer = receive(minimum_ts, blocking);
+        std::optional<ReadBufferShim> buffer = receive(minimum_ts, blocking);
         if (!buffer) {
             return "";
         }

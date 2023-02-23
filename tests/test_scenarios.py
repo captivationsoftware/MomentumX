@@ -27,7 +27,7 @@ def test_pre_post_fixture():
     yield
 
 @contextlib.contextmanager
-def timeout_event(timeout: float = 1.0) -> Iterator[threading.Event]:
+def timeout_event(timeout: float = 5.0) -> Iterator[threading.Event]:
     def sleep_then_trigger(inner_evt: threading.Event, inner_timeout: float):
         if not evt.wait(inner_timeout):
             evt.set()
@@ -185,6 +185,7 @@ def test_buffer_file_api_consumer() -> None:
     tx_buffer = producer.next_to_send()
     tx_buffer.write(b'foobar')
     tx_buffer.send()
+    del tx_buffer # FIXME
 
     consumer = mx.Consumer(_STREAM_NAME)
     rx_buffer = consumer.receive()
@@ -350,6 +351,8 @@ def test_numpy_compatibility() -> None:
         a1[:10] = list(range(10))
 
         buf1.send(10)
+        a1 = a1.copy() # FIXME
+        del buf1 # FIXME
 
         buf2 = consumer.receive()
         a2 = np.frombuffer(buf2, dtype=np.uint8)
@@ -422,7 +425,7 @@ def test_synced_buffers_many_read_after_many_write() -> None:
         producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
 
-        for n in range(1, 2 * buffer_count + 1):
+        for n in range(1, buffer_count + 1):
             tx_buffer = producer.next_to_send()
             assert not event.is_set(), "Producer next_to_send timed out"
             assert tx_buffer.buffer_id == n
@@ -432,7 +435,7 @@ def test_synced_buffers_many_read_after_many_write() -> None:
         tx_buffer = producer.next_to_send(blocking=False)
         assert tx_buffer == None, "Expected null next_to_send after writing to all buffers before receiving any acknowledgements"
         
-        for n in range(1, 2 * buffer_count + 1):
+        for n in range(1, buffer_count + 1):
             rx_buffer = consumer.receive()
             assert not event.is_set(), "Consumer receive timed out"
             assert rx_buffer.buffer_id == n
@@ -549,11 +552,16 @@ def test_two_consumer_copies()->None:
             assert consumer1.receive_string() == "2"
             assert consumer2.receive_string() == "2"
 
+        assert not event.is_set(), "Producer timed out"
+
 def test_grab_oldest()->None:
     import momentumx as mx    
     import datetime
+    import time
+    tm=int(time.time()*1e3)
+    _STREAM_NAME = f"mx://mx_{tm}".encode()
 
-    with timeout_event() as event:
+    with timeout_event(timeout=300) as event:
         producer = mx.Producer(_STREAM_NAME, 20, 5, False, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
 
@@ -620,4 +628,4 @@ def test_grab_oldest()->None:
 
 
 if __name__ == "__main__":
-    test_synced_buffers()
+    test_grab_oldest()

@@ -22,6 +22,7 @@ if(SKBUILD)
   list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 endif()
 
+#find_package(Boost 1.77 REQUIRED COMPONENTS interprocess)
 find_package(pybind11 CONFIG REQUIRED)
 
 set(SRCS

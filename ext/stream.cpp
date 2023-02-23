@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <boost/interprocess/creation_tags.hpp>
 #include <condition_variable>
 #include <cstring>
 #include <iostream>
@@ -51,7 +52,7 @@ namespace MomentumX {
           _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT | O_EXCL : 0), S_IRWXU)),
           _data(nullptr),
           _control(nullptr),
-          _control_mutex(_fd) {
+          _control_mutex(bip::open_or_create, paths.stream_mutex.c_str()) {
         if (_fd < 0) {
             if (role == Role::CONSUMER) {
                 throw std::runtime_error("Failed to open shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
@@ -62,7 +63,6 @@ namespace MomentumX {
 
         const std::string __fname = _paths.stream_path + (role == Role::CONSUMER ? "(c)" : "(p)");
         Utils::fnames()[_fd] = __fname;
-        std::cout << "[PING]: -- fd " << _fd << " is " << __fname << std::endl;
         const size_t size_required = Utils::page_aligned_size(sizeof(ControlBlock));
 
         if (role == Role::PRODUCER) {
@@ -111,6 +111,7 @@ namespace MomentumX {
         } else {
             Utils::Logger::get_logger().info(std::string("Closed Stream (" + std::to_string((uint64_t)this) + ")"));
         }
+        _control_mutex.remove(_paths.stream_mutex.c_str());
     }
 
     bool Stream::is_alive() {
@@ -214,15 +215,12 @@ namespace MomentumX {
             throw std::runtime_error("Producer stream cannot add subscribers");
         }
 
-        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         if (!is_alive()) {
             return;
         }
 
-        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         Utils::OmniWriteLock lock(_control_mutex);
 
-        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         try {
             _control->subscribers.push_back(context);
         } catch (std::exception& e) {
@@ -257,9 +255,7 @@ namespace MomentumX {
             return {};
         }
 
-        std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
         Utils::OmniReadLock lock(_control_mutex);
-        std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
         const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; });
@@ -435,18 +431,14 @@ namespace MomentumX {
         std::shared_ptr<Utils::OmniWriteLock> lock_ptr;
 
         if (stream->sync()) {
-std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
             next_buffer = _buffer_manager->peek_next(stream->paths());  // peek
-std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
 
             if (stream->has_pending_acknowledgements(next_buffer->id())) {
                 return nullptr;
             }
 
-std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
             next_buffer = _buffer_manager->next(stream->paths());                     // actually rotate the buffers
             lock_ptr = std::make_shared<Utils::OmniWriteLock>(next_buffer->mutex());  // lock write mutex
-std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
         } else {
             for (size_t _ = 0; _ < stream->buffer_count(); _++) {
                 next_buffer = _buffer_manager->next(stream->paths());
@@ -456,7 +448,7 @@ std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << s
                     continue;
                 }
 
-                Utils::OmniWriteLock lock(next_buffer->mutex(), std::defer_lock);  // unlocked
+                Utils::OmniWriteLock lock(next_buffer->mutex(), bip::defer_lock);  // unlocked
                 if (lock.try_lock()) {
                     lock_ptr = std::make_shared<Utils::OmniWriteLock>(std::move(lock));  // locked
                 } else {
@@ -476,7 +468,6 @@ std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << s
         return std::shared_ptr<Stream::BufferState>(
             new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(), 0, 0, ++_iteration_by_stream[stream]),
             [lock_ptr](Stream::BufferState* state) {
-                std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  unlocking write lock with lock_ptr " << lock_ptr.get() << std::endl;
 
                 delete state;  // lock_ptr maintains file lock until this deleter called
             });
@@ -540,9 +531,7 @@ std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << s
                 throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
             }
 
-            std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  prelock" << std::endl;
-            Utils::OmniReadLock lock(buffer->mutex(), std::defer_lock);
-            std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  postlock" << std::endl;
+            Utils::OmniReadLock lock(buffer->mutex(), bip::defer_lock);
 
             if (lock.try_lock()) {
                 uint64_t last_data_timestamp;
@@ -554,7 +543,6 @@ std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << s
                     // NOTE: the lock_ptr
                     auto lock_ptr = std::make_shared<Utils::OmniReadLock>(std::move(lock));
                     return std::shared_ptr<Stream::BufferState>(new Stream::BufferState(buffer_state), [lock_ptr](Stream::BufferState* state) {
-                        std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  unlocking read lock" << std::endl;
                         delete state;  // still delete
                     });
                 }
@@ -622,13 +610,9 @@ std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << s
     void StreamManager::release_buffer_state(Stream* stream, const Stream::BufferState& buffer_state) {
         std::lock_guard<std::mutex> lock(_mutex);
 
-std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         if (stream->sync()) {
-        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
-std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
+            stream->remove_pending_acknowledgement(buffer_state.buffer_id, _context);
         }
-
-        std::shared_ptr<Buffer> buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
     }
 
     size_t subscriber_count(Stream* stream) {

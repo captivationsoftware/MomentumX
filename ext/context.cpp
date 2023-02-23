@@ -69,7 +69,6 @@ namespace MomentumX {
     }
 
     Stream* Context::subscribe(std::string stream_name) {
-        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__<<")" << std::endl;
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
         }
@@ -84,7 +83,6 @@ namespace MomentumX {
         std::lock_guard<std::mutex> lock(_mutex);
         Stream* stream = _stream_manager.subscribe(stream_name);
         _subscriptions.insert(stream);
-        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__<<")" << std::endl;
         return stream;
     }
 

@@ -1,6 +1,9 @@
 #include <errno.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <boost/interprocess/creation_tags.hpp>
+#include <boost/interprocess/interprocess_fwd.hpp>
+#include <boost/interprocess/sync/named_sharable_mutex.hpp>
 #include <cstring>
 #include <iostream>
 #include <list>
@@ -10,44 +13,39 @@
 #include "buffer.h"
 #include "utils.h"
 
+namespace bip = boost::interprocess;
 namespace MomentumX {
 
-    const uint16_t Buffer::MAX_UINT16_T = -1; // intentionally wrap
+    const uint16_t Buffer::MAX_UINT16_T = -1;  // intentionally wrap
 
-    Buffer::Buffer(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) :
-        _paths(paths),
-        _backing_filepath(paths.buffer_path(id)),
-        _id(id),
-        _size(0),
-        _is_create(create),
-        _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU)),
-        _address(nullptr),
-        _mutex(_fd)
-    {
+    Buffer::Buffer(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create)
+        : _paths(paths),
+          _backing_filepath(paths.buffer_path(id)),
+          _backing_mutex_name(paths.buffer_mutex_name(id)),
+          _id(id),
+          _size(0),
+          _is_create(create),
+          _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU)),
+          _address(nullptr),
+          _mutex(bip::open_or_create, _backing_mutex_name.c_str()) {
         if (_fd < 0) {
             if (_is_create) {
                 throw std::runtime_error("Failed to create shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
             } else {
                 throw std::runtime_error("Failed to open shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
             }
-        } 
+        }
         std::lock_guard<std::mutex> lock(Utils::fnames_m);
-        Utils::fnames()[_fd]=_backing_filepath;
-        std::cout <<"[PING]: -- fd "<< _fd << " is " << _backing_filepath << std::endl;
+        Utils::fnames()[_fd] = _backing_filepath;
 
         // do the ftruncate to resize and (re)mmap
-        resize_remap(size);     
+        resize_remap(size);
 
         if (_is_create) {
-            Utils::Logger::get_logger().info(
-                std::string("Created Buffer (" + std::to_string((uint64_t) this) + ")")          
-            );
+            Utils::Logger::get_logger().info(std::string("Created Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            Utils::Logger::get_logger().info(
-                std::string("Opened Buffer (" + std::to_string((uint64_t) this) + ")")          
-            );
+            Utils::Logger::get_logger().info(std::string("Opened Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
-
     };
 
     Buffer::~Buffer() {
@@ -55,7 +53,7 @@ namespace MomentumX {
             close(_fd);
 
             if (_is_create) {
-                int return_val = std::remove(_backing_filepath.c_str()); 
+                int return_val = std::remove(_backing_filepath.c_str());
                 if (return_val != 0) {
                     std::stringstream ss;
                     ss << "Unable to delete buffer file \"" << _backing_filepath << "\" with error: " << return_val;
@@ -65,14 +63,12 @@ namespace MomentumX {
         }
 
         if (_is_create) {
-            Utils::Logger::get_logger().info(
-                std::string("Deleted Buffer (" + std::to_string((uint64_t) this) + ")")          
-            );
+            Utils::Logger::get_logger().info(std::string("Deleted Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            Utils::Logger::get_logger().info(
-                std::string("Closed Buffer (" + std::to_string((uint64_t) this) + ")")          
-            );
+            Utils::Logger::get_logger().info(std::string("Closed Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
+
+        _mutex.remove(_backing_mutex_name.c_str());
     }
 
     const uint16_t Buffer::id() {
@@ -110,12 +106,11 @@ namespace MomentumX {
     uint8_t* Buffer::address() {
         return _address;
     }
-    
+
     void Buffer::resize_remap(size_t size) {
         size_t size_required = Utils::page_aligned_size(size);
         if (_size < size_required) {
-
-            // If we created this buffer (i.e. passed O_CREAT flag), 
+            // If we created this buffer (i.e. passed O_CREAT flag),
             // then also perform a truncate to ensure that we are sized
             // appropriately for a call to mmap
             if (_is_create) {
@@ -128,11 +123,10 @@ namespace MomentumX {
             // Mmap the file, or remap if previously mapped
             uint8_t* address;
             if (_size == 0) {
-                address = (uint8_t* ) mmap(nullptr, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
+                address = (uint8_t*)mmap(nullptr, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
             } else {
-                address = (uint8_t* ) mremap(_address, _size, size_required, MREMAP_MAYMOVE);
+                address = (uint8_t*)mremap(_address, _size, size_required, MREMAP_MAYMOVE);
             }
-
 
             if (_is_create) {
                 std::memset(address, 0, size_required);
@@ -148,7 +142,7 @@ namespace MomentumX {
     }
 
     std::shared_ptr<Buffer> BufferManager::allocate(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) {
-        std::lock_guard<std::mutex> lock(_mutex); 
+        std::lock_guard<std::mutex> lock(_mutex);
         auto buffer = std::make_shared<Buffer>(paths, id, size, create);
         _buffers_by_stream[paths.stream_name].push_back(buffer);
 
@@ -194,4 +188,4 @@ namespace MomentumX {
         std::lock_guard<std::mutex> lock(_mutex);
         return _buffers_by_stream[paths.stream_name].front();
     }
-} // namespace MomentumX
+}  // namespace MomentumX
