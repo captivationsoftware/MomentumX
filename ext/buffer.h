@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <shared_mutex>
 
 #include "utils.h"
 
@@ -34,6 +35,8 @@ namespace MomentumX {
         Buffer& operator=(Buffer&&) = delete;
         Buffer& operator=(const Buffer&) = delete;
 
+        inline Utils::OmniMutex& mutex() const { return _mutex; }
+
        private:
         friend class BufferManager;
 
@@ -44,24 +47,24 @@ namespace MomentumX {
         bool _is_create;
         int _fd;
         uint8_t* _address;
+        mutable Utils::OmniMutex _mutex; // defined after _fd defined
 
         void resize_remap(size_t size);
     };
 
     class BufferManager {
        public:
-        BufferManager();
-        ~BufferManager();
+        BufferManager() = default;
+        ~BufferManager() = default;
 
-        Buffer* allocate(const Utils::PathConfig& paths, uint16_t id, size_t size = 0, bool create = false);
-        void deallocate(Buffer* buffer);
+        std::shared_ptr<Buffer> allocate(const Utils::PathConfig& paths, uint16_t id, size_t size = 0, bool create = false);
         void deallocate_stream(const Utils::PathConfig& paths);
-        Buffer* find(const Utils::PathConfig& paths, uint16_t id);
-        Buffer* peek_next(const Utils::PathConfig& paths);
-        Buffer* next(const Utils::PathConfig& paths);
+        std::shared_ptr<Buffer> find(const Utils::PathConfig& paths, uint16_t id);
+        std::shared_ptr<Buffer> peek_next(const Utils::PathConfig& paths);
+        std::shared_ptr<Buffer> next(const Utils::PathConfig& paths);
 
        private:
-        std::map<std::string, std::list<Buffer*>> _buffers_by_stream;
+        std::map<std::string, std::list<std::shared_ptr<Buffer>>> _buffers_by_stream;
         std::mutex _mutex;
     };
 };  // namespace MomentumX

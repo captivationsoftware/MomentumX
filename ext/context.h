@@ -27,12 +27,12 @@ namespace MomentumX {
         bool is_subscribed(std::string stream_name);
         Stream* subscribe(std::string stream_name);
         void unsubscribe(Stream* stream);
-        Stream::BufferState* next(Stream* stream);
-        bool send(Stream* stream, Stream::BufferState* buffer_state);
-        Stream::BufferState* receive(Stream* stream, uint64_t minimum_timestamp = 1);
-        Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id);
+        std::shared_ptr<Stream::BufferState> next(Stream* stream);
+        bool send(Stream* stream, const Stream::BufferState& buffer_state);
+        std::shared_ptr<Stream::BufferState> receive(Stream* stream, uint64_t minimum_timestamp = 1);
+        // Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id);
         void flush(Stream* stream);
-        void release(Stream* stream, Stream::BufferState* buffer_state);
+        void release(Stream* stream, const Stream::BufferState& buffer_state);
         uint8_t* data_address(Stream* stream, uint16_t buffer_id);
         size_t subscriber_count(Stream* stream);
         void log_level(Utils::Logger::Level level);

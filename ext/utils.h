@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -13,8 +14,12 @@
 #include <functional>
 #include <initializer_list>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
+#include <shared_mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -111,69 +116,6 @@ namespace MomentumX {
             return _mutex;
         };
 
-        static void read_lock(int fd, off_t from = 0, off_t size = 0) {
-            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
-            struct flock lock {
-                F_RDLCK, SEEK_SET, from, size
-            };
-            fcntl(fd, F_SETLKW, &lock);
-        }
-
-        static bool try_read_lock(int fd, off_t from = 0, off_t size = 0) {
-            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
-            struct flock lock {
-                F_RDLCK, SEEK_SET, from, size
-            };
-            return fcntl(fd, F_SETLK, &lock) > -1;
-        }
-
-        static void write_lock(int fd, off_t from = 0, off_t size = 0) {
-            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
-            struct flock lock {
-                F_WRLCK, SEEK_SET, from, size
-            };
-            fcntl(fd, F_SETLKW, &lock);
-        }
-
-        static bool try_write_lock(int fd, off_t from = 0, off_t size = 0) {
-            std::lock_guard<std::mutex> mlock(_file_lock_mutex());
-            struct flock lock {
-                F_WRLCK, SEEK_SET, from, size
-            };
-            return fcntl(fd, F_SETLK, &lock) > -1;
-        }
-
-        static void unlock(int fd, off_t from = 0, off_t size = 0) {
-            struct flock lock {
-                F_UNLCK, SEEK_SET, from, size
-            };
-            fcntl(fd, F_SETLK, &lock);
-        }
-
-        template <typename T>
-        static void with_write_lock(int fd, const T& func) {
-            try {
-                write_lock(fd);
-                func();
-                unlock(fd);
-            } catch (...) {
-                unlock(fd);
-                throw;
-            }
-        }
-
-        template <typename T>
-        static void with_read_lock(int fd, const T& func) {
-            try {
-                read_lock(fd);
-                func();
-                unlock(fd);
-            } catch (...) {
-                unlock(fd);
-                throw;
-            }
-        }
-
         class Logger {
            public:
             enum Level { DEBUG = 0, INFO = 1, WARNING = 2, ERROR = 3 };
@@ -262,27 +204,165 @@ namespace MomentumX {
             }
         };
 
-        class ScopedReadLock {
+        static std::mutex fnames_m;
+        inline std::map<int, std::string>& fnames() {
+            static std::map<int, std::string> singleton;
+            return singleton;
+        }
+
+        struct OmniMutex {
            public:
-            ScopedReadLock(int fd, off_t start = 0, off_t len = 0) : _fd(fd), _start(start), _len(len) { read_lock(fd, start, len); }
-            ~ScopedReadLock() { unlock(_fd, _start, _len); }
+            explicit OmniMutex(int fd) : _fd(fd) {}
+            ~OmniMutex() = default;
+
+            inline void pprint(const char* func, int fd) {
+                std::lock_guard<std::mutex> lock(fnames_m);
+                std::string fname = fnames()[fd];
+                if (fname.empty()) {
+                    fname = std::to_string(fd);
+                }
+                std::cout << fname << " - " << func << " c=" << _counter.load() << std::endl;
+            }
+
+            void lock() {
+                _mutex.lock();
+                inc();
+                pprint(__func__, _fd);
+                struct flock lock {
+                    F_WRLCK, SEEK_SET, 0, 0
+                };
+                const int lock_rc = fcntl(_fd, F_SETLKW, &lock);
+                if (lock_rc < 0) {
+                    Utils::Logger::get_logger().error("Error: an error occurred while (blocking) write-locking file: " + std::to_string(lock_rc));
+                }
+            }
+
+            bool try_lock() {
+                // acquire thread lock
+                const bool has_thread_lock = _mutex.try_lock();
+                if (!has_thread_lock) {
+                    return false;
+                }
+
+                // acquire file lock
+                struct flock lock {
+                    F_WRLCK, SEEK_SET, 0, 0
+                };
+                const bool has_flock = (fcntl(_fd, F_SETLK, &lock) > -1);
+                if (!has_flock) {
+                    _mutex.unlock();
+                    return false;
+                }
+                // update file lock reference count
+                inc();
+                pprint(__func__, _fd);
+                return true;
+            }
+
+            void unlock() {
+                const auto c = dec();
+                pprint(__func__, _fd);
+                if (c < 0) {
+                    throw std::logic_error("bookkeeping error: negative counter");
+                } else if (c == 0) {
+                    // struct flock status {};
+                    // const int status_rc = fcntl(_fd, F_GETLK, &status);
+                    // if (status_rc == -1) {
+                    //     Utils::Logger::get_logger().error("Error: unable to status file before write-unlock");
+                    // } else if (status.l_type == F_UNLCK) {
+                    //     Utils::Logger::get_logger().error("Error: attempted to write-unlock file that is not locked");
+                    // } else if (status.l_type != F_WRLCK) {
+                    //     Utils::Logger::get_logger().error("Error: attempted to write-unlock file that has not write-locked");
+                    // }
+
+                    struct flock unlock {
+                        F_UNLCK, SEEK_SET, 0, 0
+                    };
+                    const int unlock_rc = fcntl(_fd, F_SETLK, &unlock);
+                    if (unlock_rc < 0) {
+                        Utils::Logger::get_logger().error("Error: an error occurred while write-unlocking file: " + std::to_string(unlock_rc));
+                    }
+
+                    std::cout << "file unlocking " << c << std::endl;
+                }
+
+                std::cout << "file ??" << c << std::endl;
+                _mutex.unlock();
+            }
+
+            void lock_shared() {
+                _mutex.lock_shared();
+                inc();
+                pprint(__func__, _fd);
+                struct flock lock {
+                    F_RDLCK, SEEK_SET, 0, 0
+                };
+                const int lock_rc = fcntl(_fd, F_SETLKW, &lock);
+                if (lock_rc < 0) {
+                    Utils::Logger::get_logger().error("Error: an error occurred while (blocking) read-locking file: " + std::to_string(lock_rc));
+                }
+            }
+
+            bool try_lock_shared() {
+                // acquire thread lock
+                const bool has_thread_lock = _mutex.try_lock_shared();
+                if (!has_thread_lock) {
+                    return false;
+                }
+
+                // acquire file lock
+                struct flock lock {
+                    F_RDLCK, SEEK_SET, 0, 0
+                };
+                const bool has_flock = (fcntl(_fd, F_SETLK, &lock) > -1);
+                if (!has_flock) {
+                    _mutex.unlock_shared();
+                    return false;
+                }
+
+                // update file lock reference count
+                inc();
+                pprint(__func__, _fd);
+                return true;
+            }
+
+            void unlock_shared() {
+                const auto c = dec();
+                pprint(__func__, _fd);
+                if (c < 0) {
+                    throw std::logic_error("bookkeeping error: negative counter");
+                } else if (c == 0) {
+                    // struct flock status {};
+                    // const int status_rc = fcntl(_fd, F_GETLK, &status);
+                    // if (status_rc == -1) {
+                    //     Utils::Logger::get_logger().error("Error: unable to status file before read-unlock");
+                    // } else if (status.l_type == F_WRLCK) {
+                    //     Utils::Logger::get_logger().error("Error: attempted to read-unlock file that is write-locked");
+                    // }
+
+                    struct flock unlock {
+                        F_UNLCK, SEEK_SET, 0, 0
+                    };
+                    const int unlock_rc = fcntl(_fd, F_SETLK, &unlock);
+                    if (unlock_rc == -1) {
+                        Utils::Logger::get_logger().error("Error: an error occurred while read-unlocking file: " + std::to_string(unlock_rc));
+                    }
+                }
+
+                _mutex.unlock_shared();
+            }
 
            private:
+            inline int32_t inc() { return _counter.fetch_add(1) + 1; }  // read-modify-write, then adjust
+            inline int32_t dec() { return _counter.fetch_sub(1) - 1; }  // read-modify-write, then adjust
+
+            std::shared_mutex _mutex;
             int _fd;
-            off_t _start;
-            off_t _len;
+            std::atomic<int32_t> _counter{0};
         };
 
-        struct ScopedWriteLock {
-           public:
-            ScopedWriteLock(int fd, off_t start = 0, off_t len = 0) : _fd(fd), _start(start), _len(len) { write_lock(fd, start, len); }
-            ~ScopedWriteLock() { unlock(_fd, _start, _len); }
-
-           private:
-            int _fd;
-            off_t _start;
-            off_t _len;
-        };
+        using OmniReadLock = std::shared_lock<OmniMutex>;
+        using OmniWriteLock = std::unique_lock<OmniMutex>;
 
         // boost-less version of boost::static_vector for trivial types
         template <typename T, size_t Capacity>
@@ -315,7 +395,7 @@ namespace MomentumX {
                 }
 
                 std::memmove(t, t + 1, (end() - t) * sizeof(T));  // Shift everything left, clobbering `t`
-                pop_back();                         // Delete final value from end
+                pop_back();                                       // Delete final value from end
                 return t;
             }
 

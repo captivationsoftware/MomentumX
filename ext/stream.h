@@ -32,18 +32,8 @@ namespace MomentumX {
 
             BufferState() = default;
 
-            BufferState(uint16_t id,
-                        size_t buffer_size,
-                        size_t buffer_count,
-                        size_t data_size,
-                        uint64_t timestamp,
-                        uint64_t iteration)
-                : buffer_id(id),
-                  buffer_size(buffer_size),
-                  buffer_count(buffer_count),
-                  data_size(data_size),
-                  data_timestamp(timestamp),
-                  iteration(iteration){};
+            BufferState(uint16_t id, size_t buffer_size, size_t buffer_count, size_t data_size, uint64_t timestamp, uint64_t iteration)
+                : buffer_id(id), buffer_size(buffer_size), buffer_count(buffer_count), data_size(data_size), data_timestamp(timestamp), iteration(iteration){};
         };
 
         enum Role { CONSUMER, PRODUCER };
@@ -68,7 +58,7 @@ namespace MomentumX {
 
         std::list<BufferState> buffer_states(bool sort = false, uint64_t minimum_timestamp = 0);
 
-        void update_buffer_state(BufferState* buffer_state);
+        void update_buffer_state(const Stream::BufferState& buffer_state);
 
         std::set<Context*> subscribers();
 
@@ -92,7 +82,7 @@ namespace MomentumX {
         int _fd;
         char* _data;
         ControlBlock* _control;
-        std::mutex _mutex;
+        Utils::OmniMutex _control_mutex;  // declared (thus defined) after _fd (constructor argument)
     };
 
     class StreamManager {
@@ -108,20 +98,20 @@ namespace MomentumX {
         bool is_subscribed(std::string name);
         Stream* subscribe(std::string name);
         void unsubscribe(Stream* stream);
-        Stream::BufferState* next_buffer_state(Stream* stream);
-        bool send_buffer_state(Stream* stream, Stream::BufferState* buffer_state);
-        Stream::BufferState* receive_buffer_state(Stream* stream, uint64_t minimum_timestamp = 1);
-        Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id);
+        std::shared_ptr<Stream::BufferState> next_buffer_state(Stream* stream);
+        bool send_buffer_state(Stream* stream, Stream::BufferState buffer_state);
+        std::shared_ptr<Stream::BufferState> receive_buffer_state(Stream* stream, uint64_t minimum_timestamp = 1);
+        // Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id);
         void flush_buffer_state(Stream* stream);
-        void release_buffer_state(Stream* stream, Stream::BufferState* buffer_state);
+        void release_buffer_state(Stream* stream, const Stream::BufferState& buffer_state);
         size_t subscriber_count(Stream* stream);
 
        private:
         Context* _context;
         BufferManager* _buffer_manager;
         std::map<std::string, Stream*> _stream_by_name;
-        std::map<Stream*, std::list<Buffer*>> _buffers_by_stream;
-        std::map<Stream*, Buffer*> _current_buffer_by_stream;
+        std::map<Stream*, std::list<std::shared_ptr<Buffer>>> _buffers_by_stream;
+        std::map<Stream*, std::shared_ptr<Buffer>> _current_buffer_by_stream;
         std::map<Stream*, uint64_t> _iteration_by_stream;
         std::mutex _mutex;
     };

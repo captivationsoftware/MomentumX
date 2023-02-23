@@ -1,14 +1,14 @@
-#include <mutex>
 #include <errno.h>
-#include <map>
-#include <cstring>
-#include <list>
-#include <iostream>
-#include <sys/mman.h>
 #include <sys/file.h>
+#include <sys/mman.h>
+#include <cstring>
+#include <iostream>
+#include <list>
+#include <map>
+#include <mutex>
 
-#include "utils.h"
 #include "buffer.h"
+#include "utils.h"
 
 namespace MomentumX {
 
@@ -20,7 +20,9 @@ namespace MomentumX {
         _id(id),
         _size(0),
         _is_create(create),
-        _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU))
+        _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU)),
+        _address(nullptr),
+        _mutex(_fd)
     {
         if (_fd < 0) {
             if (_is_create) {
@@ -29,6 +31,9 @@ namespace MomentumX {
                 throw std::runtime_error("Failed to open shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
             }
         } 
+        std::lock_guard<std::mutex> lock(Utils::fnames_m);
+        Utils::fnames()[_fd]=_backing_filepath;
+        std::cout <<"[PING]: -- fd "<< _fd << " is " << _backing_filepath << std::endl;
 
         // do the ftruncate to resize and (re)mmap
         resize_remap(size);     
@@ -114,7 +119,10 @@ namespace MomentumX {
             // then also perform a truncate to ensure that we are sized
             // appropriately for a call to mmap
             if (_is_create) {
-                ftruncate(_fd, size_required);
+                const int ft_rc = ftruncate(_fd, size_required);
+                if (ft_rc) {
+                    Utils::Logger::get_logger().warning("Failed to resize file with error code: " + std::to_string(ft_rc));
+                }
             }
 
             // Mmap the file, or remap if previously mapped
@@ -139,46 +147,20 @@ namespace MomentumX {
         }
     }
 
-    BufferManager::BufferManager() {}
-
-    BufferManager::~BufferManager() {
-        std::map<std::string, std::list<Buffer*>> buffers_by_stream;
-        {
-            std::lock_guard<std::mutex> lock(_mutex);
-            buffers_by_stream = _buffers_by_stream;
-        }
-
-        for (auto const& tuple : buffers_by_stream) {
-            for (auto const& buffer : tuple.second) {
-                deallocate(buffer);
-            }
-        }
-    };
-
-    Buffer* BufferManager::allocate(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) {
+    std::shared_ptr<Buffer> BufferManager::allocate(const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) {
         std::lock_guard<std::mutex> lock(_mutex); 
-        Buffer* buffer = new Buffer(paths, id, size, create);
+        auto buffer = std::make_shared<Buffer>(paths, id, size, create);
         _buffers_by_stream[paths.stream_name].push_back(buffer);
 
         return buffer;
     }
 
-    void BufferManager::deallocate(Buffer* buffer) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _buffers_by_stream[buffer->_paths.stream_name].remove(buffer);
-        delete buffer;
-    }
-
     void BufferManager::deallocate_stream(const Utils::PathConfig& paths) {
         std::lock_guard<std::mutex> lock(_mutex);
-        const auto& stream = paths.stream_name;
-        for (auto const& buffer : _buffers_by_stream[stream]) {
-            delete buffer;
-        }
-        _buffers_by_stream.erase(stream);
+        _buffers_by_stream.erase(paths.stream_name);
     }
 
-    Buffer* BufferManager::find(const Utils::PathConfig& paths, uint16_t id) {
+    std::shared_ptr<Buffer> BufferManager::find(const Utils::PathConfig& paths, uint16_t id) {
         if (id <= 0) {
             throw std::runtime_error("Buffer id must be greater than 0");
         }
@@ -196,23 +178,20 @@ namespace MomentumX {
         return NULL;
     }
 
-    Buffer* BufferManager::next(const Utils::PathConfig& paths) {
+    std::shared_ptr<Buffer> BufferManager::next(const Utils::PathConfig& paths) {
         std::lock_guard<std::mutex> lock(_mutex);
-
-        Buffer* next_buffer = NULL;
 
         // rotate the buffers
         const auto& stream = paths.stream_name;
-        next_buffer = _buffers_by_stream[stream].front();
+        std::shared_ptr<Buffer> next_buffer = _buffers_by_stream[stream].front();
         _buffers_by_stream[stream].pop_front();
         _buffers_by_stream[stream].push_back(next_buffer);
 
         return next_buffer;
     }
 
-    Buffer* BufferManager::peek_next(const Utils::PathConfig& paths) {
+    std::shared_ptr<Buffer> BufferManager::peek_next(const Utils::PathConfig& paths) {
         std::lock_guard<std::mutex> lock(_mutex);
-        const auto& stream = paths.stream_name;
-        return _buffers_by_stream[stream].front();
+        return _buffers_by_stream[paths.stream_name].front();
     }
 } // namespace MomentumX

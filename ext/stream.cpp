@@ -22,16 +22,13 @@
 
 namespace MomentumX {
 
-    struct PendingAcknowledgement { 
+    struct PendingAcknowledgement {
         size_t buffer_id = 0;
         Context* context = nullptr;
 
         PendingAcknowledgement() = default;
-        
-        PendingAcknowledgement(size_t _buffer_id, Context* _context) :
-            buffer_id(_buffer_id),
-            context(_context)
-        { }
+
+        PendingAcknowledgement(size_t _buffer_id, Context* _context) : buffer_id(_buffer_id), context(_context) {}
     };
 
     struct ControlBlock {
@@ -49,7 +46,12 @@ namespace MomentumX {
     static_assert(std::is_trivially_copy_constructible<ControlBlock>::value, "needed for std::memcpy");
 
     Stream::Stream(const Utils::PathConfig& paths, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role)
-        : _paths(paths), _role(role), _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT | O_EXCL : 0), S_IRWXU)) {
+        : _paths(paths),
+          _role(role),
+          _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT | O_EXCL : 0), S_IRWXU)),
+          _data(nullptr),
+          _control(nullptr),
+          _control_mutex(_fd) {
         if (_fd < 0) {
             if (role == Role::CONSUMER) {
                 throw std::runtime_error("Failed to open shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
@@ -58,10 +60,16 @@ namespace MomentumX {
             }
         }
 
+        const std::string __fname = _paths.stream_path + (role == Role::CONSUMER ? "(c)" : "(p)");
+        Utils::fnames()[_fd] = __fname;
+        std::cout << "[PING]: -- fd " << _fd << " is " << __fname << std::endl;
         const size_t size_required = Utils::page_aligned_size(sizeof(ControlBlock));
 
         if (role == Role::PRODUCER) {
-            ftruncate(_fd, size_required);
+            const int ft_rc = ftruncate(_fd, size_required);
+            if (ft_rc) {
+                Utils::Logger::get_logger().warning("Failed to resize file with error code: " + std::to_string(ft_rc));
+            }
         }
 
         _data = (char*)mmap(NULL, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
@@ -131,8 +139,7 @@ namespace MomentumX {
             return false;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedReadLock lock(_fd);
+        Utils::OmniReadLock lock(_control_mutex);
         return _control->sync;
     }
 
@@ -141,8 +148,7 @@ namespace MomentumX {
             return 0;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedReadLock lock(_fd);
+        Utils::OmniReadLock lock(_control_mutex);
         return _control->buffer_size;
     }
 
@@ -151,8 +157,7 @@ namespace MomentumX {
             return 0;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedReadLock lock(_fd);
+        Utils::OmniReadLock lock(_control_mutex);
         return _control->buffer_count;
     }
 
@@ -161,8 +166,7 @@ namespace MomentumX {
             return {};
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedReadLock lock(_fd);
+        Utils::OmniReadLock lock(_control_mutex);
         std::list<Stream::BufferState> buffer_states(_control->buffers.begin(), _control->buffers.end());
         if (sort) {
             const auto comparator = [](const BufferState& x, const BufferState& y) { return (x.data_timestamp < y.data_timestamp); };
@@ -172,7 +176,7 @@ namespace MomentumX {
         return buffer_states;
     }
 
-    void Stream::update_buffer_state(Stream::BufferState* buffer_state) {
+    void Stream::update_buffer_state(const Stream::BufferState& buffer_state) {
         if (_role == Role::CONSUMER) {
             throw std::runtime_error("Consumer stream can not update stream buffer states");
         }
@@ -181,17 +185,16 @@ namespace MomentumX {
             return;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedWriteLock lock(_fd);
+        Utils::OmniWriteLock lock(_control_mutex);
         const auto beg = _control->buffers.begin();
         const auto end = _control->buffers.end();
-        const auto pred = [&](const BufferState& bs) { return bs.buffer_id == buffer_state->buffer_id; };
+        const auto pred = [&](const BufferState& bs) { return bs.buffer_id == buffer_state.buffer_id; };
         const auto loc = std::find_if(beg, end, pred);
 
         if (loc == end) {
-            _control->buffers.push_back(*buffer_state);
+            _control->buffers.push_back(buffer_state);
         } else {
-            *loc = *buffer_state;
+            *loc = buffer_state;
         }
     }
 
@@ -200,8 +203,7 @@ namespace MomentumX {
             return {};
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedReadLock lock(_fd);
+        Utils::OmniReadLock lock(_control_mutex);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
         return std::set<Context*>(beg, end);
@@ -212,12 +214,15 @@ namespace MomentumX {
             throw std::runtime_error("Producer stream cannot add subscribers");
         }
 
+        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         if (!is_alive()) {
             return;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedWriteLock lock(_fd);
+        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
+        Utils::OmniWriteLock lock(_control_mutex);
+
+        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         try {
             _control->subscribers.push_back(context);
         } catch (std::exception& e) {
@@ -237,8 +242,7 @@ namespace MomentumX {
             return;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedWriteLock lock(_fd);
+        Utils::OmniWriteLock lock(_control_mutex);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
         const auto loc = std::find(beg, end, context);
@@ -253,12 +257,13 @@ namespace MomentumX {
             return {};
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedReadLock lock(_fd);
+        std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
+        Utils::OmniReadLock lock(_control_mutex);
+        std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
         const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; });
-        
+
         return loc != end;
     }
 
@@ -267,26 +272,21 @@ namespace MomentumX {
             return;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedWriteLock lock(_fd);
+        Utils::OmniWriteLock lock(_control_mutex);
         for (auto const subscriber : _control->subscribers) {
             _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
-        } 
+        }
 
-        Utils::Logger::get_logger().debug(std::string("Reset pending acknowledgements to mirror current subscribers for buffer id " + buffer_id));
+        Utils::Logger::get_logger().debug(
+            std::string("Reset pending acknowledgements to mirror current subscribers for buffer id " + std::to_string(buffer_id)));
     }
 
     void Stream::remove_all_pending_acknowledgements(Context* context) {
-        while(is_alive()) {
-            std::lock_guard<std::mutex> thread_lock(_mutex);
-            Utils::ScopedWriteLock lock(_fd);
+        while (is_alive()) {
+            Utils::OmniWriteLock lock(_control_mutex);
             auto const beg = _control->pending_acknowledgements.begin();
             auto const end = _control->pending_acknowledgements.end();
-            auto const loc = std::find_if(
-                beg, 
-                end,
-                [&](const PendingAcknowledgement& pa) -> bool { return pa.context == context; }
-            );
+            auto const loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.context == context; });
 
             if (loc != end) {
                 _control->pending_acknowledgements.erase(loc);
@@ -301,22 +301,16 @@ namespace MomentumX {
             return;
         }
 
-        std::lock_guard<std::mutex> thread_lock(_mutex);
-        Utils::ScopedWriteLock lock(_fd);
+        Utils::OmniWriteLock lock(_control_mutex);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
-        const auto loc = std::find_if(
-            beg, 
-            end, 
-            [&](const PendingAcknowledgement& pa) -> bool { return pa.buffer_id == buffer_id && pa.context == context; }
-        ); 
+        const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.buffer_id == buffer_id && pa.context == context; });
 
         if (loc != end) {
             _control->pending_acknowledgements.erase(loc);
         } else {
-            Utils::Logger::get_logger().warning(
-                std::string("Attempted to remove pending acknowledgement that does not exist for buffer: ") + std::to_string(buffer_id)
-            );
+            Utils::Logger::get_logger().warning(std::string("Attempted to remove pending acknowledgement that does not exist for buffer: ") +
+                                                std::to_string(buffer_id));
         }
     }
 
@@ -358,12 +352,11 @@ namespace MomentumX {
         _stream_by_name[name] = stream;
 
         for (size_t i = 1; i <= buffer_count; i++) {
-            Buffer* buffer = _buffer_manager->allocate(paths, i, buffer_size, true);
+            std::shared_ptr<Buffer> buffer = _buffer_manager->allocate(paths, i, buffer_size, true);
 
-            Stream::BufferState* buffer_state = new Stream::BufferState(buffer->id(), buffer_size, buffer_count, 0, 0, 0);
+            Stream::BufferState buffer_state(buffer->id(), buffer_size, buffer_count, 0, 0, 0);
 
             stream->update_buffer_state(buffer_state);
-            delete buffer_state;
         }
 
         return stream;
@@ -431,29 +424,29 @@ namespace MomentumX {
         _buffer_manager->deallocate_stream(stream->paths());
     }
 
-    Stream::BufferState* StreamManager::next_buffer_state(Stream* stream) {
-        Buffer* current_buffer;
+    std::shared_ptr<Stream::BufferState> StreamManager::next_buffer_state(Stream* stream) {
+        std::shared_ptr<Buffer> current_buffer;
         {
             std::lock_guard<std::mutex> lock(_mutex);
             current_buffer = _current_buffer_by_stream[stream];
         }
 
-        Stream::BufferState* buffer_state = nullptr;
-        Buffer* next_buffer;
+        std::shared_ptr<Buffer> next_buffer;
+        std::shared_ptr<Utils::OmniWriteLock> lock_ptr;
 
         if (stream->sync()) {
-            next_buffer = _buffer_manager->peek_next(stream->paths()); // peek
+std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
+            next_buffer = _buffer_manager->peek_next(stream->paths());  // peek
+std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
 
             if (stream->has_pending_acknowledgements(next_buffer->id())) {
                 return nullptr;
             }
-            
-            next_buffer = _buffer_manager->next(stream->paths()); // actually rotate the buffers
 
-            // When synchronous, block until we can obtain this buffer's
-            // lock...
-            Utils::write_lock(next_buffer->fd());
-
+std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
+            next_buffer = _buffer_manager->next(stream->paths());                     // actually rotate the buffers
+            lock_ptr = std::make_shared<Utils::OmniWriteLock>(next_buffer->mutex());  // lock write mutex
+std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << " - " << __func__ << std::endl;
         } else {
             for (size_t _ = 0; _ < stream->buffer_count(); _++) {
                 next_buffer = _buffer_manager->next(stream->paths());
@@ -463,7 +456,10 @@ namespace MomentumX {
                     continue;
                 }
 
-                if (!Utils::try_write_lock(next_buffer->fd())) {
+                Utils::OmniWriteLock lock(next_buffer->mutex(), std::defer_lock);  // unlocked
+                if (lock.try_lock()) {
+                    lock_ptr = std::make_shared<Utils::OmniWriteLock>(std::move(lock));  // locked
+                } else {
                     next_buffer = nullptr;
                 }
 
@@ -472,20 +468,21 @@ namespace MomentumX {
                 }
             }
         }
-        
+
         std::lock_guard<std::mutex> lock(_mutex);
         _current_buffer_by_stream[stream] = next_buffer;
 
-        // create a new buffer state pointer and break out to the
-        // caller
-        buffer_state =
-            new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(), 0, 0, ++_iteration_by_stream[stream]);
+        // create a new buffer state pointer and break out to the caller
+        return std::shared_ptr<Stream::BufferState>(
+            new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(), 0, 0, ++_iteration_by_stream[stream]),
+            [lock_ptr](Stream::BufferState* state) {
+                std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  unlocking write lock with lock_ptr " << lock_ptr.get() << std::endl;
 
-
-        return buffer_state;
+                delete state;  // lock_ptr maintains file lock until this deleter called
+            });
     }
 
-    bool StreamManager::send_buffer_state(Stream* stream, Stream::BufferState* buffer_state) {
+    bool StreamManager::send_buffer_state(Stream* stream, Stream::BufferState buffer_state) {
         std::lock_guard<std::mutex> lock(_mutex);
 
         if (stream->sync()) {
@@ -494,17 +491,17 @@ namespace MomentumX {
             }
         }
 
-        if (buffer_state->data_size == 0) {
+        if (buffer_state.data_size == 0) {
             Utils::Logger::get_logger().warning("Sending buffer state without having set data_size property");
         }
 
-        Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state->buffer_id);
+        std::shared_ptr<Buffer> buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
 
         // update the buffer write timestamp
-        if (buffer_state->data_timestamp == 0) {
-            buffer_state->data_timestamp = Utils::now();
+        if (buffer_state.data_timestamp == 0) {
+            buffer_state.data_timestamp = Utils::now();
         }
-        buffer->write_ts(buffer_state->data_timestamp);
+        buffer->write_ts(buffer_state.data_timestamp);
 
         if (stream->sync()) {
             stream->set_pending_acknowledgements(buffer->id());
@@ -512,14 +509,10 @@ namespace MomentumX {
 
         stream->update_buffer_state(buffer_state);
 
-        Utils::unlock(buffer->fd());
-
-        delete buffer_state;
-
         return true;
     }
 
-    Stream::BufferState* StreamManager::receive_buffer_state(Stream* stream, uint64_t minimum_timestamp) {
+    std::shared_ptr<Stream::BufferState> StreamManager::receive_buffer_state(Stream* stream, uint64_t minimum_timestamp) {
         std::list<Stream::BufferState> buffer_states;
         {
             std::lock_guard<std::mutex> lock(_mutex);
@@ -537,23 +530,33 @@ namespace MomentumX {
                 if (buffer_state.iteration > _iteration_by_stream[stream]) {
                     _iteration_by_stream[stream] = buffer_state.iteration;
                 } else {
+                    // _iteration_by_stream[stream] << std::endl;
                     continue;
                 }
             }
 
-            Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
+            std::shared_ptr<Buffer> buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
             if (buffer == NULL) {
                 throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
             }
 
-            if (Utils::try_read_lock(buffer->fd())) {
+            std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  prelock" << std::endl;
+            Utils::OmniReadLock lock(buffer->mutex(), std::defer_lock);
+            std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  postlock" << std::endl;
+
+            if (lock.try_lock()) {
                 uint64_t last_data_timestamp;
                 Utils::get_timestamps(buffer->fd(), NULL, &last_data_timestamp);
 
                 if (buffer_state.data_timestamp == last_data_timestamp) {
                     // we got the read lock and data matches, so return a copy
-                    // of buffer state to the caller
-                    return new Stream::BufferState(buffer_state);
+                    // of buffer state to the caller.
+                    // NOTE: the lock_ptr
+                    auto lock_ptr = std::make_shared<Utils::OmniReadLock>(std::move(lock));
+                    return std::shared_ptr<Stream::BufferState>(new Stream::BufferState(buffer_state), [lock_ptr](Stream::BufferState* state) {
+                        std::cout << "[PING]: " << __FILE__ << ":" << __LINE__ << "  unlocking read lock" << std::endl;
+                        delete state;  // still delete
+                    });
                 }
             } else {
                 // failed to get the lock
@@ -573,7 +576,7 @@ namespace MomentumX {
         // buffer states, but the stream IS alive, so return null
         return NULL;
     }
-
+    /*
     Stream::BufferState* StreamManager::get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
         Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_id);
         if (buffer == NULL) {
@@ -606,27 +609,26 @@ namespace MomentumX {
 
         return NULL;
     }
-
+    */
     void StreamManager::flush_buffer_state(Stream* stream) {
         if (stream->sync()) {
-        Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");
+            Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");
         } else {
             std::lock_guard<std::mutex> lock(_mutex);
             _iteration_by_stream[stream] = stream->buffer_states(true).back().iteration;
         }
     }
 
-    void StreamManager::release_buffer_state(Stream* stream, Stream::BufferState* buffer_state) {
+    void StreamManager::release_buffer_state(Stream* stream, const Stream::BufferState& buffer_state) {
         std::lock_guard<std::mutex> lock(_mutex);
 
+std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         if (stream->sync()) {
-            stream->remove_pending_acknowledgement(buffer_state->buffer_id, _context);
+        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
+std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__ << ")" << std::endl;
         }
 
-        Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_state->buffer_id);
-        Utils::unlock(buffer->fd());
-
-        delete buffer_state;
+        std::shared_ptr<Buffer> buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
     }
 
     size_t subscriber_count(Stream* stream) {

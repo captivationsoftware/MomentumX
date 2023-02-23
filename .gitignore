@@ -1,6 +1,7 @@
 dist/
 dev/
 __pycache__/
+/.cache/
 *.egg-info
 *.so
 *.o

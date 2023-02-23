@@ -50,6 +50,10 @@ struct AlreadySentException : public std::exception {
     }
 };
 
+struct ReleasedBufferException : public std::exception {
+    const char* what() const noexcept override { return "Buffer has already been released and can not longer be accessed"; }
+};
+
 struct ThreadingEventWrapper {
     py::object evt;
     ThreadingEventWrapper(py::object evt) : evt(evt) {}
@@ -82,26 +86,36 @@ struct ThreadingEventWrapper {
 struct BufferShim {
     std::shared_ptr<Context> ctx{nullptr};
     std::shared_ptr<Stream> stream{nullptr};
-    std::shared_ptr<BufferState> buffer_state{nullptr};
+    std::shared_ptr<BufferState> _unchecked_buffer_state{nullptr};
     size_t cursor_index, max_cursor_index;
     bool is_sent;
 
     BufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
-        : ctx(ctx), stream(stream), buffer_state(buffer_state), cursor_index(0), max_cursor_index(0), is_sent(false) {}
+        : ctx(ctx), stream(stream), _unchecked_buffer_state(buffer_state), cursor_index(0), max_cursor_index(0), is_sent(false) {}
     ~BufferShim() = default;
 
-    const uint8_t* data() const { 
+    inline std::shared_ptr<BufferState> get_state() const {
+        const std::shared_ptr<BufferState> copy = _unchecked_buffer_state;  // copy to maintain ownership during subsequent call
+        if (!copy) {
+            throw ReleasedBufferException();
+        }
+        return copy;
+    }
+
+    const uint8_t* data() const {
         try {
-            return ctx->data_address(stream.get(), buffer_state->buffer_id); 
+            const auto buffer_state = get_state();
+            return ctx->data_address(stream.get(), buffer_state->buffer_id);
         } catch (std::exception& ex) {
             Logger::get_logger().error(ex.what());
             return NULL;
         }
     }
 
-    uint8_t* data() { 
+    uint8_t* data() {
         try {
-            return ctx->data_address(stream.get(), buffer_state->buffer_id); 
+            const auto buffer_state = get_state();
+            return ctx->data_address(stream.get(), buffer_state->buffer_id);
         } catch (std::exception& ex) {
             Logger::get_logger().error(ex.what());
             return NULL;
@@ -131,13 +145,13 @@ struct BufferShim {
 
     py::bytes read_all() {
         seek(0);
-        return read(data_size());        
+        return read(data_size());
     }
 
     py::bytes read(size_t count) {
         size_t from_index = tell();
         size_t to_index = from_index + count;
-                
+
         auto bytes = get_bytes(py::slice(from_index, to_index, 1));
         seek(to_index);
         return bytes;
@@ -210,47 +224,40 @@ struct BufferShim {
         return return_val;
     }
 
-    uint16_t buffer_id() const { return buffer_state->buffer_id; }
-    size_t buffer_size() const { return buffer_state->buffer_size; }
-    size_t buffer_count() const { return buffer_state->buffer_count; }
-    size_t data_size() const { return max_cursor_index > buffer_state->data_size ? max_cursor_index : buffer_state->data_size; }
-    uint64_t data_timestamp() const { return buffer_state->data_timestamp; }
-    uint64_t iteration() const { return buffer_state->iteration; }
+    uint16_t buffer_id() const { return get_state()->buffer_id; }
+    size_t buffer_size() const { return get_state()->buffer_size; }
+    size_t buffer_count() const { return get_state()->buffer_count; }
+    size_t data_size() const { return std::max(get_state()->data_size, max_cursor_index); }
+    uint64_t data_timestamp() const { return get_state()->data_timestamp; }
+    uint64_t iteration() const { return get_state()->iteration; }
 
     py::buffer_info read_buffer_info() const { return py::buffer_info(data(), data_size()); }
     py::buffer_info write_buffer_info() { return py::buffer_info(data(), buffer_size(), false); }
 
-    auto send_from_current() -> bool {
-        return send(max_cursor_index);
-    }
+    auto send_from_current() -> bool { return send(max_cursor_index); }
 
     auto send(size_t data_size) -> bool {
         if (is_sent) {
             throw AlreadySentException();
         }
 
-        if (data_size > buffer_size()) {
+        auto buffer_state = get_state();
+
+        if (data_size > buffer_state->buffer_size) {
             throw DataOverflowException();
         }
 
-        BufferState* copy = new BufferState(*buffer_state);  // context->send takes ownership and deletes
-        copy->data_size = data_size;
+        buffer_state->data_size = data_size;
         try {
-            is_sent = ctx->send(stream.get(), copy);
+            is_sent = ctx->send(stream.get(), *buffer_state);
             return is_sent;
         } catch (std::exception& ex) {
             Logger::get_logger().error(ex.what());
             return false;
         }
     }
-    
-    void release() {
-        try {
-            ctx->release(stream.get(), buffer_state.get());
-        } catch (std::exception& ex) {
-            Logger::get_logger().error(ex.what());
-        }
-    }
+
+    void release() { _unchecked_buffer_state.reset(); }
 };
 
 struct ReadBufferShim : BufferShim {
@@ -283,8 +290,8 @@ struct StreamShim {
     auto next_to_send(bool blocking) -> std::optional<WriteBufferShim> {
         py::gil_scoped_release nogil;
         while (!evt.is_set()) {
-            BufferState* buffer_info = nullptr;
-            
+            std::shared_ptr<BufferState> buffer_info = nullptr;
+
             try {
                 buffer_info = ctx->next(stream.get());
             } catch (std::exception& ex) {
@@ -298,7 +305,7 @@ struct StreamShim {
                     return {};
                 }
             } else {
-                return WriteBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info));
+                return WriteBufferShim(ctx, stream, buffer_info);
             }
         }
 
@@ -313,8 +320,8 @@ struct StreamShim {
                 return {};
             }
 
-            BufferState* buffer_info = nullptr;
-            
+            std::shared_ptr<BufferState> buffer_info = nullptr;
+
             try {
                 buffer_info = ctx->receive(stream.get(), minimum_ts);
             } catch (std::exception& ex) {
@@ -328,16 +335,14 @@ struct StreamShim {
                     return {};
                 }
             } else {
-                return ReadBufferShim(ctx, stream, std::shared_ptr<BufferState>(buffer_info, [&](BufferState* buffer_state) {
-
-                }));
+                return ReadBufferShim(ctx, stream, buffer_info);
             }
         }
 
         return {};
     }
 
-    auto flush() -> void { 
+    auto flush() -> void {
         try {
             return ctx->flush(stream.get());
         } catch (std::exception& ex) {
@@ -357,7 +362,7 @@ struct StreamShim {
 
         char* data = reinterpret_cast<char*>(buffer->data());
         std::copy(str.begin(), str.end(), data);
-        
+
         return buffer->send(str.size());
     }
 
@@ -371,7 +376,7 @@ struct StreamShim {
         std::string str(data, buffer->data_size());
         buffer->release();
         return str;
-    }   
+    }
 };
 
 struct ConsumerStreamShim : StreamShim {
@@ -404,12 +409,10 @@ static ProducerStreamShim producer_stream(const std::string& stream_name,
     if (!stream) {
         throw StreamExistsException();
     } else {
-        ProducerStreamShim shim(c,
-                                std::shared_ptr<Stream>(stream, [c](Stream* stream) { /* cleaned up via Context destructor */ }),
-                                wrapped_evt, polling_interval);
+        ProducerStreamShim shim(c, std::shared_ptr<Stream>(stream, [c](Stream* stream) { /* cleaned up via Context destructor */ }), wrapped_evt,
+                                polling_interval);
         return shim;
     }
-
 }
 
 static ConsumerStreamShim consumer_stream(const std::string& stream_name, const py::object& evt, double polling_interval, const std::string& context) {
@@ -420,21 +423,22 @@ static ConsumerStreamShim consumer_stream(const std::string& stream_name, const 
     Stream* stream = nullptr;
 
     try {
-         stream = c->subscribe(std::string(stream_name));
+        stream = c->subscribe(std::string(stream_name));
     } catch (std::exception& ex) {
         Logger::get_logger().error(ex.what());
     }
 
     if (stream) {
-        return ConsumerStreamShim(c, std::shared_ptr<Stream>(stream, [c](Stream* stream) { 
-            // try {
-            //     ctx->unsubscribe(stream.get()) 
-            // } catch (std::exception& ex) {
-            //     Logger::get_logger().error(ex.what());
-            // }
-        }), 
-        wrapped_evt,
-        polling_interval);
+        return ConsumerStreamShim(c,
+                                  std::shared_ptr<Stream>(stream,
+                                                          [c](Stream* stream) {
+                                                              // try {
+                                                              //     ctx->unsubscribe(stream.get())
+                                                              // } catch (std::exception& ex) {
+                                                              //     Logger::get_logger().error(ex.what());
+                                                              // }
+                                                          }),
+                                  wrapped_evt, polling_interval);
     }
 
     throw StreamUnavailableException();
@@ -451,6 +455,7 @@ PYBIND11_MODULE(_mx, m) {
     py::register_exception<DataOverflowException>(m, "DataOverflow", PyExc_IndexError);
     py::register_exception<StreamUnavailableException>(m, "StreamUnavailable", PyExc_RuntimeError);
     py::register_exception<AlreadySentException>(m, "AlreadySent", PyExc_RuntimeError);
+    py::register_exception<ReleasedBufferException>(m, "ReleasedBuffer", PyExc_RuntimeError);
     py::register_exception<StreamExistsException>(m, "StreamExists", PyExc_RuntimeError);
 
     py::enum_<LogLevel>(m, "LogLevel")

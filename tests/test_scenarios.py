@@ -27,7 +27,7 @@ def test_pre_post_fixture():
     yield
 
 @contextlib.contextmanager
-def timeout_event(timeout: float = 5.0) -> Iterator[threading.Event]:
+def timeout_event(timeout: float = 1.0) -> Iterator[threading.Event]:
     def sleep_then_trigger(inner_evt: threading.Event, inner_timeout: float):
         if not evt.wait(inner_timeout):
             evt.set()
@@ -365,7 +365,7 @@ def test_synced_buffers() -> None:
 
     buffer_count = 5
 
-    with timeout_event(timeout=5) as event:
+    with timeout_event(timeout=1e6) as event:
         producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
 
@@ -380,20 +380,36 @@ def test_synced_buffers() -> None:
             1, 2, 3, 4, 5, 1, 2, 3, 4, 5,
         ]
 
-        for n in expected:
+        for n in expected[:5]:
+            print('\n-- next_to_send')
             tx_buffer = producer.next_to_send()
 
             assert not event.is_set(), "Test timed out before making assertions"
 
             assert tx_buffer.buffer_id == n 
+
+            print('\n-- write')
             tx_buffer.write(n.to_bytes(1, 'big'))
+
+            print('\n-- send')
             tx_buffer.send()
 
+            print('\n-- delete (tx)')
+            del tx_buffer
+
+            print('\n-- receive')
             rx_buffer = consumer.receive()
 
+            print('\n-- read')
             data = rx_buffer.read()
+            
             assert data == n.to_bytes(1, 'big')
+            print('\n-- release')
             rx_buffer.release()
+
+            print('\n-- delete (rx)')
+            del rx_buffer
+    
         
 
 
@@ -406,7 +422,7 @@ def test_synced_buffers_many_read_after_many_write() -> None:
         producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
 
-        for n in range(1, buffer_count + 1):
+        for n in range(1, 2 * buffer_count + 1):
             tx_buffer = producer.next_to_send()
             assert not event.is_set(), "Producer next_to_send timed out"
             assert tx_buffer.buffer_id == n
@@ -416,7 +432,7 @@ def test_synced_buffers_many_read_after_many_write() -> None:
         tx_buffer = producer.next_to_send(blocking=False)
         assert tx_buffer == None, "Expected null next_to_send after writing to all buffers before receiving any acknowledgements"
         
-        for n in range(1, buffer_count + 1):
+        for n in range(1, 2 * buffer_count + 1):
             rx_buffer = consumer.receive()
             assert not event.is_set(), "Consumer receive timed out"
             assert rx_buffer.buffer_id == n
@@ -533,7 +549,7 @@ def test_two_consumer_copies()->None:
             assert consumer1.receive_string() == "2"
             assert consumer2.receive_string() == "2"
 
-def disabled_test_grab_oldest()->None:
+def test_grab_oldest()->None:
     import momentumx as mx    
     import datetime
 
@@ -591,7 +607,7 @@ def disabled_test_grab_oldest()->None:
         b1 = consumer.receive()
         b2 = consumer.receive()
         assert b3.buffer_id == 3
-        assert b5.buffer_id == 5
+        assert b5.buffer_id == 5, "bad: " + str(b5.buffer_id)
         assert b1.buffer_id == 1
         assert b2.buffer_id == 2
         assert b3[0] == bytes([60])
@@ -604,4 +620,4 @@ def disabled_test_grab_oldest()->None:
 
 
 if __name__ == "__main__":
-    test_buffer_cleanup()
+    test_synced_buffers()

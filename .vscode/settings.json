@@ -4,5 +4,6 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "python.formatting.provider": "black"
+    "python.formatting.provider": "black",
+    "cmake.buildDirectory": "${workspaceFolder}/_skbuild/linux-x86_64-3.8/cmake-build/"
 }

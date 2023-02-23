@@ -69,6 +69,7 @@ namespace MomentumX {
     }
 
     Stream* Context::subscribe(std::string stream_name) {
+        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__<<")" << std::endl;
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
         }
@@ -83,6 +84,7 @@ namespace MomentumX {
         std::lock_guard<std::mutex> lock(_mutex);
         Stream* stream = _stream_manager.subscribe(stream_name);
         _subscriptions.insert(stream);
+        std::cout << "[PING] - " << __FILE__ << ":" << __LINE__ << " (" << __func__<<")" << std::endl;
         return stream;
     }
 
@@ -97,7 +99,7 @@ namespace MomentumX {
         _subscriptions.erase(stream);
     }
 
-    Stream::BufferState* Context::next(Stream* stream) {
+    std::shared_ptr<Stream::BufferState> Context::next(Stream* stream) {
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
         }
@@ -105,7 +107,7 @@ namespace MomentumX {
         return _stream_manager.next_buffer_state(stream);
     }
 
-    bool Context::send(Stream* stream, Stream::BufferState* buffer_state) {
+    bool Context::send(Stream* stream, const Stream::BufferState& buffer_state) {
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
         }
@@ -113,12 +115,12 @@ namespace MomentumX {
         return _stream_manager.send_buffer_state(stream, buffer_state);
     }
 
-    Stream::BufferState* Context::receive(Stream* stream, uint64_t minimum_timestamp) {
+    std::shared_ptr<Stream::BufferState> Context::receive(Stream* stream, uint64_t minimum_timestamp) {
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
         }
 
-        Stream::BufferState* buffer_state = _stream_manager.receive_buffer_state(stream, minimum_timestamp);
+        std::shared_ptr<Stream::BufferState> buffer_state = _stream_manager.receive_buffer_state(stream, minimum_timestamp);
 
         if (buffer_state != NULL && buffer_state->buffer_id == 0) {
             unsubscribe(stream);
@@ -126,7 +128,7 @@ namespace MomentumX {
 
         return buffer_state;
     }
-
+    /*
     Stream::BufferState* Context::get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
@@ -134,7 +136,7 @@ namespace MomentumX {
 
         return _stream_manager.get_by_buffer_id(stream, buffer_id);
     }
-
+    */
     void Context::flush(Stream* stream) {
         if (is_terminated()) {
             throw std::runtime_error("Terminated");
@@ -143,12 +145,12 @@ namespace MomentumX {
         _stream_manager.flush_buffer_state(stream);
     }
 
-    void Context::release(Stream* stream, Stream::BufferState* buffer_state) {
+    void Context::release(Stream* stream, const Stream::BufferState& buffer_state) {
         _stream_manager.release_buffer_state(stream, buffer_state);
     }
 
     uint8_t* Context::data_address(Stream* stream, uint16_t buffer_id) {
-        Buffer* buffer = _buffer_manager.find(stream->paths(), buffer_id);
+        std::shared_ptr<Buffer> buffer = _buffer_manager.find(stream->paths(), buffer_id);
         if (buffer != NULL) {
             return buffer->address();
         }
