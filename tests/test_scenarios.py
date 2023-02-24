@@ -185,7 +185,6 @@ def test_buffer_file_api_consumer() -> None:
     tx_buffer = producer.next_to_send()
     tx_buffer.write(b'foobar')
     tx_buffer.send()
-    del tx_buffer # FIXME
 
     consumer = mx.Consumer(_STREAM_NAME)
     rx_buffer = consumer.receive()
@@ -255,7 +254,7 @@ def test_exception_on_write_after_send() -> None:
     with pytest.raises(mx.AlreadySent):
         buffer.write(b'foo')
 
-    with pytest.raises(mx.AlreadySent):
+    with pytest.raises(mx.ReleasedBuffer):
         buffer[0:2] = b'foo' 
 
 def test_less_than_page_size() -> None:
@@ -350,9 +349,8 @@ def test_numpy_compatibility() -> None:
         a1 = np.frombuffer(buf1, dtype=np.uint8)
         a1[:10] = list(range(10))
 
+        a1 = a1.copy()
         buf1.send(10)
-        a1 = a1.copy() # FIXME
-        del buf1 # FIXME
 
         buf2 = consumer.receive()
         a2 = np.frombuffer(buf2, dtype=np.uint8)

@@ -247,6 +247,7 @@ struct BufferShim {
         buffer_state->data_size = data_size;
         try {
             is_sent = ctx->send(stream.get(), *buffer_state);
+            _unchecked_buffer_state.reset();
             return is_sent;
         } catch (std::exception& ex) {
             Logger::get_logger().error(ex.what());
