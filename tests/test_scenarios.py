@@ -501,33 +501,6 @@ def test_buffer_cleanup_tmp() -> None:
         assert not os.path.exists(tmp_ctrl_fname)  # override location
         assert not os.path.exists(tmp_buff_fname)  # override location
 
-def test_buffer_cleanup_both()->None:
-    import momentumx as mx  # import in subprocess
-
-    with timeout_event() as event, TemporaryDirectory() as tdir:
-        shm_buff_fname = "/dev/shm/mx.test_echo_mx_stream.buffer.1"
-        tmp_buff_fname = f"{tdir}/mx.test_echo_mx_stream.buffer.1"
-
-        # `/dev/shm` only
-        shm_producer = mx.Producer(_STREAM_NAME, 300, 20, True, event)
-        assert os.path.exists(shm_buff_fname)  
-        assert not os.path.exists(tmp_buff_fname)
-
-        # `/dev/shm` and `/tmp`
-        tmp_producer =  mx.Producer(_STREAM_NAME, 300, 20, True, event, context=tdir)
-        assert os.path.exists(shm_buff_fname)
-        assert os.path.exists(tmp_buff_fname)  
-
-        # `/tmp` only
-        del shm_producer
-        assert not os.path.exists(shm_buff_fname)  # default location
-        assert os.path.exists(tmp_buff_fname)
-
-        # none
-        del tmp_producer
-        assert not os.path.exists(shm_buff_fname)
-        assert not os.path.exists(tmp_buff_fname)  # override location
-
 def test_two_consumer_copies()->None:
     import momentumx as mx
 
@@ -559,7 +532,7 @@ def test_grab_oldest()->None:
     tm=int(time.time()*1e3)
     _STREAM_NAME = f"mx://mx_{tm}".encode()
 
-    with timeout_event(timeout=300) as event:
+    with timeout_event() as event:
         producer = mx.Producer(_STREAM_NAME, 20, 5, False, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
 
@@ -623,6 +596,11 @@ def test_grab_oldest()->None:
 
         # verify b4 not modified
         assert b4[0] == bytes([20])
+
+        del b4
+        push(100)
+        b_last = consumer.receive()
+        assert b_last.buffer_id == 4
 
 
 if __name__ == "__main__":

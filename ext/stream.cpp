@@ -52,7 +52,8 @@ namespace MomentumX {
           _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT | O_EXCL : 0), S_IRWXU)),
           _data(nullptr),
           _control(nullptr),
-          _control_mutex(bip::open_or_create, paths.stream_mutex.c_str()) {
+          _control_mutex() {
+
         if (_fd < 0) {
             if (role == Role::CONSUMER) {
                 throw std::runtime_error("Failed to open shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
@@ -84,8 +85,10 @@ namespace MomentumX {
         }
 
         if (_role == PRODUCER) {
+            _control_mutex.emplace(bip::create_only, paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Created Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
+            _control_mutex.emplace(bip::open_only, paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Opened Stream (" + std::to_string((uint64_t)this) + ")"));
         }
     };
@@ -105,11 +108,11 @@ namespace MomentumX {
         }
 
         if (_role == PRODUCER) {
+            _control_mutex->remove(_paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Deleted Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
             Utils::Logger::get_logger().info(std::string("Closed Stream (" + std::to_string((uint64_t)this) + ")"));
         }
-        _control_mutex.remove(_paths.stream_mutex.c_str());
     }
 
     bool Stream::is_alive() {
@@ -138,7 +141,7 @@ namespace MomentumX {
             return false;
         }
 
-        Utils::OmniReadLock lock(_control_mutex);
+        Utils::OmniReadLock lock(*_control_mutex);
         return _control->sync;
     }
 
@@ -147,7 +150,7 @@ namespace MomentumX {
             return 0;
         }
 
-        Utils::OmniReadLock lock(_control_mutex);
+        Utils::OmniReadLock lock(*_control_mutex);
         return _control->buffer_size;
     }
 
@@ -156,7 +159,7 @@ namespace MomentumX {
             return 0;
         }
 
-        Utils::OmniReadLock lock(_control_mutex);
+        Utils::OmniReadLock lock(*_control_mutex);
         return _control->buffer_count;
     }
 
@@ -165,7 +168,7 @@ namespace MomentumX {
             return {};
         }
 
-        Utils::OmniReadLock lock(_control_mutex);
+        Utils::OmniReadLock lock(*_control_mutex);
         std::list<Stream::BufferState> buffer_states(_control->buffers.begin(), _control->buffers.end());
         if (sort) {
             const auto comparator = [](const BufferState& x, const BufferState& y) { return (x.data_timestamp < y.data_timestamp); };
@@ -184,7 +187,7 @@ namespace MomentumX {
             return;
         }
 
-        Utils::OmniWriteLock lock(_control_mutex);
+        Utils::OmniWriteLock lock(*_control_mutex);
         const auto beg = _control->buffers.begin();
         const auto end = _control->buffers.end();
         const auto pred = [&](const BufferState& bs) { return bs.buffer_id == buffer_state.buffer_id; };
@@ -202,7 +205,7 @@ namespace MomentumX {
             return {};
         }
 
-        Utils::OmniReadLock lock(_control_mutex);
+        Utils::OmniReadLock lock(*_control_mutex);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
         return std::set<Context*>(beg, end);
@@ -217,7 +220,7 @@ namespace MomentumX {
             return;
         }
 
-        Utils::OmniWriteLock lock(_control_mutex);
+        Utils::OmniWriteLock lock(*_control_mutex);
 
         try {
             _control->subscribers.push_back(context);
@@ -238,7 +241,7 @@ namespace MomentumX {
             return;
         }
 
-        Utils::OmniWriteLock lock(_control_mutex);
+        Utils::OmniWriteLock lock(*_control_mutex);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
         const auto loc = std::find(beg, end, context);
@@ -253,7 +256,7 @@ namespace MomentumX {
             return {};
         }
 
-        Utils::OmniReadLock lock(_control_mutex);
+        Utils::OmniReadLock lock(*_control_mutex);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
         const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; });
@@ -266,7 +269,7 @@ namespace MomentumX {
             return;
         }
 
-        Utils::OmniWriteLock lock(_control_mutex);
+        Utils::OmniWriteLock lock(*_control_mutex);
         for (auto const subscriber : _control->subscribers) {
             _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
         }
@@ -277,7 +280,7 @@ namespace MomentumX {
 
     void Stream::remove_all_pending_acknowledgements(Context* context) {
         while (is_alive()) {
-            Utils::OmniWriteLock lock(_control_mutex);
+            Utils::OmniWriteLock lock(*_control_mutex);
             auto const beg = _control->pending_acknowledgements.begin();
             auto const end = _control->pending_acknowledgements.end();
             auto const loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.context == context; });
@@ -295,7 +298,7 @@ namespace MomentumX {
             return;
         }
 
-        Utils::OmniWriteLock lock(_control_mutex);
+        Utils::OmniWriteLock lock(*_control_mutex);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
         const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.buffer_id == buffer_id && pa.context == context; });

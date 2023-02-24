@@ -27,7 +27,7 @@ namespace MomentumX {
           _is_create(create),
           _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU)),
           _address(nullptr),
-          _mutex(bip::open_or_create, _backing_mutex_name.c_str()) {
+          _mutex() {
         if (_fd < 0) {
             if (_is_create) {
                 throw std::runtime_error("Failed to create shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
@@ -39,8 +39,10 @@ namespace MomentumX {
         resize_remap(size);
 
         if (_is_create) {
+            _mutex.emplace(bip::create_only, _backing_mutex_name.c_str());
             Utils::Logger::get_logger().info(std::string("Created Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
+            _mutex.emplace(bip::open_only, _backing_mutex_name.c_str());
             Utils::Logger::get_logger().info(std::string("Opened Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
     };
@@ -51,6 +53,7 @@ namespace MomentumX {
 
             if (_is_create) {
                 int return_val = std::remove(_backing_filepath.c_str());
+                _mutex->remove(_backing_mutex_name.c_str());
                 if (return_val != 0) {
                     std::stringstream ss;
                     ss << "Unable to delete buffer file \"" << _backing_filepath << "\" with error: " << return_val;
@@ -65,7 +68,6 @@ namespace MomentumX {
             Utils::Logger::get_logger().info(std::string("Closed Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
 
-        _mutex.remove(_backing_mutex_name.c_str());
     }
 
     const uint16_t Buffer::id() {

@@ -82,7 +82,7 @@ namespace MomentumX {
         int _fd;
         char* _data;
         ControlBlock* _control;
-        Utils::OmniMutex _control_mutex;  // declared (thus defined) after _fd (constructor argument)
+        std::optional<Utils::OmniMutex> _control_mutex;  // Optional to defer construction. Always valid post-constructor.
     };
 
     class StreamManager {

@@ -35,7 +35,7 @@ namespace MomentumX {
         Buffer& operator=(Buffer&&) = delete;
         Buffer& operator=(const Buffer&) = delete;
 
-        inline Utils::OmniMutex& mutex() const { return _mutex; }
+        inline Utils::OmniMutex& mutex() const { return *_mutex; }
 
        private:
         friend class BufferManager;
@@ -48,7 +48,7 @@ namespace MomentumX {
         bool _is_create;
         int _fd;
         uint8_t* _address;
-        mutable Utils::OmniMutex _mutex; // defined after _fd defined
+        mutable std::optional<Utils::OmniMutex> _mutex;  // Optional to defer construction. Always valid post-constructor.
 
         void resize_remap(size_t size);
     };

@@ -231,9 +231,9 @@ struct BufferShim {
     py::buffer_info read_buffer_info() const { return py::buffer_info(data(), data_size()); }
     py::buffer_info write_buffer_info() { return py::buffer_info(data(), buffer_size(), false); }
 
-    auto send_from_current() -> bool { return send(max_cursor_index); }
+    auto send_from_current(bool release) -> bool { return send(max_cursor_index, release); }
 
-    auto send(size_t data_size) -> bool {
+    auto send(size_t data_size, bool release) -> bool {
         if (is_sent) {
             throw AlreadySentException();
         }
@@ -247,7 +247,9 @@ struct BufferShim {
         buffer_state->data_size = data_size;
         try {
             is_sent = ctx->send(stream.get(), *buffer_state);
-            _unchecked_buffer_state.reset();
+            if (release) {
+                _unchecked_buffer_state.reset();
+            }
             return is_sent;
         } catch (std::exception& ex) {
             Logger::get_logger().error(ex.what());
@@ -354,7 +356,7 @@ struct StreamShim {
         }
     }
 
-    auto send_string(const std::string& str, bool blocking) -> bool {
+    auto send_string(const std::string& str, bool blocking, bool release) -> bool {
         std::optional<BufferShim> buffer = next_to_send(blocking);
         if (!buffer) {
             return false;
@@ -367,7 +369,7 @@ struct StreamShim {
         char* data = reinterpret_cast<char*>(buffer->data());
         std::copy(str.begin(), str.end(), data);
 
-        return buffer->send(str.size());
+        return buffer->send(str.size(), release);
     }
 
     auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string {
@@ -502,8 +504,8 @@ PYBIND11_MODULE(_mx, m) {
         .def("write", &WriteBufferShim::write, "value"_a)
         .def("truncate", &WriteBufferShim::truncate_to_current)
         .def("truncate", &WriteBufferShim::truncate, "index"_a)
-        .def("send", &WriteBufferShim::send, "data_size"_a)
-        .def("send", &WriteBufferShim::send_from_current)
+        .def("send", &WriteBufferShim::send, "data_size"_a, py::kw_only(), "release"_a = true)
+        .def("send", &WriteBufferShim::send_from_current, py::kw_only(), "release"_a = true)
         .def_property_readonly("buffer_id", &WriteBufferShim::buffer_id)
         .def_property_readonly("buffer_size", &WriteBufferShim::buffer_size)
         .def_property_readonly("buffer_count", &WriteBufferShim::buffer_count)
@@ -516,7 +518,7 @@ PYBIND11_MODULE(_mx, m) {
              "polling_interval"_a = 0.010, "context"_a = "/dev/shm")
         .def("next_to_send", &ProducerStreamShim::next_to_send, "blocking"_a = true)
         .def("flush", &ProducerStreamShim::flush)
-        .def("send_string", &ProducerStreamShim::send_string, "message"_a, "blocking"_a = true)
+        .def("send_string", &ProducerStreamShim::send_string, "message"_a, py::kw_only(), "blocking"_a = true, "release"_a = true)
         .def_property_readonly("subscriber_count", &ProducerStreamShim::subscriber_count)
         .def_property_readonly("buffer_count", &ProducerStreamShim::buffer_count)
         .def_property_readonly("buffer_size", &ProducerStreamShim::buffer_size)
