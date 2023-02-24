@@ -61,8 +61,6 @@ namespace MomentumX {
             }
         }
 
-        const std::string __fname = _paths.stream_path + (role == Role::CONSUMER ? "(c)" : "(p)");
-        Utils::fnames()[_fd] = __fname;
         const size_t size_required = Utils::page_aligned_size(sizeof(ControlBlock));
 
         if (role == Role::PRODUCER) {

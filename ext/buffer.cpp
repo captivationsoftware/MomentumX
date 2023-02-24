@@ -35,9 +35,6 @@ namespace MomentumX {
                 throw std::runtime_error("Failed to open shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
             }
         }
-        std::lock_guard<std::mutex> lock(Utils::fnames_m);
-        Utils::fnames()[_fd] = _backing_filepath;
-
         // do the ftruncate to resize and (re)mmap
         resize_remap(size);
 
