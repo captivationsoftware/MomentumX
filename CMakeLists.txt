@@ -6,10 +6,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# project(${SKBUILD_PROJECT_NAME} VERSION ${SKBUILD_PROJECT_VERSION})
-
-# include(ext)
-
 if(SKBUILD)
   # Scikit-Build does not add your site-packages to the search path
   # automatically, so we need to add it _or_ the pybind11 specific directory
@@ -22,7 +18,15 @@ if(SKBUILD)
   list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 endif()
 
-#find_package(Boost 1.77 REQUIRED COMPONENTS interprocess)
+set(BOOST_ENABLE_CMAKE ON)
+include(FetchContent)
+FetchContent_Declare(
+  boost
+  URL      https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.tar.gz  # link from https://www.boost.org/users/download/
+  URL_HASH SHA256=205666dea9f6a7cfed87c7a6dfbeb52a2c1b9de55712c9c1a87735d7181452b6               # latest as of 25 Feb, 2023
+)
+FetchContent_MakeAvailable(boost)
+
 find_package(pybind11 CONFIG REQUIRED)
 
 set(SRCS
@@ -36,6 +40,7 @@ set(SRCS
 )
 
 pybind11_add_module(_mx MODULE ${SRCS} ext/binding.cpp)
+target_include_directories(_mx SYSTEM PRIVATE ${boost_SOURCE_DIR})
 target_include_directories(_mx PRIVATE ext)
 target_link_libraries(_mx PRIVATE rt)
 
@@ -69,5 +74,6 @@ FetchContent_MakeAvailable(Catch2)
 enable_testing()
 include(CTest)
 add_executable(mx_test  tests/cxx_test.cpp)
+target_include_directories(mx_test SYSTEM PRIVATE ${boost_SOURCE_DIR})
 target_include_directories(mx_test PRIVATE ext)
 target_link_libraries(mx_test PRIVATE Catch2::Catch2WithMain)
