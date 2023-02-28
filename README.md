@@ -14,7 +14,6 @@
 - High-Throughput, Low Latency
 - Supports **streaming and synchronous** modes for use within a wide variety of use cases. 
 - Bring your own encoding, or use **raw binary** data.
-- Small footprint with **zero dependencies**.
 - Sane **data protections** to ensure **reliability of data** in a cooperative computing environment. 
 - Pairs with other high-performance libraries, such as **numpy** and **scipy**, to support parallel processing of memory-intensive scientific data.
 - Works on most modern versions of **Linux** using shared memory (via `/dev/shm`).
@@ -48,6 +47,8 @@ while stream.is_alive:
     # Receive from the stream as long as the stream is available 
     buffer = stream.receive()
     print(buffer[:buffer.data_size])
+    
+    # Calling `buffer.release()` not required (see "Implicit versus Explicit Buffer Release" section below)
 ```
 
 #### Syncronous Mode (e.g. lossless)
@@ -108,6 +109,27 @@ buffer = stream.receive()
 
 # Create a numpy array directly from the memory without any copying
 np_buff = np.frombuffer(buffer, dtype=uint8)
+
+```
+
+#### Implicit versus Explicit Buffer Release
+MomentumX Consumers will, by default, automatically release a buffer under the covers once all references are destroyed. This promotes both usability and data integrity. However, there may be cases where the developer wants to utilize a different strategy and explicity control when buffers are released to the pool of available buffers.
+
+```python
+stream = mx.Consumer('my_stream')
+
+buffer = stream.receive()
+
+# Access to buffer is safe!
+buffer.read(10)
+
+# Buffer is being returned back to available buffer pool. Be sure you are truly done with your data!
+buffer.release() 
+
+# DANGER: DO NOT DO THIS! 
+# All operations on a buffer after calling `release` are considered unsafe! All safeguards have been removed and the memory is volatile!
+buffer.read(10) 
+
 
 ```
 

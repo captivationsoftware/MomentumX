@@ -262,6 +262,11 @@ struct ReadBufferShim : BufferShim {
     ReadBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
         : BufferShim(ctx, stream, buffer_state) {}
 
+    ~ReadBufferShim() {
+        // implicitly release when the buffer shim falls out of scope
+        release();
+    }
+
     void release() {
         const auto copy = _unchecked_buffer_state;  // copy (could be none if previously released)
         if (copy) {

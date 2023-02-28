@@ -411,8 +411,55 @@ def test_synced_buffers() -> None:
             print('\n-- delete (rx)')
             del rx_buffer
     
-        
+def _implicit_release_produce(buffer_count):
+    import momentumx as mx 
 
+    with timeout_event() as timeout:
+        producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, timeout)
+
+        while producer.subscriber_count == 0:
+            timeout.wait(0.1)
+
+        times = 0        
+        for _ in range(buffer_count * 2):
+            buffer = producer.next_to_send()
+            if buffer:
+                buffer.send(1)
+                times += 1
+
+        return times
+    
+def _implicit_release_consume():
+    import momentumx as mx
+
+    with timeout_event() as timeout:
+        consumer = None
+        while not timeout.is_set():
+            try:
+                consumer = mx.Consumer(_STREAM_NAME, timeout)
+                break
+            except:
+                timeout.wait(0.1)
+
+        times = 0
+        while consumer.is_alive:
+            buffer = consumer.receive()
+            times += 1
+
+        return times
+    
+    
+def test_implicit_release() -> None:
+    
+    buffer_count = 3
+
+    with cf.ProcessPoolExecutor() as pool:
+        f1 = pool.submit(_implicit_release_produce, buffer_count)
+        f2 = pool.submit(_implicit_release_consume)
+
+        cf.wait([f1, f2])
+        assert f1.result() == buffer_count * 2, "Producer didn't receive expected acknowledgements"
+        assert f2.result() == buffer_count * 2, "Consumer didn't receive expected number of messages"
 
 def test_synced_buffers_many_read_after_many_write() -> None:
     import momentumx as mx 

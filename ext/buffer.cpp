@@ -67,7 +67,6 @@ namespace MomentumX {
         } else {
             Utils::Logger::get_logger().info(std::string("Closed Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
-
     }
 
     const uint16_t Buffer::id() {
