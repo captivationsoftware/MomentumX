@@ -31,10 +31,21 @@ import momentumx as mx
 stream = mx.Producer('my_stream', buffer_size=int(1e6), buffer_count=10, sync=False)
 
 # Write the series 0-9 repeatedly to a buffer 1000 times
-for i in range(0, 1000):
-    buffer = stream.next_to_send()
-    buffer.write(f'{i % 10}'.encode('utf8')) # Note: writing to buffer via [<index>] and [<start_index>:<stop_index>] is also possible
-    buffer.send() # Note: call with .send(<num bytes>) if you want to explicitly control the data_size parameter, otherwise internal cursor will be used
+buffer = stream.next_to_send()
+buffer.write(b'1') 
+# buffer data == b'1'
+
+# alternatively, set via array indexing...
+buffer[1] = b'2'
+# buffer data == b'12'
+
+# or also set via python slice operator
+buffer[2:3] = b'34'
+# buffer data == b'1234'
+
+buffer.send()
+# NOTE: buffer.send() can also be passed an explicit number of bytes as well. 
+# Otherwise an internally managed cursor will be used.
 ```
 
 ```python
@@ -48,7 +59,8 @@ while stream.is_alive:
     buffer = stream.receive()
     print(buffer[:buffer.data_size])
     
-    # Calling `buffer.release()` not required (see "Implicit versus Explicit Buffer Release" section below)
+    # Calling `buffer.release()` not required. 
+    # See "Implicit versus Explicit Buffer Release" section below.
 ```
 
 #### Syncronous Mode (e.g. lossless)
@@ -62,7 +74,12 @@ cancel_event = threading.Event()
 signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel_event.set()))
 
 # Create a stream with a total capacity of 10MB
-stream = mx.Producer('my_stream', buffer_size=int(1e6), buffer_count=10, sync=True) # NOTE: sync set to True
+stream = mx.Producer(
+    'my_stream', 
+    buffer_size=int(1e6), 
+    buffer_count=10, 
+    sync=True
+) # NOTE: sync set to True
 
 min_subscribers = 1
 
@@ -123,11 +140,13 @@ buffer = stream.receive()
 # Access to buffer is safe!
 buffer.read(10)
 
-# Buffer is being returned back to available buffer pool. Be sure you are truly done with your data!
+# Buffer is being returned back to available buffer pool. 
+# Be sure you are truly done with your data!
 buffer.release() 
 
 # DANGER: DO NOT DO THIS! 
-# All operations on a buffer after calling `release` are considered unsafe! All safeguards have been removed and the memory is volatile!
+# All operations on a buffer after calling `release` are considered unsafe! 
+# All safeguards have been removed and the memory is volatile!
 buffer.read(10) 
 
 
