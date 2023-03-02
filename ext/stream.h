@@ -34,6 +34,10 @@ namespace MomentumX {
 
             BufferState(uint16_t id, size_t buffer_size, size_t buffer_count, size_t data_size, uint64_t timestamp, uint64_t iteration)
                 : buffer_id(id), buffer_size(buffer_size), buffer_count(buffer_count), data_size(data_size), data_timestamp(timestamp), iteration(iteration){};
+        
+            friend bool operator==(const BufferState& lhs, const BufferState& rhs) {
+                return &lhs == &rhs || (lhs.buffer_id == rhs.buffer_id && lhs.iteration == rhs.iteration); 
+            }
         };
 
         enum Role { CONSUMER, PRODUCER };
@@ -41,8 +45,6 @@ namespace MomentumX {
         Stream(const Utils::PathConfig& paths, size_t buffer_size = 0, size_t buffer_count = 0, bool sync = false, Role role = Role::CONSUMER);
 
         ~Stream();
-
-        bool is_alive();
 
         const std::string& name();
 
@@ -55,6 +57,7 @@ namespace MomentumX {
         size_t buffer_size();
 
         size_t buffer_count();
+
 
         std::list<BufferState> buffer_states(bool sort = false, uint64_t minimum_timestamp = 0);
 
@@ -74,6 +77,10 @@ namespace MomentumX {
 
         void remove_pending_acknowledgement(size_t buffer_id, Context* context);
 
+        bool is_ended();
+
+        void end();
+        
        private:
         friend class StreamManager;
 
@@ -83,6 +90,7 @@ namespace MomentumX {
         char* _data;
         ControlBlock* _control;
         std::optional<Utils::OmniMutex> _control_mutex;  // Optional to defer construction. Always valid post-constructor.
+    
     };
 
     class StreamManager {
@@ -101,6 +109,7 @@ namespace MomentumX {
         std::shared_ptr<Stream::BufferState> next_buffer_state(Stream* stream);
         bool send_buffer_state(Stream* stream, Stream::BufferState buffer_state);
         std::shared_ptr<Stream::BufferState> receive_buffer_state(Stream* stream, uint64_t minimum_timestamp = 1);
+        bool has_next_buffer_state(Stream* stream, uint64_t minimum_timestamp = 1);
         void flush_buffer_state(Stream* stream);
         void release_buffer_state(Stream* stream, const Stream::BufferState& buffer_state);
         size_t subscriber_count(Stream* stream);

@@ -65,7 +65,7 @@ def run_send() -> int:
         buf_iter = iter(stream.next_to_send, None)
 
         for data, buf in zip(chunked_data(), buf_iter):
-            if not stream.is_alive:
+            if not buf:
                 raise Exception("Stream died")
 
             bytearray(buf)[: len(data)] = data
@@ -322,7 +322,6 @@ def test_send_data_size_equal_to_buffer_size_implicit() -> None:
     except mx.DataOverflow:
         assert False, f"Sending where data_size == buffer_size should not throw Overflow error"
 
-
 def test_send_data_size_equal_to_buffer_size_explicit() -> None:
     import momentumx as mx
 
@@ -410,18 +409,42 @@ def test_synced_buffers() -> None:
 
             print('\n-- delete (rx)')
             del rx_buffer
+
+def test_durable_ending():
+    import momentumx as mx
+
+    buffer_count = 27
+    with timeout_event(timeout=1e6) as event:
+        producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
+        consumer = mx.Consumer(_STREAM_NAME, event)
+        
+        for n in range(1, buffer_count + 1):
+            b = producer.next_to_send()
+            b[0] = bytes([n])
+            b.send()
+
+        assert producer.is_ended == False
+        producer.end()
+        assert producer.is_ended == True
+
+        for n in range(1, buffer_count + 1):
+            assert consumer.has_next == True
+            b = consumer.receive()
+            assert b[0] == bytes([n])
+        assert consumer.has_next == False
+
     
-def _implicit_release_produce(buffer_count):
+def _test_producer(buffer_count, send_count, timeout=5):
     import momentumx as mx 
 
-    with timeout_event() as timeout:
-        producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, timeout)
+    with timeout_event(timeout=timeout) as evt:
+        producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, evt)
 
         while producer.subscriber_count == 0:
-            timeout.wait(0.1)
+            evt.wait(0.1)
 
         times = 0        
-        for _ in range(buffer_count * 2):
+        for _ in range(send_count):
             buffer = producer.next_to_send()
             if buffer:
                 buffer.send(1)
@@ -429,37 +452,49 @@ def _implicit_release_produce(buffer_count):
 
         return times
     
-def _implicit_release_consume():
+def _test_consumer(timeout=5, post_receive_sleep=0):
     import momentumx as mx
 
-    with timeout_event() as timeout:
+    with timeout_event(timeout=timeout) as evt:
         consumer = None
-        while not timeout.is_set():
+        while not evt.is_set():
             try:
-                consumer = mx.Consumer(_STREAM_NAME, timeout)
+                consumer = mx.Consumer(_STREAM_NAME, evt)
                 break
             except:
-                timeout.wait(0.1)
+                evt.wait(0.1)
 
         times = 0
-        while consumer.is_alive:
+        while consumer.has_next:
             buffer = consumer.receive()
-            times += 1
+            if buffer:
+                times += 1
+                if post_receive_sleep > 0:
+                    evt.wait(post_receive_sleep)
 
         return times
     
     
 def test_implicit_release() -> None:
-    
     buffer_count = 3
-
     with cf.ProcessPoolExecutor() as pool:
-        f1 = pool.submit(_implicit_release_produce, buffer_count)
-        f2 = pool.submit(_implicit_release_consume)
+        f1 = pool.submit(_test_producer, buffer_count, send_count=buffer_count*2)
+        f2 = pool.submit(_test_consumer)
 
         cf.wait([f1, f2])
         assert f1.result() == buffer_count * 2, "Producer didn't receive expected acknowledgements"
         assert f2.result() == buffer_count * 2, "Consumer didn't receive expected number of messages"
+
+
+def test_durable_receives() -> None:
+    buffer_count = 3
+    with cf.ProcessPoolExecutor() as pool:
+        f1 = pool.submit(_test_producer, buffer_count, send_count=buffer_count)
+        f2 = pool.submit(_test_consumer, post_receive_sleep=0.1) # sleep after each send
+
+        cf.wait([f1, f2])
+        assert f1.result() == buffer_count, "Producer didn't send expected number of messages"
+        assert f2.result() == buffer_count, "Consumer didn't receive expected number of messages"
 
 def test_synced_buffers_many_read_after_many_write() -> None:
     import momentumx as mx 
@@ -497,7 +532,6 @@ def test_buffer_cleanup() -> None:
 
         # Verify buffer is created
         producer = mx.Producer(_STREAM_NAME, 300, 20, True, event)
-        assert producer.is_alive
         assert producer.is_sync
         assert producer.buffer_size == 300
         assert producer.buffer_count == 20

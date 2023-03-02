@@ -17,7 +17,7 @@ while stream.subscriber_count == 0:
     print("waiting for subscriber(s)")
     time.sleep(0.5)
 
-while stream.is_alive:
+while True:
     buffer = stream.next_to_send(blocking=False)
 
     if buffer:

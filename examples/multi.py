@@ -31,7 +31,7 @@ def doubler(cancel: threading.Event):
             print("doubler canceled before starting")
             return
 
-    while istream.is_alive and not cancel.is_set():
+    while istream.has_next and not cancel.is_set():
         sval = istream.receive_string()
         if sval:
             ival = int(sval.strip())
@@ -41,7 +41,7 @@ def doubler(cancel: threading.Event):
 def printer(cancel: threading.Event):
     time.sleep(2)
     stream = Consumer("doubler", cancel)
-    while stream.is_alive and not cancel.is_set():
+    while stream.has_next and not cancel.is_set():
         val = stream.receive_string()
         if val:
             print(val)

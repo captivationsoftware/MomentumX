@@ -16,7 +16,7 @@ skip_count = 0
 
 stream = mx.Consumer(STREAM)
 
-while stream.is_alive:
+while stream.has_next:
     buffer = stream.receive(blocking=False)
 
     if buffer:

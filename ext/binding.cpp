@@ -31,6 +31,8 @@ struct ReadBufferShim;
 struct StreamShim;
 struct WriteBufferShim;
 
+static py::bytes END_OF_STREAM{"END_OF_STREAM"};
+
 struct StreamExistsException : public std::exception {
     const char* what() const noexcept override { return "Stream already exists"; }
 };
@@ -275,6 +277,7 @@ struct ReadBufferShim : BufferShim {
         _unchecked_buffer_state.reset();
     }
 };
+
 struct WriteBufferShim : BufferShim {
     WriteBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
         : BufferShim(ctx, stream, buffer_state) {}
@@ -290,13 +293,18 @@ struct StreamShim {
         : ctx(ctx), stream(stream), evt(evt), polling_interval(polling_interval) {}
     ~StreamShim() = default;
 
-    bool is_alive() { return this->stream->is_alive(); }
     std::string name() { return this->stream->name(); }
     size_t fd() { return this->stream->fd(); }
     bool sync() { return this->stream->sync(); }
     size_t buffer_size() { return this->stream->buffer_size(); }
     size_t buffer_count() { return this->stream->buffer_count(); }
     size_t subscriber_count() { return this->stream->subscribers().size(); }
+    bool is_ended() { return this->stream->is_ended(); } 
+    bool has_next() { return this->ctx->can_receive(this->stream.get()); }
+
+    void end() {
+        stream->end();
+    }
 
     auto next_to_send(bool blocking) -> std::optional<WriteBufferShim> {
         py::gil_scoped_release nogil;
@@ -325,12 +333,7 @@ struct StreamShim {
 
     auto receive(uint64_t minimum_ts, bool blocking) -> std::optional<ReadBufferShim> {
         py::gil_scoped_release nogil;
-        while (!evt.is_set()) {
-            if (!stream->is_alive()) {
-                Logger::get_logger().info("cannot receive: stream not alive");
-                return {};
-            }
-
+        while (has_next() && !evt.is_set()) {
             std::shared_ptr<BufferState> buffer_info = nullptr;
 
             try {
@@ -385,9 +388,9 @@ struct StreamShim {
 
         char* data = reinterpret_cast<char*>(buffer->data());
         std::string str(data, buffer->data_size());
-        buffer->release();
         return str;
     }
+
 };
 
 struct ConsumerStreamShim : StreamShim {
@@ -429,27 +432,32 @@ static ProducerStreamShim producer_stream(const std::string& stream_name,
 static ConsumerStreamShim consumer_stream(const std::string& stream_name, const py::object& evt, double polling_interval, const std::string& context) {
     py::gil_scoped_release nogil;  // release gil since the constructor blocks
 
-    auto c = std::make_shared<Context>(context);
+    auto ctx = std::make_shared<Context>(context);
     auto wrapped_evt = ThreadingEventWrapper(evt);
     Stream* stream = nullptr;
 
     try {
-        stream = c->subscribe(std::string(stream_name));
+        stream = ctx->subscribe(std::string(stream_name));
     } catch (std::exception& ex) {
         Logger::get_logger().error(ex.what());
     }
 
     if (stream) {
-        return ConsumerStreamShim(c,
-                                  std::shared_ptr<Stream>(stream,
-                                                          [c](Stream* stream) {
-                                                              // try {
-                                                              //     ctx->unsubscribe(stream.get())
-                                                              // } catch (std::exception& ex) {
-                                                              //     Logger::get_logger().error(ex.what());
-                                                              // }
-                                                          }),
-                                  wrapped_evt, polling_interval);
+        return ConsumerStreamShim(
+            ctx,
+            std::shared_ptr<Stream>(
+                stream,
+                [ctx](Stream* stream) {
+                    try {
+                        ctx->unsubscribe(stream);
+                    } catch (std::exception& ex) {
+                        Logger::get_logger().error(ex.what());
+                    }
+                }
+            ),
+            wrapped_evt, 
+            polling_interval
+        );
     }
 
     throw StreamUnavailableException();
@@ -518,18 +526,20 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("data_timestamp", &WriteBufferShim::data_timestamp)
         .def_property_readonly("iteration", &WriteBufferShim::iteration);
 
+
     py::class_<ProducerStreamShim>(m, "Producer")
         .def(py::init(&producer_stream), "stream_name"_a, "buffer_size"_a, "buffer_count"_a, "sync"_a = false, "cancel_event"_a = std::optional<py::object>(),
              "polling_interval"_a = 0.010, "context"_a = "/dev/shm")
         .def("next_to_send", &ProducerStreamShim::next_to_send, "blocking"_a = true)
         .def("flush", &ProducerStreamShim::flush)
         .def("send_string", &ProducerStreamShim::send_string, "message"_a, py::kw_only(), "blocking"_a = true, "release"_a = true)
+        .def("end", &ProducerStreamShim::end)
         .def_property_readonly("subscriber_count", &ProducerStreamShim::subscriber_count)
         .def_property_readonly("buffer_count", &ProducerStreamShim::buffer_count)
         .def_property_readonly("buffer_size", &ProducerStreamShim::buffer_size)
         .def_property_readonly("fd", &ProducerStreamShim::fd)
-        .def_property_readonly("is_alive", &ProducerStreamShim::is_alive)
         .def_property_readonly("is_sync", &ProducerStreamShim::sync)
+        .def_property_readonly("is_ended", &ProducerStreamShim::is_ended)
         .def_property_readonly("name", &ProducerStreamShim::name);
 
     py::class_<ConsumerStreamShim>(m, "Consumer")
@@ -540,8 +550,10 @@ PYBIND11_MODULE(_mx, m) {
         .def("receive_string", &ConsumerStreamShim::receive_string, "minimum_ts"_a = 1, "blocking"_a = true)
         .def_property_readonly("buffer_count", &ConsumerStreamShim::buffer_count)
         .def_property_readonly("buffer_size", &ConsumerStreamShim::buffer_size)
-        .def_property_readonly("fd", &ConsumerStreamShim::fd)
-        .def_property_readonly("is_alive", &ConsumerStreamShim::is_alive)
         .def_property_readonly("is_sync", &ConsumerStreamShim::sync)
-        .def_property_readonly("name", &ConsumerStreamShim::name);
+        .def_property_readonly("is_ended", &ConsumerStreamShim::is_ended)
+        .def_property_readonly("has_next", &ConsumerStreamShim::has_next)
+        .def_property_readonly("name", &ConsumerStreamShim::name)
+        .def_property_readonly("fd", &ConsumerStreamShim::fd);
+
 }

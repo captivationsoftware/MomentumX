@@ -37,6 +37,7 @@ namespace MomentumX {
         static constexpr size_t MAX_SUBSCRIPTIONS = 256;
 
         bool sync{};
+        bool is_ended{};
         size_t buffer_size{};
         size_t buffer_count{};
         Utils::StaticVector<Stream::BufferState, MAX_BUFFERS> buffers{};
@@ -86,18 +87,25 @@ namespace MomentumX {
 
         if (_role == PRODUCER) {
             _control_mutex.emplace(bip::create_only, paths.stream_mutex.c_str());
-            Utils::Logger::get_logger().info(std::string("Created Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
             _control_mutex.emplace(bip::open_only, paths.stream_mutex.c_str());
-            Utils::Logger::get_logger().info(std::string("Opened Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
     };
 
     Stream::~Stream() {
+
+        if (_role == Role::PRODUCER) {
+            end();
+        }
+
         if (_fd > -1) {
             close(_fd);
 
             if (_role == Role::PRODUCER) {
+                end();
+                
                 int return_val = std::remove(_paths.stream_path.c_str());
                 if (return_val != 0) {
                     std::stringstream ss;
@@ -109,19 +117,10 @@ namespace MomentumX {
 
         if (_role == PRODUCER) {
             _control_mutex->remove(_paths.stream_mutex.c_str());
-            Utils::Logger::get_logger().info(std::string("Deleted Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Destroyed Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            Utils::Logger::get_logger().info(std::string("Closed Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Destroyed Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
-    }
-
-    bool Stream::is_alive() {
-        struct stat stat;
-        fstat(_fd, &stat);
-        if (stat.st_nlink > 0) {
-            return true;
-        }
-        return false;
     }
 
     const std::string& Stream::name() {
@@ -137,37 +136,34 @@ namespace MomentumX {
     }
 
     bool Stream::sync() {
-        if (!is_alive()) {
-            return false;
-        }
-
         Utils::OmniReadLock lock(*_control_mutex);
         return _control->sync;
     }
 
     size_t Stream::buffer_size() {
-        if (!is_alive()) {
-            return 0;
-        }
-
         Utils::OmniReadLock lock(*_control_mutex);
         return _control->buffer_size;
     }
 
     size_t Stream::buffer_count() {
-        if (!is_alive()) {
-            return 0;
-        }
-
         Utils::OmniReadLock lock(*_control_mutex);
         return _control->buffer_count;
     }
 
-    std::list<Stream::BufferState> Stream::buffer_states(bool sort, uint64_t minimum_timestamp) {
-        if (!is_alive()) {
-            return {};
+    bool Stream::is_ended() {
+        {
+            // First, check to see if the producer is still producing (i.e. is_ended != true)
+            Utils::OmniReadLock lock(*_control_mutex);
+            return _control->is_ended;
         }
+    }
 
+    void Stream::end() {
+        Utils::OmniWriteLock lock(*_control_mutex);
+        _control->is_ended = true;
+    }
+
+    std::list<Stream::BufferState> Stream::buffer_states(bool sort, uint64_t minimum_timestamp) {
         Utils::OmniReadLock lock(*_control_mutex);
         std::list<Stream::BufferState> buffer_states(_control->buffers.begin(), _control->buffers.end());
         if (sort) {
@@ -181,10 +177,6 @@ namespace MomentumX {
     void Stream::update_buffer_state(const Stream::BufferState& buffer_state) {
         if (_role == Role::CONSUMER) {
             throw std::runtime_error("Consumer stream can not update stream buffer states");
-        }
-
-        if (!is_alive()) {
-            return;
         }
 
         Utils::OmniWriteLock lock(*_control_mutex);
@@ -201,10 +193,6 @@ namespace MomentumX {
     }
 
     std::set<Context*> Stream::subscribers() {
-        if (!is_alive()) {
-            return {};
-        }
-
         Utils::OmniReadLock lock(*_control_mutex);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
@@ -214,10 +202,6 @@ namespace MomentumX {
     void Stream::add_subscriber(Context* context) {
         if (_role == Role::PRODUCER) {
             throw std::runtime_error("Producer stream cannot add subscribers");
-        }
-
-        if (!is_alive()) {
-            return;
         }
 
         Utils::OmniWriteLock lock(*_control_mutex);
@@ -237,10 +221,6 @@ namespace MomentumX {
             throw std::runtime_error("Producer stream cannot remove subscribers");
         }
 
-        if (!is_alive()) {
-            return;
-        }
-
         Utils::OmniWriteLock lock(*_control_mutex);
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
@@ -252,10 +232,6 @@ namespace MomentumX {
     }
 
     bool Stream::has_pending_acknowledgements(size_t buffer_id) {
-        if (!is_alive()) {
-            return {};
-        }
-
         Utils::OmniReadLock lock(*_control_mutex);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
@@ -265,10 +241,6 @@ namespace MomentumX {
     }
 
     void Stream::set_pending_acknowledgements(size_t buffer_id) {
-        if (!is_alive()) {
-            return;
-        }
-
         Utils::OmniWriteLock lock(*_control_mutex);
         for (auto const subscriber : _control->subscribers) {
             _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
@@ -279,7 +251,8 @@ namespace MomentumX {
     }
 
     void Stream::remove_all_pending_acknowledgements(Context* context) {
-        while (is_alive()) {
+        while (true) {
+            std::cout << "Attempting to acquire write lock..." << std::endl;
             Utils::OmniWriteLock lock(*_control_mutex);
             auto const beg = _control->pending_acknowledgements.begin();
             auto const end = _control->pending_acknowledgements.end();
@@ -294,10 +267,6 @@ namespace MomentumX {
     }
 
     void Stream::remove_pending_acknowledgement(size_t buffer_id, Context* context) {
-        if (!is_alive()) {
-            return;
-        }
-
         Utils::OmniWriteLock lock(*_control_mutex);
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
@@ -311,7 +280,7 @@ namespace MomentumX {
         }
     }
 
-    StreamManager::StreamManager(Context* context, BufferManager* buffer_manager) : _context(context), _buffer_manager(buffer_manager){};
+    StreamManager::StreamManager(Context* context, BufferManager* buffer_manager) : _context(context), _buffer_manager(buffer_manager) {};
 
     StreamManager::~StreamManager() {
         std::map<std::string, Stream*> stream_by_name;
@@ -320,6 +289,7 @@ namespace MomentumX {
             stream_by_name = _stream_by_name;
         }
 
+        // cleanup
         for (auto const& tuple : stream_by_name) {
             destroy(tuple.second);
         }
@@ -373,14 +343,6 @@ namespace MomentumX {
         // if we don't know about this stream, then clearly we are
         // not subscribed
         if (stream == NULL) {
-            return false;
-        }
-
-        // likewise, if this stream is no longer available, we can't
-        // be subscribed.
-        // NOTE: do a silent unsubscribe for somehousekeeping
-        if (!stream->is_alive()) {
-            unsubscribe(stream);
             return false;
         }
 
@@ -469,7 +431,6 @@ namespace MomentumX {
         return std::shared_ptr<Stream::BufferState>(
             new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(), 0, 0, ++_iteration_by_stream[stream]),
             [lock_ptr](Stream::BufferState* state) {
-
                 delete state;  // lock_ptr maintains file lock until this deleter called
             });
     }
@@ -493,6 +454,7 @@ namespace MomentumX {
         if (buffer_state.data_timestamp == 0) {
             buffer_state.data_timestamp = Utils::now();
         }
+
         buffer->write_ts(buffer_state.data_timestamp);
 
         if (stream->sync()) {
@@ -504,6 +466,28 @@ namespace MomentumX {
         return true;
     }
 
+    bool StreamManager::has_next_buffer_state(Stream* stream, uint64_t minimum_timestamp) {
+        std::list<Stream::BufferState> buffer_states;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            buffer_states = stream->buffer_states(true, stream->sync() ? 0 : minimum_timestamp);
+        }
+
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto beg = buffer_states.begin();
+        const auto end = buffer_states.end();
+        const auto pred = [&](const Stream::BufferState& bs) { return bs.iteration > _iteration_by_stream[stream]; };
+        const auto loc = std::find_if(beg, end, pred);
+
+        if (stream->is_ended()) {
+            // Stream has ended, so we only have more buffers if there are previously unaccessed buffers remaining
+            return loc != end;
+        } else {
+            // Stream is not ended so we can presume more buffers are coming.
+            return true;
+        }
+    }
+
     std::shared_ptr<Stream::BufferState> StreamManager::receive_buffer_state(Stream* stream, uint64_t minimum_timestamp) {
         std::list<Stream::BufferState> buffer_states;
         {
@@ -511,22 +495,16 @@ namespace MomentumX {
             buffer_states = stream->buffer_states(true, stream->sync() ? 0 : minimum_timestamp);
         }
 
-        if (buffer_states.size() == 0) {
-            return NULL;
-        }
-
         for (auto const& buffer_state : buffer_states) {
             {
-                // skip duplicates
+                // update our iteration cursor for the stream...
                 std::lock_guard<std::mutex> lock(_mutex);
                 if (buffer_state.iteration > _iteration_by_stream[stream]) {
                     _iteration_by_stream[stream] = buffer_state.iteration;
                 } else {
-                    // _iteration_by_stream[stream] << std::endl;
                     continue;
                 }
             }
-
             std::shared_ptr<Buffer> buffer = _buffer_manager->find(stream->paths(), buffer_state.buffer_id);
             if (buffer == NULL) {
                 throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
@@ -535,70 +513,34 @@ namespace MomentumX {
             Utils::OmniReadLock lock(buffer->mutex(), bip::defer_lock);
 
             if (lock.try_lock()) {
-                uint64_t last_data_timestamp;
-                Utils::get_timestamps(buffer->fd(), NULL, &last_data_timestamp);
-
-                if (buffer_state.data_timestamp == last_data_timestamp) {
-                    // we got the read lock and data matches, so return a copy
-                    // of buffer state to the caller.
-                    // NOTE: the lock_ptr
-                    auto lock_ptr = std::make_shared<Utils::OmniReadLock>(std::move(lock));
-                    return std::shared_ptr<Stream::BufferState>(new Stream::BufferState(buffer_state), [lock_ptr](Stream::BufferState* state) {
+                // we got the read lock, so return a copy
+                // of buffer state to the caller.
+                // NOTE: the lock_ptr
+                auto lock_ptr = std::make_shared<Utils::OmniReadLock>(std::move(lock));
+                return std::shared_ptr<Stream::BufferState>(
+                    new Stream::BufferState(buffer_state), 
+                    [lock_ptr](Stream::BufferState* state) {
+                        // if (stream->_role == Stream::Role::CONSUMER) {
+                        //     release_buffer_state(stream, *state);
+                        // }
                         delete state;  // still delete
-                    });
-                }
+                    }
+                );
+
             } else {
                 // failed to get the lock
             }
+
         }
 
-        // weren't able to read any messages - is it because the stream is
-        // terminated?
-        if (!stream->is_alive()) {
-            // yes it was, so alert the caller
-            throw std::runtime_error(
-                "Attempted to receive buffer state on stream "
-                "that has been terminated");
-        }
-
-        // if we made it here, we were unable to read any of the last returned
-        // buffer states, but the stream IS alive, so return null
-        return NULL;
-    }
-    /*
-    Stream::BufferState* StreamManager::get_by_buffer_id(Stream* stream, uint16_t buffer_id) {
-        Buffer* buffer = _buffer_manager->find(stream->paths(), buffer_id);
-        if (buffer == NULL) {
-            throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
-        }
-
-        if (Utils::try_read_lock(buffer->fd())) {
-            uint64_t last_data_timestamp;
-            Utils::get_timestamps(buffer->fd(), NULL, &last_data_timestamp);
-
-            std::list<Stream::BufferState> buffer_states;
-            {
-                std::lock_guard<std::mutex> lock(_mutex);
-                buffer_states = stream->buffer_states();
-            }
-
-            for (auto const& buffer_state : buffer_states) {
-                if (buffer_state.buffer_id == buffer_id) {
-                    if (last_data_timestamp == buffer_state.data_timestamp) {
-                        // we verified that buffer state mirrors the underlying
-                        // file, so return
-                        return new Stream::BufferState(buffer_state);
-                    } else {
-                        // data was expired, so return null
-                        break;
-                    }
-                }
-            }
+        if (stream->is_ended()) {
+            Utils::Logger::get_logger().info("Unable to read any more messages from ended stream. Automatically unsubscribing...");
+            unsubscribe(stream);
         }
 
         return NULL;
     }
-    */
+
     void StreamManager::flush_buffer_state(Stream* stream) {
         if (stream->sync()) {
             Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");

@@ -9,7 +9,7 @@ def consumer(cancel: threading.Event):
     time.sleep(1)
     stream = mx.Consumer(STREAM, cancel, context='/tmp')
 
-    while stream.is_alive and not cancel.is_set():
+    while not cancel.is_set():
         string = stream.receive_string()
         if string:
             print("Received:", string)

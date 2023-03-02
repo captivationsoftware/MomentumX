@@ -40,10 +40,10 @@ namespace MomentumX {
 
         if (_is_create) {
             _mutex.emplace(bip::create_only, _backing_mutex_name.c_str());
-            Utils::Logger::get_logger().info(std::string("Created Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Created Producer Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
             _mutex.emplace(bip::open_only, _backing_mutex_name.c_str());
-            Utils::Logger::get_logger().info(std::string("Opened Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Created Consumer Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
     };
 
@@ -63,9 +63,9 @@ namespace MomentumX {
         }
 
         if (_is_create) {
-            Utils::Logger::get_logger().info(std::string("Deleted Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Destroyed Producer Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            Utils::Logger::get_logger().info(std::string("Closed Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().info(std::string("Destroyed Consumer Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
     }
 

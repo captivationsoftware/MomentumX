@@ -54,7 +54,7 @@ import momentumx as mx
 
 stream = mx.Consumer('my_stream')
 
-while stream.is_alive:
+while True:
     # Receive from the stream as long as the stream is available 
     buffer = stream.receive()
     print(buffer[:buffer.data_size])
@@ -107,7 +107,7 @@ import momentumx as mx
 
 stream = mx.Consumer('my_stream')
 
-while stream.is_alive:
+while stream.has_next:
     # Note: receiving strings is possible as well via the receive_string call
     print(f"Received: {stream.receive_string()}")
 

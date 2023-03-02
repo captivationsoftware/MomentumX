@@ -14,7 +14,7 @@ def consumer(cancel: threading.Event):
     time.sleep(0.1)
     stream = mx.Consumer(STREAM, cancel)
 
-    while stream.is_alive and not cancel.is_set():
+    while stream.has_next and not cancel.is_set():
         string = stream.receive_string()
         if string:
             recv_counter += 1

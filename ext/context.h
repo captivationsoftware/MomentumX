@@ -21,16 +21,14 @@ namespace MomentumX {
        public:
         Context(const std::string& context_path);
         ~Context();
-        void term();
-        bool is_terminated();
         Stream* stream(std::string stream_name, size_t buffer_size, size_t buffer_count = 0, bool sync = false);
         bool is_subscribed(std::string stream_name);
         Stream* subscribe(std::string stream_name);
         void unsubscribe(Stream* stream);
         std::shared_ptr<Stream::BufferState> next(Stream* stream);
         bool send(Stream* stream, const Stream::BufferState& buffer_state);
+        bool can_receive(Stream* stream, uint64_t minimum_timestamp = 1);
         std::shared_ptr<Stream::BufferState> receive(Stream* stream, uint64_t minimum_timestamp = 1);
-        // Stream::BufferState* get_by_buffer_id(Stream* stream, uint16_t buffer_id);
         void flush(Stream* stream);
         void release(Stream* stream, const Stream::BufferState& buffer_state);
         uint8_t* data_address(Stream* stream, uint16_t buffer_id);
@@ -42,7 +40,6 @@ namespace MomentumX {
        private:
         friend class StreamManager;
 
-        std::atomic<bool> _terminated;
         std::string _context_path;
         BufferManager _buffer_manager;
         StreamManager _stream_manager;
