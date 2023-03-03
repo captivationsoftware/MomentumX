@@ -9,6 +9,8 @@ signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel.set()))
 
 stream = mx.Consumer(STREAM, cancel)
 
+mx.set_log_level(mx.LogLevel.DEBUG)
+
 while stream.has_next:
     string = stream.receive_string()
     if string:

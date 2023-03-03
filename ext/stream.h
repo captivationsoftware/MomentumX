@@ -89,6 +89,7 @@ namespace MomentumX {
         int _fd;
         char* _data;
         ControlBlock* _control;
+        bool _sync;
         std::optional<Utils::OmniMutex> _control_mutex;  // Optional to defer construction. Always valid post-constructor.
     
     };

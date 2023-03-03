@@ -92,11 +92,19 @@ namespace MomentumX {
             _control_mutex.emplace(bip::open_only, paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
+
+        // Initialize any cached variables that will remain for the duration of the stream to prevent extraneous locking...
+        Utils::Logger::get_logger().debug("Awaiting read lock in initialization");
+        Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in initialization");            
+        _sync = _control->sync;
     };
+
 
     Stream::~Stream() {
 
         if (_role == Role::PRODUCER) {
+            Utils::Logger::get_logger().info("Producer stream signalling end of stream");
             end();
         }
 
@@ -104,8 +112,6 @@ namespace MomentumX {
             close(_fd);
 
             if (_role == Role::PRODUCER) {
-                end();
-                
                 int return_val = std::remove(_paths.stream_path.c_str());
                 if (return_val != 0) {
                     std::stringstream ss;
@@ -136,35 +142,43 @@ namespace MomentumX {
     }
 
     bool Stream::sync() {
-        Utils::OmniReadLock lock(*_control_mutex);
-        return _control->sync;
+        return _sync;
     }
 
     size_t Stream::buffer_size() {
+        Utils::Logger::get_logger().debug("Awaiting read lock in stream buffer_size()");
         Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in stream buffer_size()");
         return _control->buffer_size;
     }
 
     size_t Stream::buffer_count() {
+        Utils::Logger::get_logger().debug("Awaiting read lock in stream buffer_count()");
         Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in stream buffer_count()");
         return _control->buffer_count;
     }
 
     bool Stream::is_ended() {
-        {
-            // First, check to see if the producer is still producing (i.e. is_ended != true)
-            Utils::OmniReadLock lock(*_control_mutex);
-            return _control->is_ended;
-        }
+        // First, check to see if the producer is still producing (i.e. is_ended != true)
+        Utils::Logger::get_logger().debug("Awaiting read lock in stream is_ended()");
+        Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in stream is_ended()");
+        return _control->is_ended;
     }
 
     void Stream::end() {
+        Utils::Logger::get_logger().debug("Awaiting write lock in stream end()");
         Utils::OmniWriteLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained write lock in stream end()");
+        
         _control->is_ended = true;
     }
 
     std::list<Stream::BufferState> Stream::buffer_states(bool sort, uint64_t minimum_timestamp) {
+        Utils::Logger::get_logger().debug("Awaiting read lock in stream buffer_states()");
         Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in stream buffer_states()");
         std::list<Stream::BufferState> buffer_states(_control->buffers.begin(), _control->buffers.end());
         if (sort) {
             const auto comparator = [](const BufferState& x, const BufferState& y) { return (x.data_timestamp < y.data_timestamp); };
@@ -179,7 +193,10 @@ namespace MomentumX {
             throw std::runtime_error("Consumer stream can not update stream buffer states");
         }
 
+        Utils::Logger::get_logger().debug("Awaiting write lock in stream update_buffer_state()");
         Utils::OmniWriteLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained write lock in stream update_buffer_state()");
+        
         const auto beg = _control->buffers.begin();
         const auto end = _control->buffers.end();
         const auto pred = [&](const BufferState& bs) { return bs.buffer_id == buffer_state.buffer_id; };
@@ -193,7 +210,10 @@ namespace MomentumX {
     }
 
     std::set<Context*> Stream::subscribers() {
+        Utils::Logger::get_logger().debug("Awaiting read lock in stream subscribers()");
         Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in stream subscribers()");
+        
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
         return std::set<Context*>(beg, end);
@@ -204,7 +224,9 @@ namespace MomentumX {
             throw std::runtime_error("Producer stream cannot add subscribers");
         }
 
+        Utils::Logger::get_logger().debug("Awaiting write lock in stream add_subscriber()");
         Utils::OmniWriteLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained write lock in stream add_subscriber()");
 
         try {
             _control->subscribers.push_back(context);
@@ -221,7 +243,10 @@ namespace MomentumX {
             throw std::runtime_error("Producer stream cannot remove subscribers");
         }
 
+        Utils::Logger::get_logger().debug("Awaiting write lock in stream remove_subscriber()");
         Utils::OmniWriteLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained write lock in stream remove_subscriber()");
+
         const auto beg = _control->subscribers.begin();
         const auto end = _control->subscribers.end();
         const auto loc = std::find(beg, end, context);
@@ -232,7 +257,10 @@ namespace MomentumX {
     }
 
     bool Stream::has_pending_acknowledgements(size_t buffer_id) {
+        Utils::Logger::get_logger().debug("Awaiting read lock in stream has_pending_acknowledgements()");
         Utils::OmniReadLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained read lock in stream has_pending_acknowledgements()");
+        
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
         const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; });
@@ -241,7 +269,10 @@ namespace MomentumX {
     }
 
     void Stream::set_pending_acknowledgements(size_t buffer_id) {
+        Utils::Logger::get_logger().debug("Awaiting write lock in stream set_pending_acknowledgements()");
         Utils::OmniWriteLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained write lock in stream set_pending_acknowledgements()");
+
         for (auto const subscriber : _control->subscribers) {
             _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
         }
@@ -252,8 +283,10 @@ namespace MomentumX {
 
     void Stream::remove_all_pending_acknowledgements(Context* context) {
         while (true) {
-            std::cout << "Attempting to acquire write lock..." << std::endl;
+            Utils::Logger::get_logger().debug("Awaiting write lock in stream remove_all_pending_acknowledgements()");
             Utils::OmniWriteLock lock(*_control_mutex);
+            Utils::Logger::get_logger().debug("Obtained write lock in stream remove_all_pending_acknowledgements()");
+
             auto const beg = _control->pending_acknowledgements.begin();
             auto const end = _control->pending_acknowledgements.end();
             auto const loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.context == context; });
@@ -267,7 +300,10 @@ namespace MomentumX {
     }
 
     void Stream::remove_pending_acknowledgement(size_t buffer_id, Context* context) {
+        Utils::Logger::get_logger().debug("Awaiting write lock in stream remove_pending_acknowledgement()");
         Utils::OmniWriteLock lock(*_control_mutex);
+        Utils::Logger::get_logger().debug("Obtained write lock in stream remove_pending_acknowledgement()");
+
         const auto beg = _control->pending_acknowledgements.begin();
         const auto end = _control->pending_acknowledgements.end();
         const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.buffer_id == buffer_id && pa.context == context; });

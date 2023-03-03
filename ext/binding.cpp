@@ -262,9 +262,12 @@ struct BufferShim {
 
 struct ReadBufferShim : BufferShim {
     ReadBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
-        : BufferShim(ctx, stream, buffer_state) {}
+        : BufferShim(ctx, stream, buffer_state) {
+            Logger::get_logger().debug("Created Read Buffer Shim " + std::to_string((uint64_t) this));
+        }
 
     ~ReadBufferShim() {
+        Logger::get_logger().debug("Destroying Read Buffer Shim " + std::to_string((uint64_t) this));
         // implicitly release when the buffer shim falls out of scope
         release();
     }
@@ -349,6 +352,7 @@ struct StreamShim {
                     return {};
                 }
             } else {
+                std::cout << "Returning read buffer shim!" << std::endl;
                 return ReadBufferShim(ctx, stream, buffer_info);
             }
         }
