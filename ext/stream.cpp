@@ -556,9 +556,6 @@ namespace MomentumX {
                 return std::shared_ptr<Stream::BufferState>(
                     new Stream::BufferState(buffer_state), 
                     [lock_ptr](Stream::BufferState* state) {
-                        // if (stream->_role == Stream::Role::CONSUMER) {
-                        //     release_buffer_state(stream, *state);
-                        // }
                         delete state;  // still delete
                     }
                 );

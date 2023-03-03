@@ -262,15 +262,9 @@ struct BufferShim {
 
 struct ReadBufferShim : BufferShim {
     ReadBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
-        : BufferShim(ctx, stream, buffer_state) {
-            Logger::get_logger().debug("Created Read Buffer Shim " + std::to_string((uint64_t) this));
-        }
+        : BufferShim(ctx, stream, buffer_state) { }
 
-    ~ReadBufferShim() {
-        Logger::get_logger().debug("Destroying Read Buffer Shim " + std::to_string((uint64_t) this));
-        // implicitly release when the buffer shim falls out of scope
-        release();
-    }
+    ~ReadBufferShim() { }
 
     void release() {
         const auto copy = _unchecked_buffer_state;  // copy (could be none if previously released)
@@ -309,7 +303,7 @@ struct StreamShim {
         stream->end();
     }
 
-    auto next_to_send(bool blocking) -> std::optional<WriteBufferShim> {
+    auto next_to_send(bool blocking) -> std::shared_ptr<WriteBufferShim> {
         py::gil_scoped_release nogil;
         while (!evt.is_set()) {
             std::shared_ptr<BufferState> buffer_info = nullptr;
@@ -327,14 +321,21 @@ struct StreamShim {
                     return {};
                 }
             } else {
-                return WriteBufferShim(ctx, stream, buffer_info);
+                return std::shared_ptr<WriteBufferShim>(
+                    // instance
+                    new WriteBufferShim(ctx, stream, buffer_info), 
+                    // deleter
+                    [](WriteBufferShim* wbs) {
+                        delete wbs;
+                    }
+                );
             }
         }
 
         return {};
     }
 
-    auto receive(uint64_t minimum_ts, bool blocking) -> std::optional<ReadBufferShim> {
+    auto receive(uint64_t minimum_ts, bool blocking) -> std::shared_ptr<ReadBufferShim> {
         py::gil_scoped_release nogil;
         while (has_next() && !evt.is_set()) {
             std::shared_ptr<BufferState> buffer_info = nullptr;
@@ -352,8 +353,15 @@ struct StreamShim {
                     return {};
                 }
             } else {
-                std::cout << "Returning read buffer shim!" << std::endl;
-                return ReadBufferShim(ctx, stream, buffer_info);
+                return std::shared_ptr<ReadBufferShim>(
+                    // instance
+                    new ReadBufferShim(ctx, stream, buffer_info), 
+                    // deleter
+                    [](ReadBufferShim* rbs) { 
+                        rbs->release();
+                        delete rbs;
+                    }
+                );
             }
         }
 
@@ -369,7 +377,7 @@ struct StreamShim {
     }
 
     auto send_string(const std::string& str, bool blocking, bool release) -> bool {
-        std::optional<BufferShim> buffer = next_to_send(blocking);
+        std::shared_ptr<BufferShim> buffer = next_to_send(blocking);
         if (!buffer) {
             return false;
         }
@@ -385,7 +393,7 @@ struct StreamShim {
     }
 
     auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string {
-        std::optional<ReadBufferShim> buffer = receive(minimum_ts, blocking);
+        std::shared_ptr<ReadBufferShim> buffer = receive(minimum_ts, blocking);
         if (!buffer) {
             return "";
         }
