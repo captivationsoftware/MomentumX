@@ -34,6 +34,7 @@ set(SRCS
     ext/buffer.h
     ext/context.cpp
     ext/context.h
+    ext/inspector.h
     ext/stream.cpp
     ext/stream.h
     ext/utils.h

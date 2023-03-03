@@ -25,20 +25,7 @@ namespace MomentumX {
 
     class Stream {
        public:
-        struct BufferState {
-            uint16_t buffer_id{0};
-            size_t buffer_size{0}, buffer_count{0}, data_size{0};
-            uint64_t data_timestamp{0}, iteration{0};
-
-            BufferState() = default;
-
-            BufferState(uint16_t id, size_t buffer_size, size_t buffer_count, size_t data_size, uint64_t timestamp, uint64_t iteration)
-                : buffer_id(id), buffer_size(buffer_size), buffer_count(buffer_count), data_size(data_size), data_timestamp(timestamp), iteration(iteration){};
-        
-            friend bool operator==(const BufferState& lhs, const BufferState& rhs) {
-                return &lhs == &rhs || (lhs.buffer_id == rhs.buffer_id && lhs.iteration == rhs.iteration); 
-            }
-        };
+        using BufferState = ::MomentumX::BufferState;
 
         enum Role { CONSUMER, PRODUCER };
 

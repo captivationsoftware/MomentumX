@@ -209,7 +209,7 @@ namespace MomentumX {
             std::string buffer_path(uint16_t id) const { return buffer_path_base + std::string(".") + std::to_string(id); }
 
             inline friend std::ostream& operator<<(std::ostream& os, const PathConfig& paths) {
-                os << "{ context_path: " << paths.context_path;
+                os << "PathConfig{ context_path: " << paths.context_path;
                 os << ", stream_name: " << paths.stream_name;
                 os << ", stream_mutex: " << paths.stream_mutex;
                 os << ", stream_path: " << paths.stream_path;
@@ -303,6 +303,30 @@ namespace MomentumX {
                     throw std::out_of_range("bad index");
                 }
                 return _data.at(_size - 1);
+            }
+
+            inline friend std::ostream& operator<<(std::ostream& os, const StaticVector<T, Capacity>& vec) {
+                const size_t sz = vec.size();
+                os << "StaticVector";
+                os << "{ size:" << sz;
+                os << ", values: ";
+                {  // Add each value. Braces just for visual clarity.
+                    const auto beg = vec.begin();
+                    const auto end = vec.end();
+                    auto it = beg;
+
+                    if (it == end) {
+                        os << "{}";
+                    } else {
+                        os << "{ " << *it;
+                        while (++it != end) {
+                            os << ", " << *it;
+                        }
+                        os << "}";
+                    }
+                }
+                os << "}";
+                return os;
             }
 
            private:

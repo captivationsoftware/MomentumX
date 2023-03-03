@@ -10,6 +10,7 @@
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <sstream>
 
 #include "utils.h"
 
@@ -52,6 +53,43 @@ namespace MomentumX {
 
         void resize_remap(size_t size);
     };
+
+    struct BufferState {
+        uint16_t buffer_id{0};
+        size_t buffer_size{0}, buffer_count{0}, data_size{0};
+        uint64_t data_timestamp{0}, iteration{0};
+
+        BufferState() = default;
+
+        BufferState(uint16_t id, size_t buffer_size, size_t buffer_count, size_t data_size, uint64_t timestamp, uint64_t iteration)
+            : buffer_id(id), buffer_size(buffer_size), buffer_count(buffer_count), data_size(data_size), data_timestamp(timestamp), iteration(iteration){};
+
+        inline friend bool operator==(const BufferState& lhs, const BufferState& rhs) {
+            return &lhs == &rhs || (lhs.buffer_id == rhs.buffer_id && lhs.iteration == rhs.iteration);
+        }
+        inline friend bool operator!=(const BufferState& lhs, const BufferState& rhs) { return !(lhs == rhs); }
+
+        inline friend std::ostream& operator<<(std::ostream& os, const BufferState& b) {
+            os << "{ buffer_id: " << b.buffer_id;
+            os << ", buffer_size: " << b.buffer_size;
+            os << ", buffer_count: " << b.buffer_count;
+            os << ", data_size: " << b.data_size;
+            os << ", data_timestamp: " << b.data_timestamp;
+            os << ", iteration: " << b.iteration;
+            os << "}";
+            return os;
+        }
+
+        inline std::string to_string() const {
+            std::stringstream ss;
+            ss << *this;
+            return ss.str();
+        }
+    };
+    static_assert(std::is_trivially_copy_assignable<BufferState>::value, "BufferState is placed in shared memory");
+    static_assert(std::is_trivially_copy_constructible<BufferState>::value, "BufferState is placed in shared memory");
+    static_assert(std::is_trivially_move_assignable<BufferState>::value, "BufferState is placed in shared memory");
+    static_assert(std::is_trivially_move_constructible<BufferState>::value, "BufferState is placed in shared memory");
 
     class BufferManager {
        public:

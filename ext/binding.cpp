@@ -1,3 +1,4 @@
+#include "control.h"
 #define PYBIND11_DETAILED_ERROR_MESSAGES
 
 #include <pybind11/attr.h>
@@ -13,6 +14,7 @@
 
 #include "buffer.h"
 #include "context.h"
+#include "inspector.h"
 #include "stream.h"
 
 namespace py = pybind11;
@@ -262,9 +264,9 @@ struct BufferShim {
 
 struct ReadBufferShim : BufferShim {
     ReadBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
-        : BufferShim(ctx, stream, buffer_state) { }
+        : BufferShim(ctx, stream, buffer_state) {}
 
-    ~ReadBufferShim() { }
+    ~ReadBufferShim() {}
 
     void release() {
         const auto copy = _unchecked_buffer_state;  // copy (could be none if previously released)
@@ -568,4 +570,14 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("name", &ConsumerStreamShim::name)
         .def_property_readonly("fd", &ConsumerStreamShim::fd);
 
+    // TODO: nest within `inspect` or `debug` submodule maybe. Shouldn't be part of public API, probably.
+    py::class_<MomentumX::ControlBlockHandle>(m, "Control")  // TODO: put in submodule
+        .def("__repr__", [](const MomentumX::ControlBlockHandle& c) { return c.control_block->to_string(); });
+    py::class_<MomentumX::ControlBlock>(m, "ControlSnapshot")  // TODO: put in submodule
+        .def("__repr__", &MomentumX::ControlBlock::to_string);
+    py::class_<MomentumX::Inspector>(m, "Inspector")  // TODO: put in submodule
+        .def(py::init<const std::string&>(), "stream_name")
+        // .def("view_control", &MomentumX::Inspector::view_control_block)
+        .def("control_snapshot", &MomentumX::Inspector::control_snapshot, "require_lock"_a = true)
+        .def("check_locks", &MomentumX::Inspector::check_locks);
 }

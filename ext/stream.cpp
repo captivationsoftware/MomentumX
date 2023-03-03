@@ -19,31 +19,10 @@
 
 #include "buffer.h"
 #include "context.h"
+#include "control.h"
 #include "utils.h"
 
 namespace MomentumX {
-
-    struct PendingAcknowledgement {
-        size_t buffer_id = 0;
-        Context* context = nullptr;
-
-        PendingAcknowledgement() = default;
-
-        PendingAcknowledgement(size_t _buffer_id, Context* _context) : buffer_id(_buffer_id), context(_context) {}
-    };
-
-    struct ControlBlock {
-        static constexpr size_t MAX_BUFFERS = 512;
-        static constexpr size_t MAX_SUBSCRIPTIONS = 256;
-
-        bool sync{};
-        bool is_ended{};
-        size_t buffer_size{};
-        size_t buffer_count{};
-        Utils::StaticVector<Stream::BufferState, MAX_BUFFERS> buffers{};
-        Utils::StaticVector<Context*, MAX_SUBSCRIPTIONS> subscribers{};
-        Utils::StaticVector<PendingAcknowledgement, MAX_SUBSCRIPTIONS * MAX_BUFFERS> pending_acknowledgements{};
-    };
 
     static_assert(std::is_trivially_copy_constructible<ControlBlock>::value, "needed for std::memcpy");
 
