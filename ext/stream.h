@@ -26,6 +26,8 @@ namespace MomentumX {
     class Stream {
        public:
         using BufferState = ::MomentumX::BufferState;
+        using Mutex = Utils::OmniMutex;
+        using Lock = Utils::OmniWriteLock;
 
         enum Role { CONSUMER, PRODUCER };
 
@@ -33,41 +35,42 @@ namespace MomentumX {
 
         ~Stream();
 
-        const std::string& name();
+        const std::string& name(const Utils::OmniWriteLock& control_lock);
 
-        Utils::PathConfig paths();
+        Utils::PathConfig paths(const Utils::OmniWriteLock& control_lock);
 
-        int fd();
+        int fd(const Utils::OmniWriteLock& control_lock);
 
-        bool sync();
+        bool sync(const Utils::OmniWriteLock& control_lock);
 
-        size_t buffer_size();
+        size_t buffer_size(const Utils::OmniWriteLock& control_lock);
 
-        size_t buffer_count();
+        size_t buffer_count(const Utils::OmniWriteLock& control_lock);
 
+        std::list<BufferState> buffer_states(const Utils::OmniWriteLock& control_lock, bool sort = false, uint64_t minimum_timestamp = 0);
 
-        std::list<BufferState> buffer_states(bool sort = false, uint64_t minimum_timestamp = 0);
+        void update_buffer_state(const Utils::OmniWriteLock& control_lock, const Stream::BufferState& buffer_state);
 
-        void update_buffer_state(const Stream::BufferState& buffer_state);
+        std::set<Context*> subscribers(const Utils::OmniWriteLock& control_lock);
 
-        std::set<Context*> subscribers();
+        void add_subscriber(const Utils::OmniWriteLock& control_lock, Context* context);
 
-        void add_subscriber(Context* context);
+        void remove_subscriber(const Utils::OmniWriteLock& control_lock, Context* context);
 
-        void remove_subscriber(Context* context);
+        bool has_pending_acknowledgements(const Utils::OmniWriteLock& control_lock, size_t buffer_id);
 
-        bool has_pending_acknowledgements(size_t buffer_id);
+        void set_pending_acknowledgements(const Utils::OmniWriteLock& control_lock, size_t buffer_id);
 
-        void set_pending_acknowledgements(size_t buffer_id);
+        void remove_all_pending_acknowledgements(const Utils::OmniWriteLock& control_lock, Context* context);
 
-        void remove_all_pending_acknowledgements(Context* context);
+        void remove_pending_acknowledgement(const Utils::OmniWriteLock& control_lock, size_t buffer_id, Context* context);
 
-        void remove_pending_acknowledgement(size_t buffer_id, Context* context);
+        bool is_ended(const Utils::OmniWriteLock& control_lock);
 
-        bool is_ended();
+        void end(const Utils::OmniWriteLock& control_lock);
 
-        void end();
-        
+        inline Lock get_control_lock() { return Lock(*_control_mutex); }
+
        private:
         friend class StreamManager;
 
@@ -77,30 +80,54 @@ namespace MomentumX {
         char* _data;
         ControlBlock* _control;
         bool _sync;
-        std::optional<Utils::OmniMutex> _control_mutex;  // Optional to defer construction. Always valid post-constructor.
-    
+        std::optional<Mutex> _control_mutex;  // Optional to defer construction. Always valid post-constructor.
     };
 
     class StreamManager {
        public:
+        struct Mutex : std::mutex {};
+        using Lock = std::lock_guard<Mutex>;
+
         StreamManager(Context* context, BufferManager* buffer_manager);
         ~StreamManager();
 
-        Stream* find(std::string name);
+        Stream* find(const Lock& lock, std::string name);
+        Stream* create(const Lock& lock,
+                       const BufferManager::Lock& buffer_manager_lock,
+                       std::string name,
+                       size_t buffer_size,
+                       size_t buffer_count = 0,
+                       bool sync = false,
+                       Stream::Role role = Stream::Role::CONSUMER);
 
-        Stream* create(std::string name, size_t buffer_size, size_t buffer_count = 0, bool sync = false, Stream::Role role = Stream::Role::CONSUMER);
+        void destroy(const Lock& lock, Stream* stream);
+        bool is_subscribed(const Lock& lock, const Stream::Lock& control_lock, Stream* stream);
+        Stream* subscribe(const Lock& lock, const BufferManager::Lock& buffer_manager_lock, std::string name);
+        void unsubscribe(const Lock& lock, const BufferManager::Lock& buffer_manager_lock, Stream* stream);
 
-        void destroy(Stream* stream);
-        bool is_subscribed(std::string name);
-        Stream* subscribe(std::string name);
-        void unsubscribe(Stream* stream);
-        std::shared_ptr<Stream::BufferState> next_buffer_state(Stream* stream);
-        bool send_buffer_state(Stream* stream, Stream::BufferState buffer_state);
-        std::shared_ptr<Stream::BufferState> receive_buffer_state(Stream* stream, uint64_t minimum_timestamp = 1);
-        bool has_next_buffer_state(Stream* stream, uint64_t minimum_timestamp = 1);
-        void flush_buffer_state(Stream* stream);
-        void release_buffer_state(Stream* stream, const Stream::BufferState& buffer_state);
-        size_t subscriber_count(Stream* stream);
+        std::shared_ptr<Stream::BufferState> next_buffer_state(const Lock& lock,
+                                                               const BufferManager::Lock& buffer_manager_lock,
+                                                               const Stream::Lock& control_lock,
+                                                               Stream* stream);
+        bool send_buffer_state(const Lock& lock,
+                               const BufferManager::Lock& buffer_manager_lock,
+                               const Stream::Lock& control_lock,
+                               Stream* stream,
+                               Stream::BufferState buffer_state);
+        std::shared_ptr<Stream::BufferState> receive_buffer_state(const Lock& lock,
+                                                                  const BufferManager::Lock& buffer_manager_lock,
+                                                                  const Stream::Lock& control_lock,
+                                                                  Stream* stream,
+                                                                  uint64_t minimum_timestamp = 1);
+        bool has_next_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, uint64_t minimum_timestamp = 1);
+        void flush_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream);
+        void release_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, const Stream::BufferState& buffer_state);
+        size_t subscriber_count(const Lock& lock, const Stream::Lock& control_lock, Stream* stream);
+
+        // synchronization stuff
+        inline BufferManager::Lock get_buffer_manager_lock() { return _buffer_manager->get_buffer_manager_lock(); }
+        inline Stream::Lock get_control_lock(Stream& stream) { return stream.get_control_lock(); }
+        inline Lock get_stream_manager_lock() { return Lock(_stream_manager_mutex); }
 
        private:
         Context* _context;
@@ -109,7 +136,7 @@ namespace MomentumX {
         std::map<Stream*, std::list<std::shared_ptr<Buffer>>> _buffers_by_stream;
         std::map<Stream*, std::shared_ptr<Buffer>> _current_buffer_by_stream;
         std::map<Stream*, uint64_t> _iteration_by_stream;
-        std::mutex _mutex;
+        Mutex _stream_manager_mutex;
     };
 };  // namespace MomentumX
 

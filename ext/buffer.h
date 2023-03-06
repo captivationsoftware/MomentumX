@@ -93,18 +93,22 @@ namespace MomentumX {
 
     class BufferManager {
        public:
+        struct Mutex : std::mutex {};         // subclass mutex for type checking
+        using Lock = std::lock_guard<Mutex>;  // alias lock to maintain ctors
         BufferManager() = default;
         ~BufferManager() = default;
 
-        std::shared_ptr<Buffer> allocate(const Utils::PathConfig& paths, uint16_t id, size_t size = 0, bool create = false);
-        void deallocate_stream(const Utils::PathConfig& paths);
-        std::shared_ptr<Buffer> find(const Utils::PathConfig& paths, uint16_t id);
-        std::shared_ptr<Buffer> peek_next(const Utils::PathConfig& paths);
-        std::shared_ptr<Buffer> next(const Utils::PathConfig& paths);
+        std::shared_ptr<Buffer> allocate(const Lock& lock, const Utils::PathConfig& paths, uint16_t id, size_t size = 0, bool create = false);
+        void deallocate_stream(const Lock& lock, const Utils::PathConfig& paths);
+        std::shared_ptr<Buffer> find(const Lock& lock, const Utils::PathConfig& paths, uint16_t id);
+        std::shared_ptr<Buffer> peek_next(const Lock& lock, const Utils::PathConfig& paths);
+        std::shared_ptr<Buffer> next(const Lock& lock, const Utils::PathConfig& paths);
+
+        inline Lock get_buffer_manager_lock() { return Lock(_buffer_manager_mutex); }
 
        private:
         std::map<std::string, std::list<std::shared_ptr<Buffer>>> _buffers_by_stream;
-        std::mutex _mutex;
+        Mutex _buffer_manager_mutex;
     };
 };  // namespace MomentumX
 

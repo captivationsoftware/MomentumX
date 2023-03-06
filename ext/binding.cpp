@@ -292,18 +292,15 @@ struct StreamShim {
         : ctx(ctx), stream(stream), evt(evt), polling_interval(polling_interval) {}
     ~StreamShim() = default;
 
-    std::string name() { return this->stream->name(); }
-    size_t fd() { return this->stream->fd(); }
-    bool sync() { return this->stream->sync(); }
-    size_t buffer_size() { return this->stream->buffer_size(); }
-    size_t buffer_count() { return this->stream->buffer_count(); }
-    size_t subscriber_count() { return this->stream->subscribers().size(); }
-    bool is_ended() { return this->stream->is_ended(); } 
-    bool has_next() { return this->ctx->can_receive(this->stream.get()); }
-
-    void end() {
-        stream->end();
-    }
+    std::string name() { return stream->name(stream->get_control_lock()); }
+    size_t fd() { return stream->fd(stream->get_control_lock()); }
+    bool sync() { return stream->sync(stream->get_control_lock()); }
+    size_t buffer_size() { return stream->buffer_size(stream->get_control_lock()); }
+    size_t buffer_count() { return stream->buffer_count(stream->get_control_lock()); }
+    size_t subscriber_count() { return stream->subscribers(stream->get_control_lock()).size(); }
+    bool is_ended() { return stream->is_ended(stream->get_control_lock()); }
+    bool has_next() { return this->ctx->can_receive(stream.get()); }
+    void end() { stream->end(stream->get_control_lock()); }
 
     auto next_to_send(bool blocking) -> std::shared_ptr<WriteBufferShim> {
         py::gil_scoped_release nogil;
@@ -325,12 +322,9 @@ struct StreamShim {
             } else {
                 return std::shared_ptr<WriteBufferShim>(
                     // instance
-                    new WriteBufferShim(ctx, stream, buffer_info), 
+                    new WriteBufferShim(ctx, stream, buffer_info),
                     // deleter
-                    [](WriteBufferShim* wbs) {
-                        delete wbs;
-                    }
-                );
+                    [](WriteBufferShim* wbs) { delete wbs; });
             }
         }
 
@@ -357,13 +351,12 @@ struct StreamShim {
             } else {
                 return std::shared_ptr<ReadBufferShim>(
                     // instance
-                    new ReadBufferShim(ctx, stream, buffer_info), 
+                    new ReadBufferShim(ctx, stream, buffer_info),
                     // deleter
-                    [](ReadBufferShim* rbs) { 
+                    [](ReadBufferShim* rbs) {
                         rbs->release();
                         delete rbs;
-                    }
-                );
+                    });
             }
         }
 
@@ -404,7 +397,6 @@ struct StreamShim {
         std::string str(data, buffer->data_size());
         return str;
     }
-
 };
 
 struct ConsumerStreamShim : StreamShim {
@@ -457,21 +449,16 @@ static ConsumerStreamShim consumer_stream(const std::string& stream_name, const 
     }
 
     if (stream) {
-        return ConsumerStreamShim(
-            ctx,
-            std::shared_ptr<Stream>(
-                stream,
-                [ctx](Stream* stream) {
-                    try {
-                        ctx->unsubscribe(stream);
-                    } catch (std::exception& ex) {
-                        Logger::get_logger().error(ex.what());
-                    }
-                }
-            ),
-            wrapped_evt, 
-            polling_interval
-        );
+        return ConsumerStreamShim(ctx,
+                                  std::shared_ptr<Stream>(stream,
+                                                          [ctx](Stream* stream) {
+                                                              try {
+                                                                  ctx->unsubscribe(stream);
+                                                              } catch (std::exception& ex) {
+                                                                  Logger::get_logger().error(ex.what());
+                                                              }
+                                                          }),
+                                  wrapped_evt, polling_interval);
     }
 
     throw StreamUnavailableException();
@@ -539,7 +526,6 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("data_size", &WriteBufferShim::data_size)
         .def_property_readonly("data_timestamp", &WriteBufferShim::data_timestamp)
         .def_property_readonly("iteration", &WriteBufferShim::iteration);
-
 
     py::class_<ProducerStreamShim>(m, "Producer")
         .def(py::init(&producer_stream), "stream_name"_a, "buffer_size"_a, "buffer_count"_a, "sync"_a = false, "cancel_event"_a = std::optional<py::object>(),

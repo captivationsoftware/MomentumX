@@ -22,7 +22,6 @@ namespace MomentumX {
         Context(const std::string& context_path);
         ~Context();
         Stream* stream(std::string stream_name, size_t buffer_size, size_t buffer_count = 0, bool sync = false);
-        bool is_subscribed(std::string stream_name);
         Stream* subscribe(std::string stream_name);
         void unsubscribe(Stream* stream);
         std::shared_ptr<Stream::BufferState> next(Stream* stream);
@@ -44,7 +43,6 @@ namespace MomentumX {
         BufferManager _buffer_manager;
         StreamManager _stream_manager;
         std::set<Stream*> _subscriptions;
-        std::mutex _mutex;
     };
 
 }  // namespace MomentumX
