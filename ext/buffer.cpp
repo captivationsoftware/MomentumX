@@ -13,7 +13,6 @@
 #include "buffer.h"
 #include "utils.h"
 
-namespace bip = boost::interprocess;
 namespace MomentumX {
 
     const uint16_t Buffer::MAX_UINT16_T = -1;  // intentionally wrap
@@ -26,8 +25,7 @@ namespace MomentumX {
           _size(0),
           _is_create(create),
           _fd(open(_backing_filepath.c_str(), O_RDWR | (create ? O_CREAT : 0), S_IRWXU)),
-          _address(nullptr),
-          _mutex() {
+          _address(nullptr) {
         if (_fd < 0) {
             if (_is_create) {
                 throw std::runtime_error("Failed to create shared memory buffer for stream '" + _backing_filepath + "' [errno: " + std::to_string(errno) + "]");
@@ -39,10 +37,8 @@ namespace MomentumX {
         resize_remap(size);
 
         if (_is_create) {
-            _mutex.emplace(bip::create_only, _backing_mutex_name.c_str());
             Utils::Logger::get_logger().info(std::string("Created Producer Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            _mutex.emplace(bip::open_only, _backing_mutex_name.c_str());
             Utils::Logger::get_logger().info(std::string("Created Consumer Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
     };
@@ -53,7 +49,6 @@ namespace MomentumX {
 
             if (_is_create) {
                 int return_val = std::remove(_backing_filepath.c_str());
-                _mutex->remove(_backing_mutex_name.c_str());
                 if (return_val != 0) {
                     std::stringstream ss;
                     ss << "Unable to delete buffer file \"" << _backing_filepath << "\" with error: " << return_val;
@@ -151,9 +146,9 @@ namespace MomentumX {
     }
 
     std::shared_ptr<Buffer> BufferManager::find(const Lock& lock, const Utils::PathConfig& paths, uint16_t id) {
-        if (id <= 0) {
-            throw std::runtime_error("Buffer id must be greater than 0");
-        }
+        // if (id <= 0) {
+        //     throw std::runtime_error("Buffer id must be greater than 0");
+        // }
 
         const auto& stream = paths.stream_name;
         for (auto const& buffer : _buffers_by_stream[stream]) {

@@ -27,6 +27,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(boost)
 
+FetchContent_Declare(
+  json
+  URL      https://github.com/nlohmann/json/releases/download/v3.11.2/json.tar.xz
+  URL_HASH SHA256=8c4b26bf4b422252e13f332bc5e388ec0ab5c3443d24399acb675e68278d341f  # latest as of 07 Mar, 2023
+)
+FetchContent_MakeAvailable(json)
+
 find_package(pybind11 CONFIG REQUIRED)
 
 set(SRCS
@@ -43,11 +50,9 @@ set(SRCS
 pybind11_add_module(_mx MODULE ${SRCS} ext/binding.cpp)
 target_include_directories(_mx SYSTEM PRIVATE ${boost_SOURCE_DIR})
 target_include_directories(_mx PRIVATE ext)
-target_link_libraries(_mx PRIVATE rt)
+target_link_libraries(_mx PRIVATE rt nlohmann_json::nlohmann_json)
 
 install(TARGETS _mx DESTINATION .)
-
-target_link_libraries(_mx PRIVATE rt)
 
 add_custom_command(
     TARGET _mx
@@ -75,6 +80,6 @@ FetchContent_MakeAvailable(Catch2)
 enable_testing()
 include(CTest)
 add_executable(mx_test  tests/cxx_test.cpp)
-target_include_directories(mx_test SYSTEM PRIVATE ${boost_SOURCE_DIR})
+target_include_directories(mx_test SYSTEM PRIVATE ${boost_SOURCE_DIR} ${json_SOURCE_DIR})
 target_include_directories(mx_test PRIVATE ext)
-target_link_libraries(mx_test PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(mx_test PRIVATE Catch2::Catch2WithMain nlohmann_json::nlohmann_json)

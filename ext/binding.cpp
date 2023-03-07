@@ -297,7 +297,7 @@ struct StreamShim {
     bool sync() { return stream->sync(stream->get_control_lock()); }
     size_t buffer_size() { return stream->buffer_size(stream->get_control_lock()); }
     size_t buffer_count() { return stream->buffer_count(stream->get_control_lock()); }
-    size_t subscriber_count() { return stream->subscribers(stream->get_control_lock()).size(); }
+    size_t subscriber_count() { return stream->subscriber_count(stream->get_control_lock()); }
     bool is_ended() { return stream->is_ended(stream->get_control_lock()); }
     bool has_next() { return this->ctx->can_receive(stream.get()); }
     void end() { stream->end(stream->get_control_lock()); }
@@ -395,6 +395,7 @@ struct StreamShim {
 
         char* data = reinterpret_cast<char*>(buffer->data());
         std::string str(data, buffer->data_size());
+        buffer->release();
         return str;
     }
 };

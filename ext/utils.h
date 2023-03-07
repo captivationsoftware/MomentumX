@@ -7,7 +7,10 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <atomic>
-#include <boost/interprocess/sync/named_sharable_mutex.hpp>
+#include <boost/container/static_vector.hpp>
+#include <boost/interprocess/creation_tags.hpp>
+#include <boost/interprocess/sync/interprocess_condition.hpp>
+#include <boost/interprocess/sync/interprocess_sharable_mutex.hpp>
 #include <boost/interprocess/sync/scoped_lock.hpp>
 #include <boost/interprocess/sync/sharable_lock.hpp>
 #include <chrono>
@@ -29,9 +32,9 @@
 #include <thread>
 #include <tuple>
 
-namespace bip = boost::interprocess;
-
 namespace MomentumX {
+
+    namespace bip = boost::interprocess;
 
     class Context;  // forward declare context
 
@@ -120,11 +123,6 @@ namespace MomentumX {
         static size_t page_aligned_size(size_t size) {
             return ceil(size / (double)getpagesize()) * getpagesize();
         }
-
-        static std::mutex& _file_lock_mutex() {
-            static std::mutex _mutex;
-            return _mutex;
-        };
 
         class Logger {
            public:
@@ -219,127 +217,214 @@ namespace MomentumX {
                 return os;
             }
         };
+        /*
+                class ShmFileHandle {
+                   public:
+                    static const boost::interprocess::create_only_t create_only;
+                    static const boost::interprocess::open_only_t open_only;
+                    // using CreateType = boost::interprocess::create_only_t;
+                    // static const CreateType create;
 
-        using OmniMutex = bip::named_sharable_mutex;
+                    // using OpenType = boost::interprocess::open_only_t;
+                    // static const OpenType open;
+
+                    explicit inline ShmFileHandle(boost::interprocess::create_only_t, const std::string& filename, const std::string& pretty_name, size_t
+           min_size) : _fd(::open(filename.c_str(), O_RDWR | O_CREAT | O_EXCL, S_IRWXU)), _data(nullptr), _is_owner(true), _filename(filename),
+                          _pretty_name(pretty_name) {
+                        const size_t size_required = page_aligned_size(min_size);
+                        if (_fd < 0) {
+                            throw std::runtime_error("Failed to create shared memory stream file '" + pretty_name + "' [errno: " + std::to_string(errno) + "]");
+                        }
+
+                        _data = mmap(NULL, size_required, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
+                        if (_data == MAP_FAILED) {
+                            throw std::runtime_error("Failed to mmap shared memory stream file [errno: " + std::to_string(errno) + "]");
+                        }
+                    }
+
+                    explicit inline ShmFileHandle(boost::interprocess::open_only_t, const std::string& filename, const std::string& pretty_name)
+                        : _fd(::open(filename.c_str(), O_RDWR, S_IRWXU)), _data(nullptr), _is_owner(true), _filename(filename), _pretty_name(pretty_name) {
+                        const size_t size_required = page_aligned_size(min_size);
+                        if (_fd < 0) {
+                            throw std::runtime_error("Failed to open shared memory stream file '" + pretty_name + "' [errno: " + std::to_string(errno) + "]");
+                        }
+                    }
+
+                    ShmFileHandle(int fd, void* data, bool is_owner, const std::string& name) : _fd(fd), _data(data), _is_owner(is_owner), _filename(name) {}
+                    ShmFileHandle(ShmFileHandle&&) = delete;
+                    ShmFileHandle(const ShmFileHandle&) = delete;
+                    ShmFileHandle& operator=(ShmFileHandle&&) = delete;
+                    ShmFileHandle& operator=(const ShmFileHandle&) = delete;
+
+                    ~ShmFileHandle() {}
+
+                    void* data() const { return _data; }
+
+                    static inline ShmFileHandle create(const std::string& filename, size_t min_size) {}
+
+                    static inline ShmFileHandle open(const std::string& filename) {}
+
+                   private:
+                    int _fd;
+                    void* _data;
+                    bool _is_owner;
+                    std::string _filename;
+                    std::string _pretty_name;
+                }; */
+
+        using OmniMutex = bip::interprocess_mutex;
         using OmniReadLock = bip::sharable_lock<OmniMutex>;
         using OmniWriteLock = bip::scoped_lock<OmniMutex>;
+        using OmniCondition = bip::interprocess_condition;
+        /*
+                // boost-less version of boost::static_vector for trivial types
+                template <typename T, size_t Capacity>
+                class StaticVector {
+                   public:
+                    size_t capacity() const { return Capacity; }
+                    size_t size() const { return _size; }
 
-        // boost-less version of boost::static_vector for trivial types
-        template <typename T, size_t Capacity>
-        class StaticVector {
-           public:
-            size_t capacity() const { return Capacity; }
-            size_t size() const { return _size; }
+                    bool empty() const { return _size == 0; }
+                    bool full() const { return _size == Capacity; }
 
-            bool empty() const { return _size == 0; }
-            bool full() const { return _size == Capacity; }
+                    void push_back(const T& value) {
+                        if (_size == Capacity) {
+                            throw std::out_of_range("Cannot push back onto full StaticVector");
+                        }
+                        _data.at(_size) = value;
+                        _size++;
+                    }
 
-            void push_back(const T& value) {
-                if (_size == Capacity) {
-                    throw std::out_of_range("Cannot push back onto full StaticVector");
-                }
-                _data.at(_size) = value;
-                _size++;
-            }
+                    void pop_back() {
+                        if (_size == 0) {
+                            throw std::out_of_range("Cannot pop back from empty StaticVector");
+                        }
+                        _size--;
+                    }
 
-            void pop_back() {
-                if (_size == 0) {
-                    throw std::out_of_range("Cannot pop back from empty StaticVector");
-                }
-                _size--;
-            }
+                    T* erase(T* t) {
+                        if (t < begin() || end() <= t) {
+                            throw std::out_of_range("Cannot erase out of bounds iterator");
+                        }
 
-            T* erase(T* t) {
-                if (t < begin() || end() <= t) {
-                    throw std::out_of_range("Cannot erase out of bounds iterator");
-                }
+                        std::memmove(t, t + 1, (end() - t) * sizeof(T));  // Shift everything left, clobbering `t`
+                        pop_back();                                       // Delete final value from end
+                        return t;
+                    }
 
-                std::memmove(t, t + 1, (end() - t) * sizeof(T));  // Shift everything left, clobbering `t`
-                pop_back();                                       // Delete final value from end
-                return t;
-            }
+                    T& at(size_t i) {
+                        if (i >= _size) {
+                            throw std::out_of_range("bad index");
+                        }
+                        return _data.at(i);
+                    }
 
-            T& at(size_t i) {
-                if (i >= _size) {
-                    throw std::out_of_range("bad index");
-                }
-                return _data.at(i);
-            }
+                    const T& at(size_t i) const {
+                        if (i >= _size) {
+                            throw std::out_of_range("bad index");
+                        }
+                        return _data.at(i);
+                    }
 
-            const T& at(size_t i) const {
-                if (i >= _size) {
-                    throw std::out_of_range("bad index");
-                }
-                return _data.at(i);
-            }
+                    T* begin() { return _data.begin(); }
+                    const T* begin() const { return _data.begin(); }
 
-            T* begin() { return _data.begin(); }
-            const T* begin() const { return _data.begin(); }
+                    T* end() { return begin() + _size; }
+                    const T* end() const { return begin() + _size; }
 
-            T* end() { return begin() + _size; }
-            const T* end() const { return begin() + _size; }
+                    T& front() {
+                        if (_size == 0) {
+                            throw std::out_of_range("bad index");
+                        }
+                        return _data.at(0);
+                    }
+                    const T& front() const {
+                        if (_size == 0) {
+                            throw std::out_of_range("bad index");
+                        }
+                        return _data.at(0);
+                    }
 
-            T& front() {
-                if (_size == 0) {
-                    throw std::out_of_range("bad index");
-                }
-                return _data.at(0);
-            }
-            const T& front() const {
-                if (_size == 0) {
-                    throw std::out_of_range("bad index");
-                }
-                return _data.at(0);
-            }
+                    T& back() {
+                        if (_size == 0) {
+                            throw std::out_of_range("bad index");
+                        }
+                        return _data.at(_size - 1);
+                    }
+                    const T& back() const {
+                        if (_size == 0) {
+                            throw std::out_of_range("bad index");
+                        }
+                        return _data.at(_size - 1);
+                    }
 
-            T& back() {
-                if (_size == 0) {
-                    throw std::out_of_range("bad index");
-                }
-                return _data.at(_size - 1);
-            }
-            const T& back() const {
-                if (_size == 0) {
-                    throw std::out_of_range("bad index");
-                }
-                return _data.at(_size - 1);
-            }
+                    inline friend std::ostream& operator<<(std::ostream& os, const StaticVector<T, Capacity>& vec) {
+                        const size_t sz = vec.size();
+                        os << "StaticVector";
+                        os << "{ size:" << sz;
+                        os << ", values: ";
+                        {  // Add each value. Braces just for visual clarity.
+                            const auto beg = vec.begin();
+                            const auto end = vec.end();
+                            auto it = beg;
 
-            inline friend std::ostream& operator<<(std::ostream& os, const StaticVector<T, Capacity>& vec) {
-                const size_t sz = vec.size();
-                os << "StaticVector";
-                os << "{ size:" << sz;
-                os << ", values: ";
-                {  // Add each value. Braces just for visual clarity.
-                    const auto beg = vec.begin();
-                    const auto end = vec.end();
-                    auto it = beg;
-
-                    if (it == end) {
-                        os << "{}";
-                    } else {
-                        os << "{ " << *it;
-                        while (++it != end) {
-                            os << ", " << *it;
+                            if (it == end) {
+                                os << "{}";
+                            } else {
+                                os << "{ " << *it;
+                                while (++it != end) {
+                                    os << ", " << *it;
+                                }
+                                os << "}";
+                            }
                         }
                         os << "}";
+                        return os;
                     }
-                }
-                os << "}";
-                return os;
-            }
 
-           private:
-            size_t _size{0};
-            std::array<T, Capacity> _data{};
+                   private:
+                    size_t _size{0};
+                    std::array<T, Capacity> _data{};
 
-            static_assert(std::is_trivially_copyable<T>::value, "Trivally-copyable required for std::memcpy");
-            // static_assert(std::is_trivially_copyable<StaticVector<T, Capacity>>::value, "Trivally-copyable required for std::memcpy");
-            // static_assert(sizeof(StaticVector<T, Capacity>) == sizeof(T) * Capacity, "Serialized size is unexpected");
-        };
-
+                    static_assert(std::is_trivially_copyable<T>::value, "Trivally-copyable required for std::memcpy");
+                    // static_assert(std::is_trivially_copyable<StaticVector<T, Capacity>>::value, "Trivally-copyable required for std::memcpy");
+                    // static_assert(sizeof(StaticVector<T, Capacity>) == sizeof(T) * Capacity, "Serialized size is unexpected");
+                }; */
+        template <typename T, size_t Capacity>
+        using StaticVector = boost::container::static_vector<T, Capacity>;
     }  // namespace Utils
 
+    template <typename T, size_t Capacity>
+    inline std::ostream& operator<<(std::ostream& os, const boost::container::static_vector<T, Capacity>& vec) {
+        const size_t sz = vec.size();
+        os << "StaticVector";
+        os << "{ size:" << sz;
+        os << ", values: ";
+        {  // Add each value. Braces just for visual clarity.
+            const auto beg = vec.begin();
+            const auto end = vec.end();
+            auto it = beg;
+
+            if (it == end) {
+                os << "{}";
+            } else {
+                os << "{\n" << *it;
+                while (++it != end) {
+                    os << ",\n" << *it;
+                }
+                os << "}";
+            }
+        }
+        os << "}";
+        return os;
+    }
+
 }  // namespace MomentumX
+
+// convenience macros for quick print-based debugging
+#ifndef MX_TRACE
+#define MX_TRACE std::cout << "[MX_TRACE]: " << __FILE__ << ":" << __LINE__ << " " << __func__ << std::endl;
+#define MX_TRACE_ITEM(item) std::cout << "[MX_TRACE]: " << __FILE__ << ":" << __LINE__ << " " << __func__ << " -- " #item ": " << item << std::endl;
+#endif
 
 #endif

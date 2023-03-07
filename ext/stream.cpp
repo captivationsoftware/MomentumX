@@ -24,15 +24,12 @@
 
 namespace MomentumX {
 
-    static_assert(std::is_trivially_copy_constructible<ControlBlock>::value, "needed for std::memcpy");
-
     Stream::Stream(const Utils::PathConfig& paths, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role)
         : _paths(paths),
           _role(role),
           _fd(open(_paths.stream_path.c_str(), O_RDWR | (_role == Role::PRODUCER ? O_CREAT | O_EXCL : 0), S_IRWXU)),
           _data(nullptr),
-          _control(nullptr),
-          _control_mutex() {
+          _control(nullptr) {
         if (_fd < 0) {
             if (role == Role::CONSUMER) {
                 throw std::runtime_error("Failed to open shared memory stream file '" + _paths.stream_name + "' [errno: " + std::to_string(errno) + "]");
@@ -57,17 +54,20 @@ namespace MomentumX {
 
         _control = reinterpret_cast<ControlBlock*>(_data);
         if (_role == PRODUCER) {
-            *_control = ControlBlock{};
+            new (_control) ControlBlock();  // placement construct into shared memory
             _control->sync = sync;
             _control->buffer_size = buffer_size;
             _control->buffer_count = buffer_count;
+            // _control->last_sent_index = ControlBlock::wrapping_decrement(buffer_count, buffer_count);  // first increment goes to zero
+        } else {
+            const auto control_lock = get_control_lock();
+            _control->subscriber_count++;
+            _subscribed = true;
         }
 
         if (_role == PRODUCER) {
-            _control_mutex.emplace(bip::create_only, paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            _control_mutex.emplace(bip::open_only, paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
 
@@ -80,6 +80,10 @@ namespace MomentumX {
         if (_role == Role::PRODUCER) {
             Utils::Logger::get_logger().info("Producer stream signalling end of stream");
             end(control_lock);
+        } else {
+            if (_subscribed) {
+                --_control->subscriber_count;
+            }
         }
 
         if (_fd > -1) {
@@ -96,7 +100,6 @@ namespace MomentumX {
         }
 
         if (_role == PRODUCER) {
-            _control_mutex->remove(_paths.stream_mutex.c_str());
             Utils::Logger::get_logger().info(std::string("Destroyed Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
             Utils::Logger::get_logger().info(std::string("Destroyed Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
@@ -136,8 +139,36 @@ namespace MomentumX {
         _control->is_ended = true;
     }
 
+    void Stream::unsubscribe() {
+        auto control_lock = get_control_lock();
+        if (_role == Role::PRODUCER) {
+            throw std::logic_error("Producer cannot unsubscribe");
+        }
+
+        if (_subscribed) {
+            _subscribed = false;
+            --_control->subscriber_count;
+
+            // Remove required acknowledgement for all future buffers
+            for (auto& b : _control->buffers) {
+                auto& bs = b.buffer_state;
+                if (_last_iteration < bs.iteration) {
+                    b.buffer_sync.dec_required(control_lock);
+                }
+            }
+        }
+    }
+
+    Stream::Lock Stream::get_control_lock() {
+        return Lock(_control->control_mutex);
+    }
+
     std::list<Stream::BufferState> Stream::buffer_states(const Utils::OmniWriteLock& control_lock, bool sort, uint64_t minimum_timestamp) {
-        std::list<Stream::BufferState> buffer_states(_control->buffers.begin(), _control->buffers.end());
+        std::list<Stream::BufferState> buffer_states;
+        for (const auto& b : _control->buffers) {
+            buffer_states.push_back(b.buffer_state);
+        }
+
         if (sort) {
             const auto comparator = [](const BufferState& x, const BufferState& y) { return (x.data_timestamp < y.data_timestamp); };
             buffer_states.sort(comparator);
@@ -153,93 +184,18 @@ namespace MomentumX {
 
         const auto beg = _control->buffers.begin();
         const auto end = _control->buffers.end();
-        const auto pred = [&](const BufferState& bs) { return bs.buffer_id == buffer_state.buffer_id; };
+        const auto pred = [&](const LockableBufferState& lbs) { return lbs.buffer_state.buffer_id == buffer_state.buffer_id; };
         const auto loc = std::find_if(beg, end, pred);
 
         if (loc == end) {
-            _control->buffers.push_back(buffer_state);
+            _control->buffers.emplace_back(buffer_state);
         } else {
-            *loc = buffer_state;
+            loc->buffer_state = buffer_state;
         }
     }
 
-    std::set<Context*> Stream::subscribers(const Utils::OmniWriteLock& control_lock) {
-        const auto beg = _control->subscribers.begin();
-        const auto end = _control->subscribers.end();
-        return std::set<Context*>(beg, end);
-    }
-
-    void Stream::add_subscriber(const Utils::OmniWriteLock& control_lock, Context* context) {
-        if (_role == Role::PRODUCER) {
-            throw std::runtime_error("Producer stream cannot add subscribers");
-        }
-
-        try {
-            _control->subscribers.push_back(context);
-        } catch (std::exception& e) {
-            // re-throw for a more user-friendly error message
-            throw std::runtime_error(
-                "Subscriber count exceeds the allowable "
-                "amount for this stream");
-        }
-    }
-
-    void Stream::remove_subscriber(const Utils::OmniWriteLock& control_lock, Context* context) {
-        if (_role == Role::PRODUCER) {
-            throw std::runtime_error("Producer stream cannot remove subscribers");
-        }
-
-        const auto beg = _control->subscribers.begin();
-        const auto end = _control->subscribers.end();
-        const auto loc = std::find(beg, end, context);
-
-        if (loc != end) {
-            _control->subscribers.erase(loc);
-        }
-    }
-
-    bool Stream::has_pending_acknowledgements(const Utils::OmniWriteLock& control_lock, size_t buffer_id) {
-        const auto beg = _control->pending_acknowledgements.begin();
-        const auto end = _control->pending_acknowledgements.end();
-        const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) { return pa.buffer_id == buffer_id; });
-
-        return loc != end;
-    }
-
-    void Stream::set_pending_acknowledgements(const Utils::OmniWriteLock& control_lock, size_t buffer_id) {
-        for (auto const subscriber : _control->subscribers) {
-            _control->pending_acknowledgements.push_back(MomentumX::PendingAcknowledgement(buffer_id, subscriber));
-        }
-
-        Utils::Logger::get_logger().debug(
-            std::string("Reset pending acknowledgements to mirror current subscribers for buffer id " + std::to_string(buffer_id)));
-    }
-
-    void Stream::remove_all_pending_acknowledgements(const Utils::OmniWriteLock& control_lock, Context* context) {
-        while (true) {
-            auto const beg = _control->pending_acknowledgements.begin();
-            auto const end = _control->pending_acknowledgements.end();
-            auto const loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.context == context; });
-
-            if (loc != end) {
-                _control->pending_acknowledgements.erase(loc);
-            } else {
-                return;
-            }
-        }
-    }
-
-    void Stream::remove_pending_acknowledgement(const Utils::OmniWriteLock& control_lock, size_t buffer_id, Context* context) {
-        const auto beg = _control->pending_acknowledgements.begin();
-        const auto end = _control->pending_acknowledgements.end();
-        const auto loc = std::find_if(beg, end, [&](const PendingAcknowledgement& pa) -> bool { return pa.buffer_id == buffer_id && pa.context == context; });
-
-        if (loc != end) {
-            _control->pending_acknowledgements.erase(loc);
-        } else {
-            Utils::Logger::get_logger().warning(std::string("Attempted to remove pending acknowledgement that does not exist for buffer: ") +
-                                                std::to_string(buffer_id));
-        }
+    size_t Stream::subscriber_count(const Utils::OmniWriteLock& control_lock) {
+        return _control->subscriber_count;
     }
 
     StreamManager::StreamManager(Context* context, BufferManager* buffer_manager) : _context(context), _buffer_manager(buffer_manager){};
@@ -254,7 +210,7 @@ namespace MomentumX {
         }
     };
 
-    Stream* StreamManager::find(const Lock& lock, std::string name) {
+    Stream* StreamManager::find_or_create(const Lock& lock, std::string name) {
         Stream* stream;
         if (_stream_by_name.count(name) > 0) {
             // if we already know about this stream, return it
@@ -281,7 +237,7 @@ namespace MomentumX {
         const auto control_lock = stream->get_control_lock();
         _stream_by_name[name] = stream;
 
-        for (size_t i = 1; i <= buffer_count; i++) {
+        for (size_t i = 0; i < buffer_count; i++) {
             std::shared_ptr<Buffer> buffer = _buffer_manager->allocate(buffer_manager_lock, paths, i, buffer_size, true);
 
             Stream::BufferState buffer_state(buffer->id(), buffer_size, buffer_count, 0, 0, 0);
@@ -299,33 +255,15 @@ namespace MomentumX {
         delete stream;
     }
 
-    bool StreamManager::is_subscribed(const Lock& lock, const Stream::Lock& control_lock, Stream* stream) {
-        // if we don't know about this stream, then clearly we are
-        // not subscribed
-        if (stream == NULL) {
-            return false;
-        }
-
-        for (auto const& subscriber : stream->subscribers(control_lock)) {
-            if (subscriber == _context) {
-                return true;
-            }
-        }
-
-        Utils::Logger::get_logger().debug(std::string("Not subscribed to stream: " + std::to_string((uint64_t)_context)));
-        return false;
-    }
-
     Stream* StreamManager::subscribe(const Lock& lock, const BufferManager::Lock& buffer_manager_lock, std::string name) {
-        Stream* stream = find(lock, name);
+        Stream* stream = find_or_create(lock, name);
         const auto control_lock = stream->get_control_lock();
 
         // short circuit if we're already subscribed
-        if (is_subscribed(lock, control_lock, stream)) {
+        const bool is_subscribed = _buffers_by_stream.count(stream) != 0;
+        if (is_subscribed) {
             return stream;
         }
-
-        stream->add_subscriber(control_lock, _context);
 
         for (auto const& buffer_state : stream->buffer_states(control_lock)) {
             _buffer_manager->allocate(buffer_manager_lock, stream->paths(control_lock), buffer_state.buffer_id, stream->buffer_size(control_lock));
@@ -336,69 +274,81 @@ namespace MomentumX {
 
     void StreamManager::unsubscribe(const Lock& lock, const BufferManager::Lock& buffer_manager_lock, Stream* stream) {
         const auto control_lock = stream->get_control_lock();
-        stream->remove_all_pending_acknowledgements(control_lock, _context);
-        stream->remove_subscriber(control_lock, _context);
 
         _buffer_manager->deallocate_stream(buffer_manager_lock, stream->paths(control_lock));
     }
 
     std::shared_ptr<Stream::BufferState> StreamManager::next_buffer_state(const Lock& lock,
                                                                           const BufferManager::Lock& buffer_manager_lock,
-                                                                          const Stream::Lock& control_lock,
+                                                                          Stream::Lock& control_lock,
                                                                           Stream* stream) {
-        std::shared_ptr<Buffer> current_buffer = _current_buffer_by_stream[stream];
-
-        std::shared_ptr<Buffer> next_buffer;
-        std::shared_ptr<Utils::OmniWriteLock> lock_ptr;
+        // wait for subscribers
+        if (stream->_control->subscriber_count == 0) {
+            return nullptr;
+        }
+        
+        // convenience wrapper
+        const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
 
         if (stream->sync(control_lock)) {
-            next_buffer = _buffer_manager->peek_next(buffer_manager_lock, stream->paths(control_lock));  // peek
+            const size_t iteration = stream->_last_iteration + 1;
+            const size_t idx = inc(stream->_control->last_sent_index);
+            // MX_TRACE_ITEM(stream)
+            // MX_TRACE_ITEM(stream->_last_iteration)
+            // MX_TRACE_ITEM(iteration)
 
-            if (stream->has_pending_acknowledgements(control_lock, next_buffer->id())) {
-                return nullptr;
+            auto& b = stream->_control->buffers.at(idx);
+            auto& bs = b.buffer_state;
+            const bool has_buffer = b.buffer_sync.checkout_write(control_lock, stream->_control->subscriber_count, std::chrono::milliseconds(200));
+
+            if (has_buffer) {
+                stream->_last_iteration = iteration;      // update buffer iteration
+                stream->_control->last_sent_index = idx;  // update buffer index
+
+                auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, iteration);
+                auto del = [stream, idx](Stream::BufferState* state) {
+                    // TODO: capture by shared_ptr, not raw pointer
+                    auto control_lock = stream->get_control_lock();
+                    stream->_control->buffers.at(idx).buffer_sync.checkin_write(control_lock);
+
+                    delete state;
+                };
+                return std::shared_ptr<Stream::BufferState>(ptr, del);
             }
-
-            next_buffer = _buffer_manager->next(buffer_manager_lock, stream->paths(control_lock));  // actually rotate the buffers
-            lock_ptr = std::make_shared<Utils::OmniWriteLock>(next_buffer->mutex());                // lock write mutex
         } else {
-            for (size_t _ = 0; _ < stream->buffer_count(control_lock); _++) {
-                next_buffer = _buffer_manager->next(buffer_manager_lock, stream->paths(control_lock));
+            const size_t end = stream->_control->last_sent_index;
+            const size_t beg = inc(end);
+            for (size_t idx = beg; idx != end; idx = inc(idx)) {
+                auto& b = stream->_control->buffers.at(idx);
+                auto& bs = b.buffer_state;
+                const bool has_buffer = b.buffer_sync.checkout_write(control_lock, 0, std::chrono::seconds(0));
 
-                // ensure that we don't write to the same buffer repeatedly
-                if (next_buffer == current_buffer) {
-                    continue;
-                }
+                if (has_buffer) {
+                    ++stream->_last_iteration;                // update buffer iteration
+                    stream->_control->last_sent_index = idx;  // update buffer index
 
-                Utils::OmniWriteLock lock(next_buffer->mutex(), bip::defer_lock);  // unlocked
-                if (lock.try_lock()) {
-                    lock_ptr = std::make_shared<Utils::OmniWriteLock>(std::move(lock));  // locked
-                } else {
-                    next_buffer = nullptr;
-                }
+                    auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, stream->_last_iteration);
+                    auto del = [stream, idx](Stream::BufferState* state) {
+                        // TODO: capture by shared_ptr, not raw pointer
+                        auto control_lock = stream->get_control_lock();
+                        stream->_control->buffers.at(idx).buffer_sync.checkin_write(control_lock);
 
-                if (next_buffer != nullptr) {
-                    break;
+                        delete state;
+                    };
+                    return std::shared_ptr<Stream::BufferState>(ptr, del);
                 }
             }
         }
-
-        _current_buffer_by_stream[stream] = next_buffer;
-
-        // create a new buffer state pointer and break out to the caller
-        return std::shared_ptr<Stream::BufferState>(
-            new Stream::BufferState(next_buffer->id(), next_buffer->size(), stream->buffer_count(control_lock), 0, 0, ++_iteration_by_stream[stream]),
-            [lock_ptr](Stream::BufferState* state) {
-                delete state;  // lock_ptr maintains file lock until this deleter called
-            });
+        return nullptr;
     }
 
     bool StreamManager::send_buffer_state(const Lock& lock,
                                           const BufferManager::Lock& buffer_manager_lock,
-                                          const Stream::Lock& control_lock,
+                                          Stream::Lock& control_lock,
                                           Stream* stream,
                                           Stream::BufferState buffer_state) {
         if (stream->sync(control_lock)) {
-            if (stream->subscribers(control_lock).size() == 0) {
+            if (stream->_control->subscriber_count == 0) {
                 return false;
             }
         }
@@ -407,74 +357,100 @@ namespace MomentumX {
             Utils::Logger::get_logger().warning("Sending buffer state without having set data_size property");
         }
 
-        std::shared_ptr<Buffer> buffer = _buffer_manager->find(buffer_manager_lock, stream->paths(control_lock), buffer_state.buffer_id);
+        const size_t idx = buffer_state.buffer_id;
 
-        // update the buffer write timestamp
-        if (buffer_state.data_timestamp == 0) {
-            buffer_state.data_timestamp = Utils::now();
-        }
-
-        buffer->write_ts(buffer_state.data_timestamp);
-
-        if (stream->sync(control_lock)) {
-            stream->set_pending_acknowledgements(control_lock, buffer->id());
-        }
-
-        stream->update_buffer_state(control_lock, buffer_state);
-
+        auto& b = stream->_control->buffers.at(idx);
+        b.buffer_sync.mark_sent(control_lock);
+        b.buffer_state = buffer_state;
+        // MX_TRACE_ITEM(buffer_state.to_string())
         return true;
     }
 
     bool StreamManager::has_next_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, uint64_t minimum_timestamp) {
-        std::list<Stream::BufferState> buffer_states = stream->buffer_states(control_lock, true, stream->sync(control_lock) ? 0 : minimum_timestamp);
-        const auto beg = buffer_states.begin();
-        const auto end = buffer_states.end();
-        const auto pred = [&](const Stream::BufferState& bs) { return bs.iteration > _iteration_by_stream[stream]; };
-        const auto loc = std::find_if(beg, end, pred);
-
-        if (stream->is_ended(control_lock)) {
-            // Stream has ended, so we only have more buffers if there are previously unaccessed buffers remaining
-            return loc != end;
-        } else {
+        if (!stream->is_ended(control_lock)) {
             // Stream is not ended so we can presume more buffers are coming.
             return true;
+        } else {
+            // Stream has ended, so we only have more buffers if there are previously unaccessed buffers remaining
+            return stream->_last_iteration < stream->_control->buffers.at(stream->_control->last_sent_index).buffer_state.iteration;
         }
     }
 
     std::shared_ptr<Stream::BufferState> StreamManager::receive_buffer_state(const Lock& lock,
                                                                              const BufferManager::Lock& buffer_manager_lock,
-                                                                             const Stream::Lock& control_lock,
+                                                                             Stream::Lock& control_lock,
                                                                              Stream* stream,
                                                                              uint64_t minimum_timestamp) {
-        std::list<Stream::BufferState> buffer_states = stream->buffer_states(control_lock, true, stream->sync(control_lock) ? 0 : minimum_timestamp);
+        // convenience wrapper
+        const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
+        const auto dec = [&](size_t idx) { return ControlBlock::wrapping_decrement(idx, stream->_control->buffer_count); };
 
-        for (auto const& buffer_state : buffer_states) {
-            {
-                if (buffer_state.iteration > _iteration_by_stream[stream]) {
-                    _iteration_by_stream[stream] = buffer_state.iteration;
-                } else {
-                    continue;
+        // MX_TRACE
+        const size_t last_processed_idx = stream->_last_index;
+        const size_t last_available_idx = stream->_control->last_sent_index;
+        const size_t last_processed_iteration = stream->_last_iteration;
+        const size_t last_available_iteration = stream->_control->buffers.at(last_available_idx).buffer_state.iteration;
+        // MX_TRACE_ITEM(last_processed_idx)
+        // MX_TRACE_ITEM(last_available_idx)
+        // MX_TRACE_ITEM(last_processed_iteration)
+        // MX_TRACE_ITEM(last_available_iteration)
+        // MX_TRACE
+        if (last_available_iteration == last_processed_iteration) {
+            // MX_TRACE
+            return nullptr;
+        }
+
+        size_t next_idx = ControlBlock::wrapping_increment(last_processed_idx, stream->_control->buffer_count);
+        size_t next_iteration = last_processed_iteration + 1;
+        if (stream->_sync) {
+            // MX_TRACE_ITEM(next_idx)
+            // MX_TRACE_ITEM(next_iteration)
+            auto& b = stream->_control->buffers.at(next_idx);
+            if (b.buffer_state.iteration != next_iteration) {
+                // MX_TRACE
+                return nullptr;  // bail if next buffer not ready (TBR)
+            }
+
+            // MX_TRACE
+            const bool has_buffer = b.buffer_sync.checkout_read(control_lock, std::chrono::milliseconds(0));
+            if (!has_buffer) {
+                // MX_TRACE
+                return nullptr;
+            }
+            stream->_last_index = next_idx;
+            stream->_last_iteration = next_iteration;
+
+            auto ptr = new Stream::BufferState(b.buffer_state);
+            auto del = [stream, next_idx](Stream::BufferState* state) {
+                auto control_lock = stream->get_control_lock();
+                stream->_control->buffers.at(next_idx).buffer_sync.checkin_read(control_lock);
+                delete state;
+            };
+            return std::shared_ptr<Stream::BufferState>(ptr, del);
+        }
+
+        for (size_t idx = next_idx; next_iteration <= stream->_control->buffers.at(idx).buffer_state.iteration; idx = inc(idx)) {
+            auto& b = stream->_control->buffers.at(idx);
+            // MX_TRACE
+            if (stream->_sync) {
+                // MX_TRACE
+                const bool has_buffer = b.buffer_sync.checkout_read(control_lock, std::chrono::milliseconds(0));
+                if (!has_buffer) {
+                    // MX_TRACE
+                    return nullptr;
                 }
-            }
-            std::shared_ptr<Buffer> buffer = _buffer_manager->find(buffer_manager_lock, stream->paths(control_lock), buffer_state.buffer_id);
-            if (buffer == NULL) {
-                throw std::runtime_error("Attempted to reference an unallocated buffer with id '" + std::to_string(buffer->id()) + "'");
+
+                auto ptr = new Stream::BufferState(b.buffer_state);
+                auto del = [stream, idx](Stream::BufferState* state) {
+                    auto control_lock = stream->get_control_lock();
+                    stream->_control->buffers.at(idx).buffer_sync.checkin_read(control_lock);
+                    delete state;
+                };
+                return std::shared_ptr<Stream::BufferState>(ptr, del);
             }
 
-            Utils::OmniReadLock lock(buffer->mutex(), bip::defer_lock);
-
-            if (lock.try_lock()) {
-                // we got the read lock, so return a copy
-                // of buffer state to the caller.
-                // NOTE: the lock_ptr
-                auto lock_ptr = std::make_shared<Utils::OmniReadLock>(std::move(lock));
-                return std::shared_ptr<Stream::BufferState>(new Stream::BufferState(buffer_state), [lock_ptr](Stream::BufferState* state) {
-                    delete state;  // still delete
-                });
-
-            } else {
-                // failed to get the lock
-            }
+            else
+                throw std::runtime_error("not yet implemented");
         }
 
         if (stream->is_ended(control_lock)) {
@@ -495,12 +471,12 @@ namespace MomentumX {
 
     void StreamManager::release_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, const Stream::BufferState& buffer_state) {
         if (stream->sync(control_lock)) {
-            stream->remove_pending_acknowledgement(control_lock, buffer_state.buffer_id, _context);
+            // stream->remove_pending_acknowledgement(control_lock, buffer_state.buffer_id, _context);
         }
     }
 
     size_t StreamManager::subscriber_count(const Lock& lock, const Stream::Lock& control_lock, Stream* stream) {
-        return stream->subscribers(control_lock).size();
+        return stream->_control->subscriber_count;
     }
 
 }  // namespace MomentumX

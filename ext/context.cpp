@@ -53,14 +53,14 @@ namespace MomentumX {
     std::shared_ptr<Stream::BufferState> Context::next(Stream* stream) {
         const auto sm_lock = _stream_manager.get_stream_manager_lock();
         const auto bm_lock = _stream_manager.get_buffer_manager_lock();
-        const auto ct_lock = _stream_manager.get_control_lock(*stream);
+        auto ct_lock = _stream_manager.get_control_lock(*stream);
         return _stream_manager.next_buffer_state(sm_lock, bm_lock, ct_lock, stream);
     }
 
     bool Context::send(Stream* stream, const Stream::BufferState& buffer_state) {
         const auto sm_lock = _stream_manager.get_stream_manager_lock();
         const auto bm_lock = _stream_manager.get_buffer_manager_lock();
-        const auto ct_lock = _stream_manager.get_control_lock(*stream);
+        auto ct_lock = _stream_manager.get_control_lock(*stream);
         return _stream_manager.send_buffer_state(sm_lock, bm_lock, ct_lock, stream, buffer_state);
     }
 
@@ -73,7 +73,7 @@ namespace MomentumX {
     std::shared_ptr<Stream::BufferState> Context::receive(Stream* stream, uint64_t minimum_timestamp) {
         const auto sm_lock = _stream_manager.get_stream_manager_lock();
         const auto bm_lock = _stream_manager.get_buffer_manager_lock();
-        const auto ct_lock = _stream_manager.get_control_lock(*stream);
+        auto ct_lock = _stream_manager.get_control_lock(*stream);
         std::shared_ptr<Stream::BufferState> buffer_state = _stream_manager.receive_buffer_state(sm_lock, bm_lock, ct_lock, stream, minimum_timestamp);
 
         return buffer_state;
