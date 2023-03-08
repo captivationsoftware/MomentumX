@@ -44,8 +44,7 @@ def printer(cancel: threading.Event) -> None:
     global send_counter
     global recv_counter
     start_time = time.time()
-    scheduled_end_time = start_time + 10
-    while not cancel.wait(1.0) and time.time() < scheduled_end_time:
+    while not cancel.wait(1.0):
         delta = time.time() - start_time
         print(f"{send_counter} send, {send_counter/delta:.01f} msg/sec")
         print(f"{recv_counter} recv, {recv_counter/delta:.01f} msg/sec")

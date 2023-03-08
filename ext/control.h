@@ -32,9 +32,11 @@ namespace MomentumX {
         /// having a unique mutex, each BufferSync does internally maintain separate
         /// condition variables, to prevent waking unintended threads.
 
-        enum class State : uint8_t { WRITE_START, WRITE_DONE, READ_START, READ_DONE };
+        enum class State : uint8_t { INITIAL, WRITE_CLAIMED, READ_CLAIMED, SENT, SKIPPED, ACKNOWLEDGED };
 
        public:
+        enum class CheckoutResult : uint8_t { SUCCESS, TIMEOUT, SKIPPED };
+
         BufferSync() = default;
         ~BufferSync() = default;
 
@@ -43,22 +45,41 @@ namespace MomentumX {
         BufferSync operator=(BufferSync&&) = delete;
         BufferSync operator=(const BufferSync&) = delete;
 
-        bool checkout_read(Utils::OmniWriteLock& control_lock, std::chrono::microseconds timeout = std::chrono::milliseconds(10)) {
+        CheckoutResult checkout_read(Utils::OmniWriteLock& control_lock, std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
             assert_owns(control_lock);
 
-            const bool can_checkout = _checkin_cond.timed_wait(control_lock, ptimeout(timeout), [&] { return _is_sent && _active_writers == 0; });
+            State determined_state = State::INITIAL;
+            const bool has_result = _checkin_cond.timed_wait(control_lock, ptimeout(timeout), [&] {
+                determined_state = get_state();  // store outside of lambda
+                switch (determined_state) {
+                    case State::READ_CLAIMED:  // fall-through - at least one othe reader
+                    case State::SENT:          // fall-through - no readers yet
+                    case State::SKIPPED:       // fall-through - writer skipped buffer entirely
+                    case State::ACKNOWLEDGED:  // fall-through - always acknowledged for streaming case
+                        return true;
+                    default:
+                        return false;
+                }
+            });
 
-            if (can_checkout) {
-                ++_active_readers;
-                return true;
+            // Not yet ready to ready
+            if (!has_result) {
+                return CheckoutResult::TIMEOUT;
             }
 
-            return false;
+            // Will never be ready to read
+            if (determined_state == State::SKIPPED) {
+                return CheckoutResult::SKIPPED;
+            }
+
+            // Ready to read
+            ++_active_readers;
+            return CheckoutResult::SUCCESS;
         }
 
         bool checkout_write(Utils::OmniWriteLock& control_lock,
                             size_t required_acknowledgements,
-                            std::chrono::microseconds timeout = std::chrono::milliseconds(10)) {
+                            std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
             assert_owns(control_lock);
 
             const bool can_checkout = _checkin_cond.timed_wait(control_lock, ptimeout(timeout), [&] {
@@ -71,6 +92,7 @@ namespace MomentumX {
 
             if (can_checkout) {
                 _is_sent = false;
+                _is_skipped = false;
                 ++_active_writers;
                 _done_readers = 0;
                 _done_writers = 0;
@@ -84,6 +106,11 @@ namespace MomentumX {
         void mark_sent(Utils::OmniWriteLock& control_lock) {
             assert_owns(control_lock);
             _is_sent = true;
+        }
+
+        void mark_skipped(Utils::OmniWriteLock& control_lock) {
+            assert_owns(control_lock);
+            _is_skipped = true;
         }
 
         void checkin_read(Utils::OmniWriteLock& control_lock) {
@@ -113,6 +140,7 @@ namespace MomentumX {
             }
             --_active_writers;
             ++_done_writers;
+            _is_skipped = !_is_sent;
 
             _checkin_cond.notify_all();  // notify all readers
         }
@@ -136,6 +164,13 @@ namespace MomentumX {
             }
         }
 
+        // This is a leaky abstraction that should be updated, perhaps by moving the iteration into the sync, since it's being
+        // used as an input for checkout control flow (O_o)
+        inline bool is_skipped(Utils::OmniWriteLock& control_lock) const {
+            assert_owns(control_lock);
+            return get_state() == State::SKIPPED;
+        };
+
         void closeout(Utils::OmniWriteLock& control_lock, const std::chrono::microseconds& timeout = std::chrono::seconds(1)) {
             assert_owns(control_lock);
             const bool can_checkout = _checkin_cond.timed_wait(control_lock, ptimeout(timeout), [&] {
@@ -150,6 +185,7 @@ namespace MomentumX {
         inline friend std::ostream& operator<<(std::ostream& os, const BufferSync& x) {
             os << "BufferSync: ";
             os << "{ is_sent: " << std::boolalpha << x._is_sent;
+            os << ", state: " << to_str(x.get_state());
             os << ", active_readers: " << x._active_readers;
             os << ", active_writers: " << x._active_writers;
             os << ", done_readers: " << x._done_readers;
@@ -160,6 +196,52 @@ namespace MomentumX {
         }
 
        private:
+        inline State get_state() const {
+            if (_active_readers != 0 && _active_writers != 0) {
+                throw std::logic_error("Cannot have active readers and active writers in BufferSync");
+            }
+
+            if (_active_writers != 0) {
+                return State::WRITE_CLAIMED;  // write buffer checked out
+            }
+
+            if (_active_readers != 0) {
+                return State::READ_CLAIMED;  // read buffer(s) checked out
+            }
+
+            if (_done_writers > 0 && !_is_sent) {
+                return State::SKIPPED;  // write buffer checked out and released, but never sent
+            }
+
+            if (_done_readers >= _required_readers) {
+                return State::ACKNOWLEDGED;  // all acknowledgements received (sync) or not needed (stream)
+            }
+
+            if (_done_writers > 0 && _is_sent) {
+                return State::SENT;  // buffer has data to be read (by one or more readers)
+            }
+
+            return State::INITIAL;  // initial state
+        }
+
+        inline static const char* to_str(State s) {
+            switch (s) {
+                case State::INITIAL:
+                    return "INITIAL";
+                case State::WRITE_CLAIMED:
+                    return "WRITE_CLAIMED";
+                case State::READ_CLAIMED:
+                    return "READ_CLAIMED";
+                case State::SENT:
+                    return "SENT";
+                case State::SKIPPED:
+                    return "SKIPPED";
+                case State::ACKNOWLEDGED:
+                    return "ACKNOWLEDGED";
+            }
+            throw std::logic_error("Invalid enumeration for BufferSync::State");
+        }
+
         inline static void assert_owns(Utils::OmniWriteLock& control_lock) {
             if (!control_lock.owns()) {
                 throw std::logic_error("Lock must already own ControlBlock mutext");
@@ -173,13 +255,14 @@ namespace MomentumX {
         }
 
         Utils::OmniCondition _checkin_cond{};  ///< Conditional for awaiting buffer availability (in non-polling case)
-        State _state{State::WRITE_START};      ///< FSM state for tracking write-read transitions
-        size_t _is_sent{};                     ///< Marks a buffer as ready to be read or written
-        size_t _active_readers{};              ///< Number of readers to have active claim of buffer, zero or more
-        size_t _active_writers{};              ///< Number of writers to have active claim of buffer, zero or One
-        size_t _done_readers{};                ///< Number of readers to have read the buffer, zero or more
-        size_t _done_writers{};                ///< Number of writers to have written to the buffer, zero or One
-        size_t _required_readers{};            ///< Number of readers required to complete buffer, nonzero in sync mode
+        // State _state{State::WRITE_START};      ///< FSM state for tracking write-read transitions
+        bool _is_sent{};             ///< Marks a buffer as ready to be read or written
+        bool _is_skipped{};          ///< Marks a buffer as skipped by writer (either due to hold)
+        size_t _active_readers{};    ///< Number of readers to have active claim of buffer, zero or more
+        size_t _active_writers{};    ///< Number of writers to have active claim of buffer, zero or One
+        size_t _done_readers{};      ///< Number of readers to have read the buffer, zero or more
+        size_t _done_writers{};      ///< Number of writers to have written to the buffer, zero or One
+        size_t _required_readers{};  ///< Number of readers required to complete buffer, nonzero in sync mode
     };
 
     struct LockableBufferState {

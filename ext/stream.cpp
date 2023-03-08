@@ -286,16 +286,13 @@ namespace MomentumX {
         if (stream->_control->subscriber_count == 0) {
             return nullptr;
         }
-        
+
         // convenience wrapper
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
 
         if (stream->sync(control_lock)) {
             const size_t iteration = stream->_last_iteration + 1;
             const size_t idx = inc(stream->_control->last_sent_index);
-            // MX_TRACE_ITEM(stream)
-            // MX_TRACE_ITEM(stream->_last_iteration)
-            // MX_TRACE_ITEM(iteration)
 
             auto& b = stream->_control->buffers.at(idx);
             auto& bs = b.buffer_state;
@@ -362,7 +359,6 @@ namespace MomentumX {
         auto& b = stream->_control->buffers.at(idx);
         b.buffer_sync.mark_sent(control_lock);
         b.buffer_state = buffer_state;
-        // MX_TRACE_ITEM(buffer_state.to_string())
         return true;
     }
 
@@ -385,80 +381,52 @@ namespace MomentumX {
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
         const auto dec = [&](size_t idx) { return ControlBlock::wrapping_decrement(idx, stream->_control->buffer_count); };
 
-        // MX_TRACE
         const size_t last_processed_idx = stream->_last_index;
         const size_t last_available_idx = stream->_control->last_sent_index;
         const size_t last_processed_iteration = stream->_last_iteration;
         const size_t last_available_iteration = stream->_control->buffers.at(last_available_idx).buffer_state.iteration;
-        // MX_TRACE_ITEM(last_processed_idx)
-        // MX_TRACE_ITEM(last_available_idx)
-        // MX_TRACE_ITEM(last_processed_iteration)
-        // MX_TRACE_ITEM(last_available_iteration)
-        // MX_TRACE
         if (last_available_iteration == last_processed_iteration) {
-            // MX_TRACE
-            return nullptr;
+            return nullptr;  // TODO: block once we've caught up, instead of just bailing like we are now
         }
 
         size_t next_idx = ControlBlock::wrapping_increment(last_processed_idx, stream->_control->buffer_count);
         size_t next_iteration = last_processed_iteration + 1;
-        if (stream->_sync) {
-            // MX_TRACE_ITEM(next_idx)
-            // MX_TRACE_ITEM(next_iteration)
-            auto& b = stream->_control->buffers.at(next_idx);
-            if (b.buffer_state.iteration != next_iteration) {
-                // MX_TRACE
-                return nullptr;  // bail if next buffer not ready (TBR)
+
+        auto b = std::ref(stream->_control->buffers.at(next_idx));
+
+        // In the simple case, the next buffer (sequentially) is used.
+        // If that's not the case, we'll have to search for the next available buffer.
+        // NOTE: `sync` mode requires each buffer to be used sequentially, so this is effectively a no-op in `sync` mode.
+        if (b.get().buffer_state.iteration != next_iteration) {
+
+            std::vector<LockableBufferState*> v;
+            std::for_each(stream->_control->buffers.begin(), stream->_control->buffers.end(), [&](auto& lbstate){v.push_back(&lbstate);});
+            std::sort(v.begin(), v.end(), [](const auto* lhs, const auto* rhs) { return lhs->buffer_state.iteration < rhs->buffer_state.iteration; });
+            const auto it = std::find_if(v.begin(), v.end(), [&](const auto* lbstate) { return next_iteration <= lbstate->buffer_state.iteration; });
+
+            if (it == v.end()) {
+                throw std::logic_error("Unable to find buffer with expected iteration");
             }
 
-            // MX_TRACE
-            const bool has_buffer = b.buffer_sync.checkout_read(control_lock, std::chrono::milliseconds(0));
-            if (!has_buffer) {
-                // MX_TRACE
-                return nullptr;
-            }
-            stream->_last_index = next_idx;
-            stream->_last_iteration = next_iteration;
-
-            auto ptr = new Stream::BufferState(b.buffer_state);
-            auto del = [stream, next_idx](Stream::BufferState* state) {
-                auto control_lock = stream->get_control_lock();
-                stream->_control->buffers.at(next_idx).buffer_sync.checkin_read(control_lock);
-                delete state;
-            };
-            return std::shared_ptr<Stream::BufferState>(ptr, del);
+            b = std::ref(**it);
         }
 
-        for (size_t idx = next_idx; next_iteration <= stream->_control->buffers.at(idx).buffer_state.iteration; idx = inc(idx)) {
-            auto& b = stream->_control->buffers.at(idx);
-            // MX_TRACE
-            if (stream->_sync) {
-                // MX_TRACE
-                const bool has_buffer = b.buffer_sync.checkout_read(control_lock, std::chrono::milliseconds(0));
-                if (!has_buffer) {
-                    // MX_TRACE
-                    return nullptr;
-                }
-
-                auto ptr = new Stream::BufferState(b.buffer_state);
-                auto del = [stream, idx](Stream::BufferState* state) {
-                    auto control_lock = stream->get_control_lock();
-                    stream->_control->buffers.at(idx).buffer_sync.checkin_read(control_lock);
-                    delete state;
-                };
-                return std::shared_ptr<Stream::BufferState>(ptr, del);
-            }
-
-            else
-                throw std::runtime_error("not yet implemented");
+        const auto checkout_result = b.get().buffer_sync.checkout_read(control_lock);
+        const bool has_buffer = (checkout_result == BufferSync::CheckoutResult::SUCCESS);
+        if (!has_buffer) {
+            return nullptr;
         }
+        stream->_last_index = next_idx;
+        stream->_last_iteration = next_iteration;
 
-        if (stream->is_ended(control_lock)) {
-            Utils::Logger::get_logger().info("Unable to read any more messages from ended stream. Automatically unsubscribing...");
-            unsubscribe(lock, buffer_manager_lock, stream);
-        }
+        auto ptr = new Stream::BufferState(b.get().buffer_state);
+        auto del = [stream, next_idx](Stream::BufferState* state) {
+            auto control_lock = stream->get_control_lock();
+            stream->_control->buffers.at(next_idx).buffer_sync.checkin_read(control_lock);
+            delete state;
+        };
 
-        return NULL;
+        return std::shared_ptr<Stream::BufferState>(ptr, del);
     }
 
     void StreamManager::flush_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream) {
