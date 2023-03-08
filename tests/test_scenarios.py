@@ -14,10 +14,22 @@ _EXPECTED_BYTES = 10589  # arbitrary
 _STREAM_NAME = b"mx://test_echo_mx_stream"
 _DEVSHM_NAME = "/dev/shm/mx.test_echo_mx_stream"
 
+_DEVSHM_CLEANUP=True
+
 @pytest.fixture(autouse=True, scope="function")
 def test_pre_post_fixture():    
     with timeout_event(timeout=0.1) as cancel:
         while os.path.exists(f"{_DEVSHM_NAME}") and not cancel.is_set():
+            if _DEVSHM_CLEANUP:
+                dname = os.path.dirname(_DEVSHM_NAME)
+                bname = os.path.basename(_DEVSHM_NAME)
+                for fname in os.listdir(dname):
+                    if fname.startswith(bname):
+                        full_to_delete = os.path.join(dname, fname)
+                        # sanity check for destructive operation
+                        assert full_to_delete.startswith('/dev/shm/mx.test_')
+                        os.remove(full_to_delete)
+                        print(f'removed old test file: "{full_to_delete}"')
             cancel.wait(0.01)
 
 
@@ -386,7 +398,7 @@ def test_synced_buffers() -> None:
 
             assert not event.is_set(), "Test timed out before making assertions"
 
-            assert tx_buffer.buffer_id == n 
+            assert tx_buffer.buffer_id == n % n  # old buffer 5 maps to actual buffer 0
 
             print('\n-- write')
             tx_buffer.write(n.to_bytes(1, 'big'))

@@ -284,9 +284,8 @@ namespace MomentumX {
                                                                           Stream* stream) {
         // convenience wrapper
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
-        MX_TRACE
 
-        if (stream->sync(control_lock)) {MX_TRACE
+        if (stream->sync(control_lock)) {
             const size_t iteration = stream->_last_iteration + 1;
             const size_t idx = inc(stream->_control->last_sent_index);
 
@@ -309,18 +308,12 @@ namespace MomentumX {
                 return std::shared_ptr<Stream::BufferState>(ptr, del);
             }
         } else {
-            // const size_t end = stream->_control->last_sent_index;
             const size_t beg = inc(stream->_control->last_sent_index);
             size_t idx = beg;
-            MX_TRACE_ITEM(beg)
-            // MX_TRACE_ITEM(end)
-            MX_TRACE_ITEM(stream->_control->buffer_count)
             do {
                 auto& b = stream->_control->buffers.at(idx);
                 auto& bs = b.buffer_state;
                 const bool has_buffer = b.buffer_sync.checkout_write(control_lock, 0, std::chrono::seconds(0));
-MX_TRACE_ITEM(has_buffer)
-
 
                 if (has_buffer) {
                     ++stream->_last_iteration;                // update buffer iteration
@@ -337,7 +330,7 @@ MX_TRACE_ITEM(has_buffer)
                     return std::shared_ptr<Stream::BufferState>(ptr, del);
                 }
                 ++idx;
-            } while( idx != beg); // stop if we cycle all the way around
+            } while (idx != beg);  // stop if we cycle all the way around back to the start
         }
         return nullptr;
     }
@@ -421,10 +414,11 @@ MX_TRACE_ITEM(has_buffer)
         stream->_last_index = next_idx;
         stream->_last_iteration = next_iteration;
 
-        auto ptr = new Stream::BufferState(b.get().buffer_state);
-        auto del = [stream, next_idx](Stream::BufferState* state) {
+        const auto buffer_id = b.get().buffer_state.buffer_id;
+        const auto ptr = new Stream::BufferState(b.get().buffer_state);
+        const auto del = [stream, buffer_id](Stream::BufferState* state) {
             auto control_lock = stream->get_control_lock();
-            stream->_control->buffers.at(next_idx).buffer_sync.checkin_read(control_lock);
+            stream->_control->buffers.at(buffer_id).buffer_sync.checkin_read(control_lock);
             delete state;
         };
 
