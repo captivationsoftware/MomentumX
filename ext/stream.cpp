@@ -282,15 +282,11 @@ namespace MomentumX {
                                                                           const BufferManager::Lock& buffer_manager_lock,
                                                                           Stream::Lock& control_lock,
                                                                           Stream* stream) {
-        // wait for subscribers
-        if (stream->_control->subscriber_count == 0) {
-            return nullptr;
-        }
-
         // convenience wrapper
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
+        MX_TRACE
 
-        if (stream->sync(control_lock)) {
+        if (stream->sync(control_lock)) {MX_TRACE
             const size_t iteration = stream->_last_iteration + 1;
             const size_t idx = inc(stream->_control->last_sent_index);
 
@@ -313,12 +309,18 @@ namespace MomentumX {
                 return std::shared_ptr<Stream::BufferState>(ptr, del);
             }
         } else {
-            const size_t end = stream->_control->last_sent_index;
-            const size_t beg = inc(end);
-            for (size_t idx = beg; idx != end; idx = inc(idx)) {
+            // const size_t end = stream->_control->last_sent_index;
+            const size_t beg = inc(stream->_control->last_sent_index);
+            size_t idx = beg;
+            MX_TRACE_ITEM(beg)
+            // MX_TRACE_ITEM(end)
+            MX_TRACE_ITEM(stream->_control->buffer_count)
+            do {
                 auto& b = stream->_control->buffers.at(idx);
                 auto& bs = b.buffer_state;
                 const bool has_buffer = b.buffer_sync.checkout_write(control_lock, 0, std::chrono::seconds(0));
+MX_TRACE_ITEM(has_buffer)
+
 
                 if (has_buffer) {
                     ++stream->_last_iteration;                // update buffer iteration
@@ -334,7 +336,8 @@ namespace MomentumX {
                     };
                     return std::shared_ptr<Stream::BufferState>(ptr, del);
                 }
-            }
+                ++idx;
+            } while( idx != beg); // stop if we cycle all the way around
         }
         return nullptr;
     }
@@ -398,9 +401,8 @@ namespace MomentumX {
         // If that's not the case, we'll have to search for the next available buffer.
         // NOTE: `sync` mode requires each buffer to be used sequentially, so this is effectively a no-op in `sync` mode.
         if (b.get().buffer_state.iteration != next_iteration) {
-
             std::vector<LockableBufferState*> v;
-            std::for_each(stream->_control->buffers.begin(), stream->_control->buffers.end(), [&](auto& lbstate){v.push_back(&lbstate);});
+            std::for_each(stream->_control->buffers.begin(), stream->_control->buffers.end(), [&](auto& lbstate) { v.push_back(&lbstate); });
             std::sort(v.begin(), v.end(), [](const auto* lhs, const auto* rhs) { return lhs->buffer_state.iteration < rhs->buffer_state.iteration; });
             const auto it = std::find_if(v.begin(), v.end(), [&](const auto* lbstate) { return next_iteration <= lbstate->buffer_state.iteration; });
 
