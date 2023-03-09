@@ -520,7 +520,7 @@ def test_synced_buffers_many_read_after_many_write() -> None:
         for n in range(1, buffer_count + 1):
             tx_buffer = producer.next_to_send()
             assert not event.is_set(), "Producer next_to_send timed out"
-            assert tx_buffer.buffer_id == n
+            assert tx_buffer.buffer_id == n % buffer_count
             tx_buffer.write(n.to_bytes(1, 'big'))
             tx_buffer.send()
 
@@ -653,7 +653,7 @@ def test_grab_oldest()->None:
         b2 = consumer.receive()
         assert b3.buffer_id == 3
         assert b4.buffer_id == 4 # buffer to be held
-        assert b5.buffer_id == 5
+        assert b5.buffer_id == 5 % 5 # wrap-around
         assert b1.buffer_id == 1
         assert b2.buffer_id == 2
         assert b3[0] == bytes([10])
@@ -679,7 +679,7 @@ def test_grab_oldest()->None:
         b1 = consumer.receive()
         b2 = consumer.receive()
         assert b3.buffer_id == 3
-        assert b5.buffer_id == 5, "bad: " + str(b5.buffer_id)
+        assert b5.buffer_id == 5% 5 # wrap-around
         assert b1.buffer_id == 1
         assert b2.buffer_id == 2
         assert b3[0] == bytes([60])
