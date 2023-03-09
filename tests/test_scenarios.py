@@ -426,7 +426,7 @@ def test_durable_ending():
     import momentumx as mx
 
     buffer_count = 27
-    with timeout_event(timeout=1e6) as event:
+    with timeout_event() as event:
         producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
         
@@ -696,7 +696,7 @@ def test_grab_oldest()->None:
         assert b_last.buffer_id == 4
 
 
-def test_register_during_sync_write()->None:
+def test_register_between_sync_write()->None:
     import momentumx as mx
     with timeout_event() as event:
         producer = mx.Producer(_STREAM_NAME, 20, 3, True, event)
@@ -727,12 +727,9 @@ def test_register_during_sync_write()->None:
         assert c2_str_2nd == '5'
         assert c3_str_1st == '5' # Last sent buffer value
 
-def test_register_during_read()->None:
-    pass
-
-def test_unregister_during_sync_write_claim()->None:
+def test_register_during_sync_write_claim()->None:
     import momentumx as mx
-    with timeout_event(1e6) as event:
+    with timeout_event() as event:
         producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)
         consumer_1 = mx.Consumer(_STREAM_NAME)
         consumer_2 = mx.Consumer(_STREAM_NAME)
@@ -777,8 +774,33 @@ def test_unregister_during_sync_write_claim()->None:
         assert buf_out3.buffer_id == 3 % 2
         assert buf_out3[:3] == b'003'
 
-def test_unregister_during_read()->None:
-    pass
+
+def test_unregister_during_sync_write_claim()->None:
+    import momentumx as mx
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 5, True, event)
+        consumer_1 = mx.Consumer(_STREAM_NAME)
+        consumer_2 = mx.Consumer(_STREAM_NAME)
+        consumer_3 = mx.Consumer(_STREAM_NAME)
+
+        for v in ('1', '2', '3'):
+            producer.send_string(v)
+            assert consumer_1.receive_string() == v
+            assert consumer_2.receive_string() == v
+            assert consumer_3.receive_string() == v
+
+        
+        producer.send_string('4')
+        del consumer_1
+        assert consumer_2.receive_string() == '4'
+        assert consumer_3.receive_string() == '4'
+
+        # Verify can continue working after losing a consumer
+        for v in ('5', '6', '7', '8', '9', '10'):
+            producer.send_string(v)
+            assert consumer_2.receive_string() == v
+            assert consumer_3.receive_string() == v
+
 
 
 if __name__ == "__main__":

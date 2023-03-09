@@ -80,13 +80,30 @@ namespace MomentumX {
     };
 
     Stream::~Stream() {
-        const auto control_lock = get_control_lock();
+        auto control_lock = get_control_lock();
         if (_role == Role::PRODUCER) {
             Utils::Logger::get_logger().info("Producer stream signaling end of stream");
             end(control_lock);
         } else {
             if (_subscribed) {
                 --_control->subscriber_count;
+
+                // If we are destructing while producer is still sending, claim and release all unmanaged buffers
+                // Since this happens with the control block lock, any currently checkout-out write buffers will
+                // submitted with the updated subscriber_count value
+                if (_control->sync) {
+                    const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, _control->buffer_count); };
+                    while (_last_iteration != _control->last_sent_iteration()) {
+                        _last_index = inc(_last_index);
+                        _last_iteration++;
+
+                        auto& b = _control->buffers.at(_last_index);
+                        auto& bsync = b.buffer_sync;
+                        if (bsync.checkout_read(control_lock) == BufferSync::CheckoutResult::SUCCESS) {
+                            bsync.checkin_read(control_lock);
+                        }
+                    }
+                }
             }
         }
 
