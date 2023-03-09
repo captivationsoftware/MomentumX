@@ -45,6 +45,20 @@ namespace MomentumX {
         BufferSync operator=(BufferSync&&) = delete;
         BufferSync operator=(const BufferSync&) = delete;
 
+        bool can_checkout_read(Utils::OmniWriteLock& control_lock, std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
+            assert_owns(control_lock);
+
+            State determined_state = get_state();  // store outside of lambda
+            switch (determined_state) {
+                case State::READ_CLAIMED:  // fall-through - at least one othe reader
+                case State::SENT:          // fall-through - no readers yet
+                case State::ACKNOWLEDGED:  // fall-through - always acknowledged for streaming case
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         CheckoutResult checkout_read(Utils::OmniWriteLock& control_lock, std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
             assert_owns(control_lock);
 

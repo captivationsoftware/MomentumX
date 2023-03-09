@@ -78,7 +78,7 @@ namespace MomentumX {
     Stream::~Stream() {
         const auto control_lock = get_control_lock();
         if (_role == Role::PRODUCER) {
-            Utils::Logger::get_logger().info("Producer stream signalling end of stream");
+            Utils::Logger::get_logger().info("Producer stream signaling end of stream");
             end(control_lock);
         } else {
             if (_subscribed) {
@@ -285,8 +285,9 @@ namespace MomentumX {
         // convenience wrapper
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
 
+        const size_t iteration = stream->_last_iteration + 1;
+
         if (stream->sync(control_lock)) {
-            const size_t iteration = stream->_last_iteration + 1;
             const size_t idx = inc(stream->_control->last_sent_index);
 
             auto& b = stream->_control->buffers.at(idx);
@@ -294,9 +295,6 @@ namespace MomentumX {
             const bool has_buffer = b.buffer_sync.checkout_write(control_lock, stream->_control->subscriber_count, std::chrono::milliseconds(200));
 
             if (has_buffer) {
-                stream->_last_iteration = iteration;      // update buffer iteration
-                stream->_control->last_sent_index = idx;  // update buffer index
-
                 auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, iteration);
                 auto del = [stream, idx](Stream::BufferState* state) {
                     // TODO: capture by shared_ptr, not raw pointer
@@ -316,10 +314,7 @@ namespace MomentumX {
                 const bool has_buffer = b.buffer_sync.checkout_write(control_lock, 0, std::chrono::seconds(0));
 
                 if (has_buffer) {
-                    ++stream->_last_iteration;                // update buffer iteration
-                    stream->_control->last_sent_index = idx;  // update buffer index
-
-                    auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, stream->_last_iteration);
+                    auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, iteration);
                     auto del = [stream, idx](Stream::BufferState* state) {
                         // TODO: capture by shared_ptr, not raw pointer
                         auto control_lock = stream->get_control_lock();
@@ -329,7 +324,7 @@ namespace MomentumX {
                     };
                     return std::shared_ptr<Stream::BufferState>(ptr, del);
                 }
-                ++idx;
+                idx = inc(idx);
             } while (idx != beg);  // stop if we cycle all the way around back to the start
         }
         return nullptr;
@@ -350,10 +345,13 @@ namespace MomentumX {
             Utils::Logger::get_logger().warning("Sending buffer state without having set data_size property");
         }
 
+        const size_t iteration = buffer_state.iteration;
         const size_t idx = buffer_state.buffer_id;
 
         auto& b = stream->_control->buffers.at(idx);
         b.buffer_sync.mark_sent(control_lock);
+        stream->_last_iteration = iteration;      // update buffer iteration
+        stream->_control->last_sent_index = idx;  // update buffer index
         b.buffer_state = buffer_state;
         return true;
     }
@@ -373,33 +371,54 @@ namespace MomentumX {
                                                                              Stream::Lock& control_lock,
                                                                              Stream* stream,
                                                                              uint64_t minimum_timestamp) {
+        if (!control_lock.owns()) {
+            throw std::logic_error("bingo");
+        }
+
         // convenience wrapper
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
         const auto dec = [&](size_t idx) { return ControlBlock::wrapping_decrement(idx, stream->_control->buffer_count); };
 
-        const size_t last_processed_idx = stream->_last_index;
-        const size_t last_available_idx = stream->_control->last_sent_index;
-        const size_t last_processed_iteration = stream->_last_iteration;
-        const size_t last_available_iteration = stream->_control->buffers.at(last_available_idx).buffer_state.iteration;
-        if (last_available_iteration == last_processed_iteration) {
+        const size_t last_read_idx = stream->_last_index;
+        const size_t last_sent_idx = stream->_control->last_sent_index;
+        const size_t last_read_iteration = stream->_last_iteration;
+        const size_t last_sent_iteration = stream->_control->buffers.at(last_sent_idx).buffer_state.iteration;
+        if (last_sent_iteration == last_read_iteration) {
             return nullptr;  // TODO: block once we've caught up, instead of just bailing like we are now
         }
 
-        size_t next_idx = ControlBlock::wrapping_increment(last_processed_idx, stream->_control->buffer_count);
-        size_t next_iteration = last_processed_iteration + 1;
+        size_t next_idx = ControlBlock::wrapping_increment(last_read_idx, stream->_control->buffer_count);
+        size_t next_expected_iteration = last_read_iteration + 1;
+
+        MX_TRACE_ITEM(last_read_iteration)
+        MX_TRACE_ITEM(last_sent_iteration)
+        MX_TRACE_ITEM(next_idx)
+        MX_TRACE_ITEM(next_expected_iteration)
 
         auto b = std::ref(stream->_control->buffers.at(next_idx));
 
         // In the simple case, the next buffer (sequentially) is used.
         // If that's not the case, we'll have to search for the next available buffer.
         // NOTE: `sync` mode requires each buffer to be used sequentially, so this is effectively a no-op in `sync` mode.
-        if (b.get().buffer_state.iteration != next_iteration) {
-            std::vector<LockableBufferState*> v;
-            std::for_each(stream->_control->buffers.begin(), stream->_control->buffers.end(), [&](auto& lbstate) { v.push_back(&lbstate); });
-            std::sort(v.begin(), v.end(), [](const auto* lhs, const auto* rhs) { return lhs->buffer_state.iteration < rhs->buffer_state.iteration; });
-            const auto it = std::find_if(v.begin(), v.end(), [&](const auto* lbstate) { return next_iteration <= lbstate->buffer_state.iteration; });
+        const bool next_idx_matches_next_iteration = b.get().buffer_state.iteration == next_expected_iteration;
+        if (next_idx_matches_next_iteration) {
+            // nothing to do, next is correct
+        } else {
+            if (stream->_sync) {
+                throw std::runtime_error("Streaming search routine triggered in sync case");
+            }
 
-            if (it == v.end()) {
+            // streaming case where we need to search
+            std::vector<LockableBufferState*> sorted_bufs;
+            std::for_each(stream->_control->buffers.begin(), stream->_control->buffers.end(), [&](auto& lbstate) { sorted_bufs.push_back(&lbstate); });
+            std::sort(sorted_bufs.begin(), sorted_bufs.end(),
+                      [](const auto* lhs, const auto* rhs) { return lhs->buffer_state.iteration < rhs->buffer_state.iteration; });
+
+            // search sorted buffers for smallest iteration that is greater than (or equal to) expected
+            const auto it = std::find_if(sorted_bufs.begin(), sorted_bufs.end(),
+                                         [&](const auto* lbstate) { return next_expected_iteration <= lbstate->buffer_state.iteration; });
+
+            if (it == sorted_bufs.end()) {
                 throw std::logic_error("Unable to find buffer with expected iteration");
             }
 
@@ -412,7 +431,7 @@ namespace MomentumX {
             return nullptr;
         }
         stream->_last_index = next_idx;
-        stream->_last_iteration = next_iteration;
+        stream->_last_iteration = next_expected_iteration;
 
         const auto buffer_id = b.get().buffer_state.buffer_id;
         const auto ptr = new Stream::BufferState(b.get().buffer_state);

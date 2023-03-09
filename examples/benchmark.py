@@ -30,7 +30,7 @@ def consumer(cancel: threading.Event) -> None:
 
 def producer(cancel: threading.Event) -> None:
     global send_counter
-    stream = mx.Producer(STREAM, 100, 100, True, cancel)
+    stream = mx.Producer(STREAM, 100, 10, True, cancel)
     while not cancel.is_set():
         if stream.send_string(str(send_counter)):
             send_counter += 1
