@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <boost/interprocess/creation_tags.hpp>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <iostream>
@@ -23,6 +24,8 @@
 #include "utils.h"
 
 namespace MomentumX {
+
+    using init_bool = std::atomic_bool;
 
     Stream::Stream(const Utils::PathConfig& paths, size_t buffer_size, size_t buffer_count, bool sync, Stream::Role role)
         : _paths(paths),
@@ -55,23 +58,23 @@ namespace MomentumX {
         _control = reinterpret_cast<ControlBlock*>(_data);
         if (_role == PRODUCER) {
             new (_control) ControlBlock();  // placement construct into shared memory
+            const auto control_lock = get_control_lock();
             _control->sync = sync;
             _control->buffer_size = buffer_size;
             _control->buffer_count = buffer_count;
-            // _control->last_sent_index = ControlBlock::wrapping_decrement(buffer_count, buffer_count);  // first increment goes to zero
+            Utils::Logger::get_logger().info(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
             const auto control_lock = get_control_lock();
+            if (!_control->is_ready()) {
+                throw std::runtime_error("Attempt to open stream before it is ready");
+            }
             _control->subscriber_count++;
             if (_control->sync) {
                 _last_index = _control->last_sent_index;
                 _last_iteration = _control->last_sent_iteration();
             }
             _subscribed = true;
-        }
 
-        if (_role == PRODUCER) {
-            Utils::Logger::get_logger().info(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
-        } else {
             Utils::Logger::get_logger().info(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
 

@@ -308,6 +308,12 @@ namespace MomentumX {
         mutable Utils::OmniMutex control_mutex{};
         Utils::StaticVector<LockableBufferState, MAX_BUFFERS> buffers{};
 
+        inline bool is_ready() const {
+            const bool has_some = buffers.size() != 0;
+            const bool has_all = buffers.size() == buffer_count;
+            return has_some && has_all;
+        }
+
         inline const uint64_t& last_sent_iteration() const { return buffers.at(last_sent_index).buffer_state.iteration; }
         inline uint64_t& last_sent_iteration() { return buffers.at(last_sent_index).buffer_state.iteration; }
 
@@ -332,7 +338,7 @@ namespace MomentumX {
 
         inline std::string to_string() const {
             std::stringstream ss;
-            ss << *this;
+            ss << dumps();
             return ss.str();
         }
     };
