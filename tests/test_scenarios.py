@@ -377,7 +377,7 @@ def test_synced_buffers() -> None:
 
     buffer_count = 5
 
-    with timeout_event(timeout=1e6) as event:
+    with timeout_event(timeout=5) as event:
         producer = mx.Producer(_STREAM_NAME, 1, buffer_count, True, event)
         consumer = mx.Consumer(_STREAM_NAME, event)
 
@@ -398,7 +398,7 @@ def test_synced_buffers() -> None:
 
             assert not event.is_set(), "Test timed out before making assertions"
 
-            assert tx_buffer.buffer_id == n % n  # old buffer 5 maps to actual buffer 0
+            assert tx_buffer.buffer_id == n %  buffer_count # old buffer 5 maps to actual buffer 0
 
             print('\n-- write')
             tx_buffer.write(n.to_bytes(1, 'big'))
@@ -530,7 +530,7 @@ def test_synced_buffers_many_read_after_many_write() -> None:
         for n in range(1, buffer_count + 1):
             rx_buffer = consumer.receive()
             assert not event.is_set(), "Consumer receive timed out"
-            assert rx_buffer.buffer_id == n
+            assert rx_buffer.buffer_id == n % buffer_count
             data = rx_buffer.read()
             assert data == n.to_bytes(1, 'big')
             rx_buffer.release()
