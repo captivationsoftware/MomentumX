@@ -679,7 +679,7 @@ def test_grab_oldest()->None:
         b1 = consumer.receive()
         b2 = consumer.receive()
         assert b3.buffer_id == 3
-        assert b5.buffer_id == 5% 5 # wrap-around
+        assert b5.buffer_id == 5 % 5 # wrap-around
         assert b1.buffer_id == 1
         assert b2.buffer_id == 2
         assert b3[0] == bytes([60])
@@ -694,6 +694,63 @@ def test_grab_oldest()->None:
         push(100)
         b_last = consumer.receive()
         assert b_last.buffer_id == 4
+
+
+def test_register_during_write()->None:
+    pass
+
+def test_register_during_read()->None:
+    pass
+
+def test_unregister_during_write_claim()->None:
+    import momentumx as mx
+    with timeout_event(1e6) as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)
+        consumer_1 = mx.Consumer(_STREAM_NAME)
+        consumer_2 = mx.Consumer(_STREAM_NAME)
+
+        assert producer.subscriber_count == 2
+
+        buf_in1 = producer.next_to_send()
+        buf_in1[:3] = b'001'
+        assert buf_in1.buffer_id == 1
+        
+        del consumer_1
+        assert producer.subscriber_count == 1
+
+        buf_in1.send()
+        buf_out1 = consumer_2.receive()
+        assert buf_out1.buffer_id == 1
+        assert buf_out1[:3] == b'001'
+        del buf_in1
+        del buf_out1
+
+        buf_in2 = producer.next_to_send()
+        buf_in2[:3] = b'002'
+        assert buf_in2.buffer_id == 2 % 2
+
+        buf_in2.send()
+        buf_out2 = consumer_2.receive()
+        assert buf_out2.buffer_id == 2 % 2
+        assert buf_out2[:3] == b'002'
+        del buf_in2
+        del buf_out2
+
+        # This is the test here.
+        # Verify that a previously subscribed consumer properly decrements the
+        # required_subscribers counter (ie, writer won't wait for an 
+        # unsubscribed reader to acknowledge).
+        buf_in3 = producer.next_to_send()
+        buf_in3[:3] = b'003'
+        assert buf_in3.buffer_id == 3 % 2
+
+        buf_in3.send()
+        buf_out3 = consumer_2.receive()
+        assert buf_out3.buffer_id == 3 % 2
+        assert buf_out3[:3] == b'003'
+
+def test_unregister_during_read()->None:
+    pass
 
 
 if __name__ == "__main__":

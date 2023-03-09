@@ -292,7 +292,7 @@ namespace MomentumX {
 
             auto& b = stream->_control->buffers.at(idx);
             auto& bs = b.buffer_state;
-            const bool has_buffer = b.buffer_sync.checkout_write(control_lock, stream->_control->subscriber_count, std::chrono::milliseconds(200));
+            const bool has_buffer = b.buffer_sync.checkout_write(control_lock, std::chrono::milliseconds(200));
 
             if (has_buffer) {
                 auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, iteration);
@@ -311,7 +311,7 @@ namespace MomentumX {
             do {
                 auto& b = stream->_control->buffers.at(idx);
                 auto& bs = b.buffer_state;
-                const bool has_buffer = b.buffer_sync.checkout_write(control_lock, 0, std::chrono::seconds(0));
+                const bool has_buffer = b.buffer_sync.checkout_write(control_lock, std::chrono::seconds(0));
 
                 if (has_buffer) {
                     auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, iteration);
@@ -349,7 +349,7 @@ namespace MomentumX {
         const size_t idx = buffer_state.buffer_id;
 
         auto& b = stream->_control->buffers.at(idx);
-        b.buffer_sync.mark_sent(control_lock);
+        b.buffer_sync.mark_sent(control_lock, stream->_control->subscriber_count);
         stream->_last_iteration = iteration;      // update buffer iteration
         stream->_control->last_sent_index = idx;  // update buffer index
         b.buffer_state = buffer_state;

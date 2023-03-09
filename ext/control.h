@@ -92,9 +92,7 @@ namespace MomentumX {
             return CheckoutResult::SUCCESS;
         }
 
-        bool checkout_write(Utils::OmniWriteLock& control_lock,
-                            size_t required_acknowledgements,
-                            std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
+        bool checkout_write(Utils::OmniWriteLock& control_lock, std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
             assert_owns(control_lock);
 
             const bool can_checkout = _checkin_cond.timed_wait(control_lock, ptimeout(timeout), [&] {
@@ -110,16 +108,16 @@ namespace MomentumX {
                 ++_active_writers;
                 _done_readers = 0;
                 _done_writers = 0;
-                _required_readers = required_acknowledgements;
                 return true;
             }
 
             return false;
         }
 
-        void mark_sent(Utils::OmniWriteLock& control_lock) {
+        void mark_sent(Utils::OmniWriteLock& control_lock, size_t required_acknowledgements) {
             assert_owns(control_lock);
             _is_sent = true;
+            _required_readers = required_acknowledgements;
         }
 
         void checkin_read(Utils::OmniWriteLock& control_lock) {

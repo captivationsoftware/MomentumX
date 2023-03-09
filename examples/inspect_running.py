@@ -12,5 +12,4 @@ fnames = filter(lambda f: f.endswith(f_end), fnames)
 for f in fnames:
     stream_name = f[len(f_beg) : -len(f_end)]
     ins = mx.Inspector(stream_name)
-    ins.check_locks()
     print(ins.control_snapshot(), flush=True)
