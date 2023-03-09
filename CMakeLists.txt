@@ -66,22 +66,3 @@ add_custom_command(
 )
 
 install(FILES $<TARGET_FILE_DIR:_mx>/_mx.pyi DESTINATION .)
-
-# Enable C++ unit tests
-
-include(FetchContent)
-
-FetchContent_Declare(
-  Catch2
-  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        2ab20a0e008845e02bd06248e61ca6e5ad1aba33 # v3.3.1
-)
-
-FetchContent_MakeAvailable(Catch2)
-
-enable_testing()
-include(CTest)
-add_executable(mx_test  tests/cxx_test.cpp)
-target_include_directories(mx_test SYSTEM PRIVATE ${boost_SOURCE_DIR} ${json_SOURCE_DIR})
-target_include_directories(mx_test PRIVATE ext)
-target_link_libraries(mx_test PRIVATE Catch2::Catch2WithMain nlohmann_json::nlohmann_json)

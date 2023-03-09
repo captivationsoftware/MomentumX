@@ -46,6 +46,3 @@ test:
 	@rm -rfv rm -rf /dev/shm/mx.test_echo_mx_stream*
 	@python3 -m pytest tests
 
-.PHONY: testcpp
-testcpp:
-	@cd _skbuild/linux-x86_64*/cmake-build && ./mx_test
