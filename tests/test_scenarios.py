@@ -806,6 +806,19 @@ def test_unregister_during_sync_write_claim()->None:
             producer.send_string(v)
             assert consumer_3.receive_string() == v
 
+def test_slow_consumer_streaming()->None:
+    import momentumx as mx
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 3, False, event)
+        consumer = mx.Consumer(_STREAM_NAME)
+
+        for v in ('1', '2', '3'):
+            producer.send_string(v)
+        assert consumer.receive_string() == '1'
+
+        for v in ('4', '5', '6'):
+            producer.send_string(v)
+        assert consumer.receive_string() == '4'
 
 
 if __name__ == "__main__":
