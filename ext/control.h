@@ -9,6 +9,7 @@
 #include <boost/interprocess/sync/interprocess_sharable_mutex.hpp>
 #include <chrono>
 #include <ios>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <ostream>
 #include <sstream>
@@ -106,7 +107,6 @@ namespace MomentumX {
 
             if (can_checkout) {
                 _is_sent = false;
-                _is_skipped = false;
                 ++_active_writers;
                 _done_readers = 0;
                 _done_writers = 0;
@@ -120,11 +120,6 @@ namespace MomentumX {
         void mark_sent(Utils::OmniWriteLock& control_lock) {
             assert_owns(control_lock);
             _is_sent = true;
-        }
-
-        void mark_skipped(Utils::OmniWriteLock& control_lock) {
-            assert_owns(control_lock);
-            _is_skipped = true;
         }
 
         void checkin_read(Utils::OmniWriteLock& control_lock) {
@@ -154,7 +149,6 @@ namespace MomentumX {
             }
             --_active_writers;
             ++_done_writers;
-            _is_skipped = !_is_sent;
 
             _checkin_cond.notify_all();  // notify all readers
         }
@@ -196,6 +190,9 @@ namespace MomentumX {
             });
         }
 
+        std::string dumps(int64_t indent = 2) const;
+        friend void to_json(nlohmann::json& j, const BufferSync& bs);
+        friend std::ostream& operator<<(std::ostream& os, const BufferSync& x);
         inline friend std::ostream& operator<<(std::ostream& os, const BufferSync& x) {
             os << "BufferSync: ";
             os << "{ is_sent: " << std::boolalpha << x._is_sent;
@@ -271,7 +268,6 @@ namespace MomentumX {
         Utils::OmniCondition _checkin_cond{};  ///< Conditional for awaiting buffer availability (in non-polling case)
         // State _state{State::WRITE_START};      ///< FSM state for tracking write-read transitions
         bool _is_sent{};             ///< Marks a buffer as ready to be read or written
-        bool _is_skipped{};          ///< Marks a buffer as skipped by writer (either due to hold)
         size_t _active_readers{};    ///< Number of readers to have active claim of buffer, zero or more
         size_t _active_writers{};    ///< Number of writers to have active claim of buffer, zero or One
         size_t _done_readers{};      ///< Number of readers to have read the buffer, zero or more
@@ -290,6 +286,9 @@ namespace MomentumX {
         BufferState buffer_state{};
         BufferSync buffer_sync{};
 
+        std::string dumps(int64_t indent = 2) const;
+        friend void to_json(nlohmann::json& j, const LockableBufferState& lbs);
+        friend std::ostream& operator<<(std::ostream& os, const LockableBufferState& lbs);
         inline friend std::ostream& operator<<(std::ostream& os, const LockableBufferState& x) {
             os << "LockableBufferState: ";
             os << "{ buffer_state: " << x.buffer_state;
@@ -311,6 +310,8 @@ namespace MomentumX {
         mutable Utils::OmniMutex control_mutex{};
         Utils::StaticVector<LockableBufferState, MAX_BUFFERS> buffers{};
 
+        std::string dumps(int64_t indent = 2) const;
+        friend void to_json(nlohmann::json& j, const ControlBlock& cb);
         inline friend std::ostream& operator<<(std::ostream& os, const ControlBlock& cb) {
             os << "ControlBlock: ";
             os << "{ sync: " << std::boolalpha << cb.sync;

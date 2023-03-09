@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <nlohmann/json_fwd.hpp>
 #include <shared_mutex>
 #include <sstream>
 
@@ -35,7 +36,6 @@ namespace MomentumX {
         Buffer(const Buffer&) = delete;
         Buffer& operator=(Buffer&&) = delete;
         Buffer& operator=(const Buffer&) = delete;
-
 
        private:
         friend class BufferManager;
@@ -67,6 +67,8 @@ namespace MomentumX {
         }
         inline friend bool operator!=(const BufferState& lhs, const BufferState& rhs) { return !(lhs == rhs); }
 
+        std::string dumps(int64_t indent = 2) const;
+        friend void to_json(nlohmann::json& j, const BufferState& bs);
         inline friend std::ostream& operator<<(std::ostream& os, const BufferState& b) {
             os << "{ buffer_id: " << b.buffer_id;
             os << ", buffer_size: " << b.buffer_size;
@@ -76,12 +78,6 @@ namespace MomentumX {
             os << ", iteration: " << b.iteration;
             os << "}";
             return os;
-        }
-
-        inline std::string to_string() const {
-            std::stringstream ss;
-            ss << *this;
-            return ss.str();
         }
     };
     static_assert(std::is_trivially_copy_assignable<BufferState>::value, "BufferState is placed in shared memory");

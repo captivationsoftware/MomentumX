@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
 
 #include "buffer.h"
 #include "utils.h"
@@ -134,6 +135,15 @@ namespace MomentumX {
         }
     }
 
+    std::string BufferState::dumps(int64_t indent) const {
+        return nlohmann::json(*this).dump(indent);
+    }
+
+    void to_json(nlohmann::json& j, const BufferState& bs) {
+        j = nlohmann::json{{"buffer_id", bs.buffer_id}, {"buffer_size", bs.buffer_size},       {"buffer_count", bs.buffer_count},
+                           {"data_size", bs.data_size}, {"data_timestamp", bs.data_timestamp}, {"iteration", bs.iteration}};
+    }
+
     std::shared_ptr<Buffer> BufferManager::allocate(const Lock& lock, const Utils::PathConfig& paths, uint16_t id, size_t size, bool create) {
         auto buffer = std::make_shared<Buffer>(paths, id, size, create);
         _buffers_by_stream[paths.stream_name].push_back(buffer);
@@ -173,4 +183,5 @@ namespace MomentumX {
     std::shared_ptr<Buffer> BufferManager::peek_next(const Lock& lock, const Utils::PathConfig& paths) {
         return _buffers_by_stream[paths.stream_name].front();
     }
+
 }  // namespace MomentumX
