@@ -356,12 +356,6 @@ namespace MomentumX {
                                           Stream::Lock& control_lock,
                                           Stream* stream,
                                           Stream::BufferState buffer_state) {
-        if (stream->sync(control_lock)) {
-            if (stream->_control->subscriber_count == 0) {
-                return false;
-            }
-        }
-
         if (buffer_state.data_size == 0) {
             Utils::Logger::get_logger().warning("Sending buffer state without having set data_size property");
         }

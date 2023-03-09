@@ -1,3 +1,4 @@
+from typing import Optional
 import momentumx as mx
 import threading
 import signal
@@ -11,9 +12,17 @@ stream = mx.Consumer(STREAM, cancel)
 
 mx.set_log_level(mx.LogLevel.INFO)
 
+prev_val: Optional[int] = None
+
 while stream.has_next:
     string = stream.receive_string()
     if string:
+        if prev_val is None:
+            prev_val = int(string)
+        else:
+            trial = int(string)
+            assert trial == prev_val + 1, "Counter error"
+            prev_val = trial
         print("Received:", string)
     else:
         if cancel.wait(0.5):
