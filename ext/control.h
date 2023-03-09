@@ -67,7 +67,7 @@ namespace MomentumX {
             const bool has_result = _checkin_cond.timed_wait(control_lock, ptimeout(timeout), [&] {
                 determined_state = get_state();  // store outside of lambda
                 switch (determined_state) {
-                    case State::READ_CLAIMED:  // fall-through - at least one othe reader
+                    case State::READ_CLAIMED:  // fall-through - at least one other reader
                     case State::SENT:          // fall-through - no readers yet
                     case State::SKIPPED:       // fall-through - writer skipped buffer entirely
                     case State::ACKNOWLEDGED:  // fall-through - always acknowledged for streaming case
@@ -308,6 +308,9 @@ namespace MomentumX {
         mutable Utils::OmniMutex control_mutex{};
         Utils::StaticVector<LockableBufferState, MAX_BUFFERS> buffers{};
 
+        inline const uint64_t& last_sent_iteration() const { return buffers.at(last_sent_index).buffer_state.iteration; }
+        inline uint64_t& last_sent_iteration() { return buffers.at(last_sent_index).buffer_state.iteration; }
+
         std::string dumps(int64_t indent = 2) const;
         friend void to_json(nlohmann::json& j, const ControlBlock& cb);
         inline friend std::ostream& operator<<(std::ostream& os, const ControlBlock& cb) {
@@ -318,6 +321,7 @@ namespace MomentumX {
             os << ", buffer_count: " << cb.buffer_count;
             os << ", subscribers: " << cb.subscriber_count;
             os << ", last_sent_index: " << cb.last_sent_index;
+            os << ", last_sent_iteration: " << cb.last_sent_iteration();
             os << ", buffers: " << cb.buffers;
             os << "}";
             return os;

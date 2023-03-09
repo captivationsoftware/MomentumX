@@ -696,13 +696,41 @@ def test_grab_oldest()->None:
         assert b_last.buffer_id == 4
 
 
-def test_register_during_write()->None:
-    pass
+def test_register_during_sync_write()->None:
+    import momentumx as mx
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 3, True, event)
+        consumer_1 = mx.Consumer(_STREAM_NAME)  # just to have a consumer
+
+        # cycle through buffers
+        producer.send_string("1") # buffer 1
+        assert consumer_1.receive_string() == '1'
+        producer.send_string("2") # buffer 2
+        assert consumer_1.receive_string() == '2'
+        producer.send_string("3") # buffer 0 (rollover)
+        assert consumer_1.receive_string() == '3'
+        producer.send_string("4") # buffer 1
+        assert consumer_1.receive_string() == '4'
+
+        # This is the test here.
+        # Verify registration can occur during a write claim
+        # and the consumer will grab the oldest buffer first
+        b = producer.next_to_send()
+        b[0] = b'5'
+        consumer_2 = mx.Consumer(_STREAM_NAME)
+        consumer_3 = mx.Consumer(_STREAM_NAME)
+        c2_str_1st = consumer_2.receive_string(blocking=False)
+        assert not c2_str_1st # Pickup from next available
+        b.send()
+        c2_str_2nd = consumer_2.receive_string()
+        c3_str_1st = consumer_3.receive_string()
+        assert c2_str_2nd == '5'
+        assert c3_str_1st == '5' # Last sent buffer value
 
 def test_register_during_read()->None:
     pass
 
-def test_unregister_during_write_claim()->None:
+def test_unregister_during_sync_write_claim()->None:
     import momentumx as mx
     with timeout_event(1e6) as event:
         producer = mx.Producer(_STREAM_NAME, 20, 2, True, event)

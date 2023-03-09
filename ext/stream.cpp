@@ -62,6 +62,10 @@ namespace MomentumX {
         } else {
             const auto control_lock = get_control_lock();
             _control->subscriber_count++;
+            if (_control->sync) {
+                _last_index = _control->last_sent_index;
+                _last_iteration = _control->last_sent_iteration();
+            }
             _subscribed = true;
         }
 
@@ -371,10 +375,6 @@ namespace MomentumX {
                                                                              Stream::Lock& control_lock,
                                                                              Stream* stream,
                                                                              uint64_t minimum_timestamp) {
-        if (!control_lock.owns()) {
-            throw std::logic_error("bingo");
-        }
-
         // convenience wrapper
         const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, stream->_control->buffer_count); };
         const auto dec = [&](size_t idx) { return ControlBlock::wrapping_decrement(idx, stream->_control->buffer_count); };
@@ -389,11 +389,6 @@ namespace MomentumX {
 
         size_t next_idx = ControlBlock::wrapping_increment(last_read_idx, stream->_control->buffer_count);
         size_t next_expected_iteration = last_read_iteration + 1;
-
-        MX_TRACE_ITEM(last_read_iteration)
-        MX_TRACE_ITEM(last_sent_iteration)
-        MX_TRACE_ITEM(next_idx)
-        MX_TRACE_ITEM(next_expected_iteration)
 
         auto b = std::ref(stream->_control->buffers.at(next_idx));
 
