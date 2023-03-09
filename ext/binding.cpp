@@ -564,7 +564,5 @@ PYBIND11_MODULE(_mx, m) {
         .def("__repr__", &MomentumX::ControlBlock::to_string);
     py::class_<MomentumX::Inspector>(m, "Inspector")  // TODO: put in submodule
         .def(py::init<const std::string&>(), "stream_name")
-        // .def("view_control", &MomentumX::Inspector::view_control_block)
-        .def("control_snapshot", &MomentumX::Inspector::control_snapshot, "require_lock"_a = true)
-        .def("check_locks", &MomentumX::Inspector::check_locks);
+        .def("control_snapshot", &MomentumX::Inspector::control_snapshot, "timeout"_a = 0.5);
 }

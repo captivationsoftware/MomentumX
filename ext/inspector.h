@@ -1,6 +1,8 @@
 #ifndef MOMENTUMX_INSPECTOR_H
 #define MOMENTUMX_INSPECTOR_H
 
+#include <boost/date_time/posix_time/posix_time_duration.hpp>
+#include <boost/date_time/posix_time/posix_time_types.hpp>
 #include <iomanip>
 #include <ios>
 #include <limits>
@@ -35,41 +37,18 @@ namespace MomentumX {
 
         std::shared_ptr<ControlBlockHandle> view_control_block() const { return std::make_shared<ControlBlockHandle>(paths); }
 
-        std::string control_snapshot(bool require_read_lock = true) const {
+        std::string control_snapshot(float timeout_seconds = 0.5) const {
             const auto control_block_handle = view_control_block();
-            Utils::OmniWriteLock control_lock(control_block_handle->control_block->control_mutex);
-            const std::string s = control_block_handle->control_block->to_string();
 
-            return s;
-        }
+            Utils::OmniWriteLock control_lock(control_block_handle->control_block->control_mutex, bip::defer_lock);
+            const auto now = boost::posix_time::microsec_clock::universal_time();
+            const auto offs = boost::posix_time::microseconds(static_cast<int64_t>(timeout_seconds * 1e6));
+            const auto ptimeout = now + offs;
+            if (!control_lock.timed_lock(ptimeout)) {
+                return "error: unable to lock control block";
+            }
 
-        void check_locks() const {
-            const int name_width = paths.buffer_mutex_name(std::numeric_limits<uint16_t>::max()).size();
-
-            auto check_single = [&](const std::string& id, Utils::OmniMutex& m) {
-                // const bool can_rlock = [&] { return Utils::OmniReadLock(m, boost::interprocess::defer_lock).try_lock(); }();
-                // const bool can_wlock = [&] { return Utils::OmniWriteLock(m, boost::interprocess::defer_lock).try_lock(); }();
-                // Utils::OmniWriteLock write_lock(m, boost::interprocess::defer_lock);
-
-                // std::stringstream ss;
-                // ss << "id:" << std::setw(name_width) << id;
-                // ss << ", r:" << std::setw(5) << std::boolalpha << can_rlock;
-                // ss << ", w:" << std::setw(5) << std::boolalpha << can_wlock;
-                // std::cout << ss.str() << std::endl;
-            };
-            std::cout << "check_locks temporarily disabled" << std::endl;
-
-            // const auto control = control_snapshot();
-            // check_single(paths.stream_mutex, control->control_mutex);
-
-            // const auto beg = control.buffers.begin();
-            // const auto end = control.buffers.end();
-            // for (auto it = beg; it != end; ++it) {
-            //     const int16_t buffer_id = it->buffer_id;
-            //     const auto mutex_name = paths.buffer_mutex_name(it->buffer_id);
-            //     Utils::OmniMutex mutex(boost::interprocess::open_only, mutex_name.c_str());
-            //     check_single(mutex_name, mutex);
-            // }
+            return control_block_handle->control_block->to_string();
         }
 
        private:
