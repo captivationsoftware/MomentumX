@@ -794,11 +794,16 @@ def test_unregister_during_sync_write_claim()->None:
         del consumer_1
         assert consumer_2.receive_string() == '4'
         assert consumer_3.receive_string() == '4'
+        
+        b=producer.next_to_send()
+        b[0] = b'5'
+        del consumer_2
+        b.send()
+        assert consumer_3.receive_string() == '5'
 
         # Verify can continue working after losing a consumer
-        for v in ('5', '6', '7', '8', '9', '10'):
+        for v in ('6', '7', '8', '9', '10', '11', '12'):
             producer.send_string(v)
-            assert consumer_2.receive_string() == v
             assert consumer_3.receive_string() == v
 
 
