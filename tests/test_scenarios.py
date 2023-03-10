@@ -808,5 +808,26 @@ def test_unregister_during_sync_write_claim()->None:
 
 
 
+def test_increment_streaming()->None:
+    import momentumx as mx
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 3, 10, False, event)
+        consumer = mx.Consumer(_STREAM_NAME)
+
+        for v in range(10):
+            producer.send_string(str(v))
+
+        buffer = consumer.receive()
+        assert buffer.iteration == 1
+        buffer.release()
+
+        for v in range(10, 20):
+            producer.send_string(str(v))
+
+        for v in range(11, 21):
+            buffer = consumer.receive()
+            assert buffer.iteration == v
+
+
 if __name__ == "__main__":
-    test_grab_oldest()
+    test_increment_streaming()
