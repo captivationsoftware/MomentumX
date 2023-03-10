@@ -124,7 +124,7 @@ while stream.has_next:
 ```
 
 #### Iterator Syntax
-Buffer interaction syntax can be improved with syntactic sugar using `iter()` builtin:
+Working with buffers is even easier using `iter()` builtin:
 ```python
 import momentumx as mx
 
