@@ -367,7 +367,8 @@ namespace MomentumX {
         const size_t idx = buffer_state.buffer_id;
 
         auto& b = stream->_control->buffers.at(idx);
-        b.buffer_sync.mark_sent(control_lock, stream->_control->subscriber_count);
+        const size_t required_readers = stream->_control->sync ? stream->_control->subscriber_count : 0;
+        b.buffer_sync.mark_sent(control_lock, required_readers);
         stream->_last_iteration = iteration;      // update buffer iteration
         stream->_control->last_sent_index = idx;  // update buffer index
         b.buffer_state = buffer_state;
