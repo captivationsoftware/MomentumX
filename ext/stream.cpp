@@ -440,8 +440,8 @@ namespace MomentumX {
         if (!has_buffer) {
             return nullptr;
         }
-        stream->_last_index = next_idx;
-        stream->_last_iteration = next_expected_iteration;
+        stream->_last_index = b.get().buffer_state.buffer_id;
+        stream->_last_iteration = b.get().buffer_state.iteration;
 
         const auto buffer_id = b.get().buffer_state.buffer_id;
         const auto ptr = new Stream::BufferState(b.get().buffer_state);
