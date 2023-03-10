@@ -22,7 +22,7 @@
 ### Examples:
 Below are some simplified use cases for common MomentumX workflows. Consult the examples in the `examples/` directory for additional details and implementation guidance.
 
-#### Streaming Mode
+#### Stream Mode
 ```python
 # Producer Process
 import momentumx as mx
@@ -70,7 +70,7 @@ while stream.has_next:
         # See also "Implicit versus Explicit Buffer Release" section below.
 ```
 
-#### Syncronous Mode
+#### Sync Mode
 ```python
 # Producer Process
 import momentumx as mx
