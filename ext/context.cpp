@@ -79,12 +79,6 @@ namespace MomentumX {
         return buffer_state;
     }
 
-    void Context::flush(Stream* stream) {
-        const auto sm_lock = _stream_manager.get_stream_manager_lock();
-        const auto ct_lock = _stream_manager.get_control_lock(*stream);
-        _stream_manager.flush_buffer_state(sm_lock, ct_lock, stream);
-    }
-
     void Context::release(Stream* stream, const Stream::BufferState& buffer_state) {
         const auto sm_lock = _stream_manager.get_stream_manager_lock();
         const auto ct_lock = _stream_manager.get_control_lock(*stream);

@@ -123,11 +123,11 @@ struct BufferShim {
         }
     }
 
-    py::bytes get_byte(size_t index) const {
+    uint8_t get_byte(size_t index) const {
         if (index >= buffer_size()) {
             throw DataOverflowException();
         }
-        return reinterpret_cast<const char*>(data() + index * sizeof(char));
+        return data()[index];
     }
 
     py::bytes get_bytes(py::slice slice) const {
@@ -158,9 +158,9 @@ struct BufferShim {
         return bytes;
     }
 
-    void set_byte(size_t index, const py::bytes value) {
+    void set_byte(size_t index, const uint8_t value) {
         seek(index);
-        write(value);
+        write(std::string(reinterpret_cast<const char*>(&value), 1));        
     }
 
     void set_bytes(py::slice slice, const py::bytes value) {
@@ -363,14 +363,6 @@ struct StreamShim {
         return {};
     }
 
-    auto flush() -> void {
-        try {
-            return ctx->flush(stream.get());
-        } catch (std::exception& ex) {
-            Logger::get_logger().error(ex.what());
-        }
-    }
-
     auto send_string(const std::string& str, bool blocking, bool release) -> bool {
         std::shared_ptr<BufferShim> buffer = next_to_send(blocking);
         if (!buffer) {
@@ -387,10 +379,10 @@ struct StreamShim {
         return buffer->send(str.size(), release);
     }
 
-    auto receive_string(uint64_t minimum_ts, bool blocking) -> std::string {
+    auto receive_string(uint64_t minimum_ts, bool blocking) -> std::optional<std::string> {
         std::shared_ptr<ReadBufferShim> buffer = receive(minimum_ts, blocking);
         if (!buffer) {
-            return "";
+            return {};
         }
 
         char* data = reinterpret_cast<char*>(buffer->data());
@@ -532,7 +524,6 @@ PYBIND11_MODULE(_mx, m) {
         .def(py::init(&producer_stream), "stream_name"_a, "buffer_size"_a, "buffer_count"_a, "sync"_a = false, "cancel_event"_a = std::optional<py::object>(),
              "polling_interval"_a = 0.010, "context"_a = "/dev/shm")
         .def("next_to_send", &ProducerStreamShim::next_to_send, "blocking"_a = true)
-        .def("flush", &ProducerStreamShim::flush)
         .def("send_string", &ProducerStreamShim::send_string, "message"_a, py::kw_only(), "blocking"_a = true, "release"_a = true)
         .def("end", &ProducerStreamShim::end)
         .def_property_readonly("subscriber_count", &ProducerStreamShim::subscriber_count)
@@ -547,7 +538,6 @@ PYBIND11_MODULE(_mx, m) {
         .def(py::init(&consumer_stream), "stream_name"_a, "cancel_event"_a = std::optional<py::object>(), "polling_interval"_a = 0.010,
              "context"_a = "/dev/shm")
         .def("receive", &ConsumerStreamShim::receive, "minimum_ts"_a = 1, "blocking"_a = true)
-        .def("flush", &ConsumerStreamShim::flush)
         .def("receive_string", &ConsumerStreamShim::receive_string, "minimum_ts"_a = 1, "blocking"_a = true)
         .def_property_readonly("buffer_count", &ConsumerStreamShim::buffer_count)
         .def_property_readonly("buffer_size", &ConsumerStreamShim::buffer_size)

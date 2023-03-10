@@ -208,14 +208,38 @@ def test_buffer_file_api_consumer() -> None:
     rx_buffer.seek(0)
     assert rx_buffer.read() == b'foobar'
 
-def test_single_getitem_setitem_producer() -> None:
+def test_buffer_read_indexing_operator() -> None:
+    import momentumx as mx
+
+    test_str = b'foo'
+    
+    producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
+    tx_buffer = producer.next_to_send()
+
+    tx_buffer.write(test_str)
+    for index, byte in enumerate(test_str):
+        assert tx_buffer[index] == byte
+    tx_buffer.send()
+
+    consumer = mx.Consumer(_STREAM_NAME)
+    rx_buffer = consumer.receive()
+    for index, byte in enumerate(test_str):
+        assert rx_buffer[index] == byte
+
+
+def test_buffer_read_indexing_operator_correct_send_size() -> None:
     import momentumx as mx
 
     producer = mx.Producer(_STREAM_NAME, PAGESIZE, 1, False)
-    buffer = producer.next_to_send()
-    buffer[0] = b'a' # set
-    assert buffer[0] == b'a'
-    del producer
+    tx_buffer = producer.next_to_send()
+
+    tx_buffer[2] = 97
+    tx_buffer.send()
+
+    consumer = mx.Consumer(_STREAM_NAME)
+    rx_buffer = consumer.receive()
+    assert rx_buffer.data_size == 3
+    assert rx_buffer[0:3] == b'\x00\x00a'
 
 def test_slice_getitem_setitem_producer() -> None:
     import momentumx as mx
@@ -432,7 +456,7 @@ def test_durable_ending():
         
         for n in range(1, buffer_count + 1):
             b = producer.next_to_send()
-            b[0] = bytes([n])
+            b[0] = n
             b.send()
 
         assert producer.is_ended == False
@@ -442,7 +466,7 @@ def test_durable_ending():
         for n in range(1, buffer_count + 1):
             assert consumer.has_next == True
             b = consumer.receive()
-            assert b[0] == bytes([n])
+            assert b[0] == n
         assert consumer.has_next == False
 
     
@@ -631,7 +655,7 @@ def test_grab_oldest()->None:
 
         def push(val: int) -> None:
             buf = producer.next_to_send()
-            buf[0] = bytes([val])
+            buf[0] = val
             buf.send()
 
         # First buffer should be in order
@@ -656,11 +680,11 @@ def test_grab_oldest()->None:
         assert b5.buffer_id == 5 % 5 # wrap-around
         assert b1.buffer_id == 1
         assert b2.buffer_id == 2
-        assert b3[0] == bytes([10])
-        assert b4[0] == bytes([20]) # value to be held
-        assert b5[0] == bytes([30])
-        assert b1[0] == bytes([40])
-        assert b2[0] == bytes([50])
+        assert b3[0] == 10
+        assert b4[0] == 20 # value to be held
+        assert b5[0] == 30
+        assert b1[0] == 40
+        assert b2[0] == 50
 
         # Retain a buffer, and purge remaining (out of order)
         del b5
@@ -682,13 +706,13 @@ def test_grab_oldest()->None:
         assert b5.buffer_id == 5 % 5 # wrap-around
         assert b1.buffer_id == 1
         assert b2.buffer_id == 2
-        assert b3[0] == bytes([60])
-        assert b5[0] == bytes([70])
-        assert b1[0] == bytes([80])
-        assert b2[0] == bytes([90])
+        assert b3[0] == 60
+        assert b5[0] == 70
+        assert b1[0] == 80
+        assert b2[0] == 90
 
         # verify b4 not modified
-        assert b4[0] == bytes([20])
+        assert b4[0] == 20
 
         del b4
         push(100)
@@ -716,7 +740,7 @@ def test_register_between_sync_write()->None:
         # Verify registration can occur during a write claim
         # and the consumer will grab the oldest buffer first
         b = producer.next_to_send()
-        b[0] = b'5'
+        b[0] = b'5'[0]
         consumer_2 = mx.Consumer(_STREAM_NAME)
         consumer_3 = mx.Consumer(_STREAM_NAME)
         c2_str_1st = consumer_2.receive_string(blocking=False)
@@ -796,7 +820,7 @@ def test_unregister_during_sync_write_claim()->None:
         assert consumer_3.receive_string() == '4'
         
         b=producer.next_to_send()
-        b[0] = b'5'
+        b[0] = b'5'[0]
         del consumer_2
         b.send()
         assert consumer_3.receive_string() == '5'

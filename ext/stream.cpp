@@ -274,8 +274,6 @@ namespace MomentumX {
 
     void StreamManager::destroy(const Lock& lock, Stream* stream) {
         _stream_by_name.erase(stream->name(stream->get_control_lock()));
-        _iteration_by_stream.erase(stream);
-        _current_buffer_by_stream.erase(stream);
         delete stream;
     }
 
@@ -452,14 +450,6 @@ namespace MomentumX {
         };
 
         return std::shared_ptr<Stream::BufferState>(ptr, del);
-    }
-
-    void StreamManager::flush_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream) {
-        if (stream->sync(control_lock)) {
-            Utils::Logger::get_logger().warning("Calling flush on a stream in sync mode is a no-op");
-        } else {
-            _iteration_by_stream[stream] = stream->buffer_states(control_lock, true).back().iteration;
-        }
     }
 
     void StreamManager::release_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, const Stream::BufferState& buffer_state) {

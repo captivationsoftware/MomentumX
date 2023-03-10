@@ -111,7 +111,6 @@ namespace MomentumX {
                                                                   Stream* stream,
                                                                   uint64_t minimum_timestamp = 1);
         bool has_next_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, uint64_t minimum_timestamp = 1);
-        void flush_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream);
         void release_buffer_state(const Lock& lock, const Stream::Lock& control_lock, Stream* stream, const Stream::BufferState& buffer_state);
         size_t subscriber_count(const Lock& lock, const Stream::Lock& control_lock, Stream* stream);
 
@@ -125,8 +124,6 @@ namespace MomentumX {
         BufferManager* _buffer_manager;
         std::map<std::string, Stream*> _stream_by_name;
         std::map<Stream*, std::list<std::shared_ptr<Buffer>>> _buffers_by_stream;
-        std::map<Stream*, std::shared_ptr<Buffer>> _current_buffer_by_stream;
-        std::map<Stream*, uint64_t> _iteration_by_stream;
         Mutex _stream_manager_mutex;
     };
 };  // namespace MomentumX

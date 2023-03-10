@@ -22,7 +22,7 @@
 ### Examples:
 Below are some simplified use cases for common MomentumX workflows. Consult the examples in the `examples/` directory for additional details and implementation guidance.
 
-#### Streaming Mode (e.g. lossy)
+#### Streaming Mode
 ```python
 # Producer Process
 import momentumx as mx
@@ -54,16 +54,23 @@ import momentumx as mx
 
 stream = mx.Consumer('my_stream')
 
-while True:
-    # Receive from the stream as long as the stream is available 
+# Receive from my_stream as long as the stream has not ended OR there are unread buffers 
+while stream.has_next:
+
+    # Block while waiting to receive buffer 
+    # NOTE: Non-blocking receive is possible using blocking=False keyword argument
     buffer = stream.receive()
-    print(buffer[:buffer.data_size])
     
-    # Calling `buffer.release()` not required. 
-    # See "Implicit versus Explicit Buffer Release" section below.
+    # If we are here, either the stream ended OR we have a buffer, so check...
+    if buffer is not None:
+
+        # We have buffer containing data, so print the entire contents
+        print(buffer.read(buffer.data_size))
+    
+        # See also "Implicit versus Explicit Buffer Release" section below.
 ```
 
-#### Syncronous Mode (e.g. lossless)
+#### Syncronous Mode
 ```python
 # Producer Process
 import momentumx as mx
@@ -108,10 +115,31 @@ import momentumx as mx
 stream = mx.Consumer('my_stream')
 
 while stream.has_next:
-    # Note: receiving strings is possible as well via the receive_string call
-    print(f"Received: {stream.receive_string()}")
+    data = stream.receive_string() 
+
+    if data is not None: 
+        # Note: receiving strings is possible as well via the receive_string call
+        print(f"Received: {data}")
 
 ```
+
+#### Iterator Syntax
+Buffer interaction syntax can be improved with syntactic sugar using `iter()` builtin:
+```python
+import momentumx as mx
+
+stream = mx.Consumer(STREAM)
+
+# Iterate over buffers in the stream until stream.receive() returns None
+for buffer in iter(stream.receive, None):     
+    # Now, buffer is guaranteed to be valid, so no check required -  
+    # go ahead and print all the contents again, this time using 
+    # the index and slice operators!
+    print(buffer[0])                    # print first byte
+    print(buffer[1:buffer.data_size])   # print remaining bytes
+
+```
+
 
 #### Numpy Integration
 ```python
@@ -126,7 +154,6 @@ buffer = stream.receive()
 
 # Create a numpy array directly from the memory without any copying
 np_buff = np.frombuffer(buffer, dtype=uint8)
-
 ```
 
 #### Implicit versus Explicit Buffer Release

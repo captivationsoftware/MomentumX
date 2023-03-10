@@ -28,7 +28,6 @@ namespace MomentumX {
         bool send(Stream* stream, const Stream::BufferState& buffer_state);
         bool can_receive(Stream* stream, uint64_t minimum_timestamp = 1);
         std::shared_ptr<Stream::BufferState> receive(Stream* stream, uint64_t minimum_timestamp = 1);
-        void flush(Stream* stream);
         void release(Stream* stream, const Stream::BufferState& buffer_state);
         uint8_t* data_address(Stream* stream, uint16_t buffer_id);
         size_t subscriber_count(Stream* stream);
