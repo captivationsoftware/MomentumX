@@ -35,8 +35,8 @@ buffer = stream.next_to_send()
 buffer.write(b'1') 
 # buffer data == b'1'
 
-# alternatively, set via array indexing...
-buffer[1] = b'2'
+# alternatively, set via array indexing using python ByteArray syntax...
+buffer[1] = ord('2')
 # buffer data == b'12'
 
 # or also set via python slice operator
