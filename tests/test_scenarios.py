@@ -744,12 +744,25 @@ def test_register_between_sync_write()->None:
         consumer_2 = mx.Consumer(_STREAM_NAME)
         consumer_3 = mx.Consumer(_STREAM_NAME)
         c2_str_1st = consumer_2.receive_string(blocking=False)
-        assert not c2_str_1st # Pickup from next available
+        assert c2_str_1st == '3' # Oldest available at time of subscribe
         b.send()
-        c2_str_2nd = consumer_2.receive_string()
-        c3_str_1st = consumer_3.receive_string()
-        assert c2_str_2nd == '5'
-        assert c3_str_1st == '5' # Last sent buffer value
+        c2_str_2nd = consumer_2.receive_string(blocking=False)
+        c2_str_3rd = consumer_2.receive_string(blocking=False)
+        c2_str_4th = consumer_2.receive_string(blocking=False)
+        c3_str_1st = consumer_3.receive_string(blocking=False)
+        c3_str_2nd = consumer_3.receive_string(blocking=False)
+        c3_str_3rd = consumer_3.receive_string(blocking=False)
+        c3_str_4th = consumer_3.receive_string(blocking=False)
+        assert c2_str_2nd == '4'
+        assert c2_str_3rd == '5'
+        assert c3_str_1st == '3' # Oldest available at time of subscribe
+        assert c3_str_2nd == '4'
+        assert c3_str_3rd == '5'
+
+        assert c2_str_4th is None # No more to receive
+        assert c3_str_4th is None # No more to receive
+
+
 
 def test_register_during_sync_write_claim()->None:
     import momentumx as mx

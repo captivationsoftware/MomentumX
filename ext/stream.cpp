@@ -64,14 +64,25 @@ namespace MomentumX {
             _control->buffer_count = buffer_count;
             Utils::Logger::get_logger().info(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            const auto control_lock = get_control_lock();
+            auto control_lock = get_control_lock();
             if (!_control->is_ready()) {
                 throw std::runtime_error("Attempt to open stream before it is ready");
             }
             _control->subscriber_count++;
             if (_control->sync) {
-                _last_index = _control->last_sent_index;
-                _last_iteration = _control->last_sent_iteration();
+                const auto index_iterations = _control->sorted_index_iterations(control_lock);
+                if (index_iterations.size() != 0) {
+                    // If any previous iterations, set to just before the oldest still-rechable buffer
+                    const auto dec = [&](size_t idx) { return ControlBlock::wrapping_decrement(idx, _control->buffer_count); };
+                    _last_index = dec(std::get<0>(index_iterations.at(0)));     // prevous index, so next increment places us at oldest
+                    _last_iteration = std::get<1>(index_iterations.at(0)) - 1;  // value when the previous increment was created
+
+                    for (auto ii : index_iterations) {
+                        const auto idx = std::get<0>(ii);
+                        auto& bsync = _control->buffers.at(idx).buffer_sync;
+                        bsync.inc_required(control_lock);
+                    }
+                }
             }
             _subscribed = true;
 
@@ -400,7 +411,7 @@ namespace MomentumX {
             return nullptr;  // TODO: block once we've caught up, instead of just bailing like we are now
         }
 
-        size_t next_idx = ControlBlock::wrapping_increment(last_read_idx, stream->_control->buffer_count);
+        size_t next_idx = inc(last_read_idx);
         size_t next_expected_iteration = last_read_iteration + 1;
 
         auto b = std::ref(stream->_control->buffers.at(next_idx));

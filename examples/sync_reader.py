@@ -21,7 +21,7 @@ while stream.has_next:
             prev_val = int(string)
         else:
             trial = int(string)
-            assert trial == prev_val + 1, "Counter error"
+            assert trial == prev_val + 1, f"Counter error: {trial} != {prev_val+1}"
             prev_val = trial
         print("Received:", string)
     else:

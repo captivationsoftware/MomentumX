@@ -1,6 +1,7 @@
 #ifndef MOMENTUMX_CONTROL_H
 #define MOMENTUMX_CONTROL_H
 
+#include <algorithm>
 #include <boost/container/static_vector.hpp>
 #include <boost/date_time/posix_time/posix_time_duration.hpp>
 #include <boost/date_time/posix_time/posix_time_types.hpp>
@@ -46,7 +47,7 @@ namespace MomentumX {
         BufferSync operator=(BufferSync&&) = delete;
         BufferSync operator=(const BufferSync&) = delete;
 
-        bool can_checkout_read(Utils::OmniWriteLock& control_lock, std::chrono::microseconds timeout = std::chrono::milliseconds(200)) {
+        bool can_checkout_read(Utils::OmniWriteLock& control_lock) const {
             assert_owns(control_lock);
 
             State determined_state = get_state();  // store outside of lambda
@@ -316,6 +317,24 @@ namespace MomentumX {
 
         inline const uint64_t& last_sent_iteration() const { return buffers.at(last_sent_index).buffer_state.iteration; }
         inline uint64_t& last_sent_iteration() { return buffers.at(last_sent_index).buffer_state.iteration; }
+
+        using IdxIter = std::tuple<size_t, uint64_t>;
+
+        /// Return all previous (but still reachable) buffer index/iteration pairs, sorted by iteration.
+        /// As long as iteration order corresponds to chronological order, this corresponds to the
+        /// still-rechable buffer history.
+        inline std::vector<IdxIter> sorted_index_iterations(Utils::OmniWriteLock& lock) const {
+            std::vector<IdxIter> ret;
+            for (size_t index = 0; index < buffers.size(); ++index) {
+                const uint64_t iteration = buffers.at(index).buffer_state.iteration;
+                const bool can_checkout = buffers.at(index).buffer_sync.can_checkout_read(lock); // prevent mutating write-locked buffer
+                if (iteration != 0 && can_checkout) {
+                    ret.push_back(std::make_tuple(index, buffers.at(index).buffer_state.iteration));
+                }
+            }
+            std::sort(std::begin(ret), std::end(ret), [](const IdxIter& a, const IdxIter& b) { return std::get<1>(a) < std::get<1>(b); });
+            return ret;
+        }
 
         std::string dumps(int64_t indent = 2) const;
         friend void to_json(nlohmann::json& j, const ControlBlock& cb);

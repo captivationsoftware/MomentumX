@@ -16,8 +16,11 @@ while stream.subscriber_count == 0:
     if cancel.wait(0.5):
         break
 
-for n in range(1, 500000):
+
+n = 0
+while not cancel.is_set() and  n < 500000:
     if stream.subscriber_count == 0:
         cancel.wait(0.5)
     elif stream.send_string(str(n)):
         print(f"Sent: {n}")
+        n += 1
