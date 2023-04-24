@@ -1,11 +1,11 @@
-import threading
+import multiprocessing
 import time
 
 import momentumx as mx
 
 STREAM = "mx://threaded"
 
-def consumer(cancel: threading.Event):
+def consumer(cancel: multiprocessing.Event):
     time.sleep(1)
     stream = mx.Consumer(STREAM, cancel)
 
@@ -16,7 +16,7 @@ def consumer(cancel: threading.Event):
     cancel.set()
 
 
-def producer(cancel: threading.Event):
+def producer(cancel: multiprocessing.Event):
     stream = mx.Producer(STREAM, 100, 10, True, cancel)
     while stream.subscriber_count == 0:
         if cancel.wait(0.1):
@@ -30,9 +30,9 @@ def producer(cancel: threading.Event):
     time.sleep(1)
 
 
-cancel = threading.Event()
-t1 = threading.Thread(target=consumer, args=(cancel,))
-t2 = threading.Thread(target=producer, args=(cancel,))
+cancel = multiprocessing.Event()
+t1 = multiprocessing.Process(target=consumer, args=(cancel,))
+t2 = multiprocessing.Process(target=producer, args=(cancel,))
 
 t1.start()
 t2.start()

@@ -1,3 +1,3 @@
 [build-system]
-requires = ["setuptools", "mypy", "pybind11", "scikit-build", "cmake"]
+requires = ["setuptools", "mypy", "pybind11==2.9.2", "scikit-build", "cmake"]
 build-backend = "setuptools.build_meta"
