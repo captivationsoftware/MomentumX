@@ -33,8 +33,6 @@ struct ReadBufferShim;
 struct StreamShim;
 struct WriteBufferShim;
 
-static py::bytes END_OF_STREAM{"END_OF_STREAM"};
-
 struct StreamExistsException : public std::exception {
     const char* what() const noexcept override { return "Stream already exists"; }
 };
