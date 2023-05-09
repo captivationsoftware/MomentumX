@@ -39,7 +39,7 @@ namespace MomentumX {
        public:
         enum class CheckoutResult : uint8_t { SUCCESS, TIMEOUT, SKIPPED };
 
-        explicit BufferSync(bool disable_condition) : _checkin_cond(disable_condition) {}
+        BufferSync() = default;
         ~BufferSync() = default;
 
         BufferSync(BufferSync&&) = delete;
@@ -275,7 +275,7 @@ namespace MomentumX {
     };
 
     struct LockableBufferState {
-        explicit LockableBufferState(const BufferState& state, bool disable_condition) : buffer_state(state), buffer_sync(disable_condition) {}
+        explicit LockableBufferState(const BufferState& state) : buffer_state(state) {}
         ~LockableBufferState() = default;
         LockableBufferState(LockableBufferState&&) = delete;
         LockableBufferState(const LockableBufferState&) = delete;
@@ -283,7 +283,7 @@ namespace MomentumX {
         LockableBufferState& operator=(const LockableBufferState&) = delete;
 
         BufferState buffer_state{};
-        BufferSync buffer_sync{false};
+        BufferSync buffer_sync{};
 
         std::string dumps(int64_t indent = 2) const;
         friend void to_json(nlohmann::json& j, const LockableBufferState& lbs);
@@ -302,7 +302,6 @@ namespace MomentumX {
 
         bool sync{};
         bool is_ended{};
-        bool disable_condition{};
         size_t buffer_size{};
         size_t buffer_count{};
         size_t subscriber_count{};
@@ -343,7 +342,6 @@ namespace MomentumX {
             os << "ControlBlock: ";
             os << "{ sync: " << std::boolalpha << cb.sync;
             os << ", is_ended: " << std::boolalpha << cb.is_ended;
-            os << ", disable_condition: " << std::boolalpha << cb.disable_condition;
             os << ", buffer_size: " << cb.buffer_size;
             os << ", buffer_count: " << cb.buffer_count;
             os << ", subscribers: " << cb.subscriber_count;

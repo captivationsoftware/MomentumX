@@ -30,7 +30,6 @@ namespace MomentumX {
     void to_json(nlohmann::json& j, const ControlBlock& cb) {
         j = nlohmann::json{{"sync", cb.sync},
                            {"is_ended", cb.is_ended},
-                           {"disable_condition", cb.disable_condition},
                            {"buffer_size", cb.buffer_size},
                            {"buffer_count", cb.buffer_count},
                            {"subscriber_count", cb.subscriber_count},

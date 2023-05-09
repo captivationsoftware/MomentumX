@@ -9,7 +9,6 @@
 #include <boost/interprocess/creation_tags.hpp>
 #include <chrono>
 #include <condition_variable>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <list>
@@ -59,19 +58,9 @@ namespace MomentumX {
         _control = reinterpret_cast<ControlBlock*>(_data);
         if (_role == PRODUCER) {
             new (_control) ControlBlock();  // placement construct into shared memory
-            const static bool disable_condition = [] {
-                // stuff this into a static subroutine, so it only is initialized/logged once
-                const char* disable_str = std::getenv("MX_DISABLE_CONDITION");
-                const bool disable_condition = disable_str != nullptr && std::strcmp(disable_str, "1") == 0;
-                if (disable_condition) {
-                    Utils::Logger::get_logger().info(std::string("Disabling conditions for all streams"));
-                }
-                return disable_condition;
-            }();
 
             const auto control_lock = get_control_lock();
             _control->sync = sync;
-            _control->disable_condition = disable_condition;
             _control->buffer_size = buffer_size;
             _control->buffer_count = buffer_count;
 
@@ -236,7 +225,7 @@ namespace MomentumX {
         const auto loc = std::find_if(beg, end, pred);
 
         if (loc == end) {
-            _control->buffers.emplace_back(buffer_state, _control->disable_condition);
+            _control->buffers.emplace_back(buffer_state);
         } else {
             loc->buffer_state = buffer_state;
         }

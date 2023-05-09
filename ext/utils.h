@@ -17,6 +17,7 @@
 #include <boost/interprocess/sync/sharable_lock.hpp>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <functional>
@@ -220,14 +221,33 @@ namespace MomentumX {
             }
         };
 
+        inline bool is_condition_enabled() {
+            const static bool disable = [] {
+                // stuff this into a static subroutine, so it only is initialized/logged once
+                const char* disable_str = std::getenv("MX_DISABLE_CONDITION");
+                const bool disable = disable_str != nullptr && std::strcmp(disable_str, "1") == 0;
+                if (disable) {
+                    Utils::Logger::get_logger().info(std::string("Disabling condition variables for all producers"));
+                }
+                return disable;
+            }();
+
+            return !disable;
+        }
+
         using OmniMutex = bip::interprocess_mutex;
         using OmniWriteLock = bip::scoped_lock<OmniMutex>;
         struct OmniCondition {
-            explicit OmniCondition(bool disabled) : enabled{!disabled} {}
             OmniCondition() = default;
 
             bip::interprocess_condition inner{};
-            bool enabled{true};
+
+            /// Compatibility flag to disable conditional and fall back to polling.
+            /// This is enabled or disabled based on the environment of the producer,
+            /// but the consumer will use the same value since it's stored in shared memory.
+            ///
+            /// If true, notify and conditional wait is used. If false, polling is used.
+            bool enabled{is_condition_enabled()};
 
             inline void notify_one() {
                 if (enabled) {
