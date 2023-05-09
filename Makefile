@@ -46,3 +46,7 @@ test:
 	@rm -rfv rm -rf /dev/shm/mx.test_echo_mx_stream*
 	@python3 -m pytest tests
 
+.PHONY: test/disable_condition
+test/disable_condition:
+	@rm -rfv rm -rf /dev/shm/mx.test_echo_mx_stream*
+	@MX_DISABLE_CONDITION=1 python3 -m pytest tests

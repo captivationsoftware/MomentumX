@@ -39,7 +39,7 @@ namespace MomentumX {
        public:
         enum class CheckoutResult : uint8_t { SUCCESS, TIMEOUT, SKIPPED };
 
-        BufferSync() = default;
+        explicit BufferSync(bool disable_condition) : _checkin_cond(disable_condition) {}
         ~BufferSync() = default;
 
         BufferSync(BufferSync&&) = delete;
@@ -275,7 +275,7 @@ namespace MomentumX {
     };
 
     struct LockableBufferState {
-        explicit LockableBufferState(const BufferState& state) : buffer_state(state) {}
+        explicit LockableBufferState(const BufferState& state, bool disable_condition) : buffer_state(state), buffer_sync(disable_condition) {}
         ~LockableBufferState() = default;
         LockableBufferState(LockableBufferState&&) = delete;
         LockableBufferState(const LockableBufferState&) = delete;
@@ -283,7 +283,7 @@ namespace MomentumX {
         LockableBufferState& operator=(const LockableBufferState&) = delete;
 
         BufferState buffer_state{};
-        BufferSync buffer_sync{};
+        BufferSync buffer_sync{false};
 
         std::string dumps(int64_t indent = 2) const;
         friend void to_json(nlohmann::json& j, const LockableBufferState& lbs);
@@ -302,6 +302,7 @@ namespace MomentumX {
 
         bool sync{};
         bool is_ended{};
+        bool disable_condition{};
         size_t buffer_size{};
         size_t buffer_count{};
         size_t subscriber_count{};
@@ -327,7 +328,7 @@ namespace MomentumX {
             std::vector<IdxIter> ret;
             for (size_t index = 0; index < buffers.size(); ++index) {
                 const uint64_t iteration = buffers.at(index).buffer_state.iteration;
-                const bool can_checkout = buffers.at(index).buffer_sync.can_checkout_read(lock); // prevent mutating write-locked buffer
+                const bool can_checkout = buffers.at(index).buffer_sync.can_checkout_read(lock);  // prevent mutating write-locked buffer
                 if (iteration != 0 && can_checkout) {
                     ret.push_back(std::make_tuple(index, buffers.at(index).buffer_state.iteration));
                 }
@@ -342,6 +343,7 @@ namespace MomentumX {
             os << "ControlBlock: ";
             os << "{ sync: " << std::boolalpha << cb.sync;
             os << ", is_ended: " << std::boolalpha << cb.is_ended;
+            os << ", disable_condition: " << std::boolalpha << cb.disable_condition;
             os << ", buffer_size: " << cb.buffer_size;
             os << ", buffer_count: " << cb.buffer_count;
             os << ", subscribers: " << cb.subscriber_count;

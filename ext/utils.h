@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <atomic>
 #include <boost/container/static_vector.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+#include <boost/date_time/posix_time/posix_time_types.hpp>
 #include <boost/interprocess/creation_tags.hpp>
 #include <boost/interprocess/sync/interprocess_condition.hpp>
 #include <boost/interprocess/sync/interprocess_sharable_mutex.hpp>
@@ -219,9 +221,50 @@ namespace MomentumX {
         };
 
         using OmniMutex = bip::interprocess_mutex;
-        using OmniReadLock = bip::sharable_lock<OmniMutex>;
         using OmniWriteLock = bip::scoped_lock<OmniMutex>;
-        using OmniCondition = bip::interprocess_condition;
+        struct OmniCondition {
+            explicit OmniCondition(bool disabled) : enabled{!disabled} {}
+            OmniCondition() = default;
+
+            bip::interprocess_condition inner{};
+            bool enabled{true};
+
+            inline void notify_one() {
+                if (enabled) {
+                    inner.notify_one();
+                }
+            }
+
+            inline void notify_all() {
+                if (enabled) {
+                    inner.notify_all();
+                }
+            }
+
+            template <typename L, class TimePoint, typename Pr>
+            inline bool timed_wait(L& lock, const TimePoint& abs_time, Pr pred) {
+                if (enabled) {
+                    return inner.timed_wait(lock, abs_time, pred);
+                } else {
+                    // Always check first before looping check
+                    if (pred()) {
+                        return true;
+                    }
+                    constexpr auto increment_dur = std::chrono::milliseconds(50);  // arbitrary
+
+                    // Incrementally sleep until we hit our cutoff time
+                    while (boost::posix_time::microsec_clock::universal_time() < abs_time) {
+                        lock.unlock();
+                        std::this_thread::sleep_for(increment_dur);
+                        lock.lock();
+                        if (pred()) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+        };
 
         template <typename T, size_t Capacity>
         using StaticVector = boost::container::static_vector<T, Capacity>;
