@@ -27,21 +27,12 @@ Below are some simplified use cases for common MomentumX workflows. Consult the 
 # Producer Process
 import momentumx as mx
 
-# Create a stream with a total capacity of 10MB
+# Create a stream with a total capacity of 10MB (1MB x 10)
 stream = mx.Producer('my_stream', buffer_size=int(1e6), buffer_count=10, sync=False)
 
-# Write the series 0-9 repeatedly to a buffer 1000 times
+# Obtain the next available buffer for writing
 buffer = stream.next_to_send()
 buffer.write(b'1') 
-# buffer data == b'1'
-
-# alternatively, set via array indexing using python ByteArray syntax...
-buffer[1] = ord('2')
-# buffer data == b'12'
-
-# or also set via python slice operator
-buffer[2:3] = b'34'
-# buffer data == b'1234'
 
 buffer.send()
 # NOTE: buffer.send() can also be passed an explicit number of bytes as well. 
