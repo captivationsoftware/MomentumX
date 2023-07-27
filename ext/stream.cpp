@@ -64,7 +64,7 @@ namespace MomentumX {
             _control->buffer_size = buffer_size;
             _control->buffer_count = buffer_count;
 
-            Utils::Logger::get_logger().info(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().debug(std::string("Created Producer Stream (" + std::to_string((uint64_t)this) + ")"));
         } else {
             auto control_lock = get_control_lock();
             if (!_control->is_ready()) {
@@ -88,7 +88,7 @@ namespace MomentumX {
             }
             _subscribed = true;
 
-            Utils::Logger::get_logger().info(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().debug(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
 
         // Initialize any cached variables that will remain for the duration of the stream to prevent extraneous locking...
@@ -96,50 +96,76 @@ namespace MomentumX {
     };
 
     Stream::~Stream() {
-        auto control_lock = get_control_lock();
-        if (_role == Role::PRODUCER) {
-            Utils::Logger::get_logger().info("Producer stream signaling end of stream");
-            end(control_lock);
-        } else {
-            if (_subscribed) {
-                --_control->subscriber_count;
+        {
+            auto control_lock = get_control_lock();
+            if (_role == Role::PRODUCER) {
+                Utils::Logger::get_logger().debug(std::string("Producer stream signaling end of stream (" + std::to_string((uint64_t)this) + ")"));
+                end(control_lock);
+            } else {
+                if (_subscribed) {
+                    --_control->subscriber_count;
 
-                // If we are destructing while producer is still sending, claim and release all unmanaged buffers
-                // Since this happens with the control block lock, any currently checkout-out write buffers will
-                // submitted with the updated subscriber_count value
-                if (_control->sync) {
-                    const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, _control->buffer_count); };
-                    while (_last_iteration != _control->last_sent_iteration()) {
-                        _last_index = inc(_last_index);
-                        _last_iteration++;
+                    // If we are destructing while producer is still sending, claim and release all unmanaged buffers
+                    // Since this happens with the control block lock, any currently checkout-out write buffers will
+                    // submitted with the updated subscriber_count value
+                    if (_control->sync) {
+                        const auto inc = [&](size_t idx) { return ControlBlock::wrapping_increment(idx, _control->buffer_count); };
+                        while (_last_iteration != _control->last_sent_iteration()) {
+                            _last_index = inc(_last_index);
+                            _last_iteration++;
 
-                        auto& b = _control->buffers.at(_last_index);
-                        auto& bsync = b.buffer_sync;
-                        if (bsync.checkout_read(control_lock) == BufferSync::CheckoutResult::SUCCESS) {
-                            bsync.checkin_read(control_lock);
+                            auto& b = _control->buffers.at(_last_index);
+                            auto& bsync = b.buffer_sync;
+                            if (bsync.checkout_read(control_lock) == BufferSync::CheckoutResult::SUCCESS) {
+                                bsync.checkin_read(control_lock);
+                            }
                         }
                     }
                 }
             }
         }
 
+        bool has_errors = false;
+        int return_val;
+
+        if (_data != MAP_FAILED) {
+            return_val = munmap(_data, Utils::page_aligned_size(sizeof(ControlBlock)));
+            if (return_val != 0) {
+                has_errors |= true;
+                Utils::Logger::get_logger().warning(std::string("Stream Unmap Failed (" + std::to_string((uint64_t)this) + ")"));
+            } else {
+                Utils::Logger::get_logger().debug(std::string("Stream Unmapped (" + std::to_string((uint64_t)this) + ")"));
+            }
+        }
+
         if (_fd > -1) {
-            ::close(_fd);
+            return_val = ::close(_fd);
+            if (return_val != 0) {
+                has_errors |= true;
+                Utils::Logger::get_logger().warning(std::string("Stream Close Failed (" + std::to_string((uint64_t)this) + ")"));
+            } else {
+                Utils::Logger::get_logger().debug(std::string("Stream Closed (" + std::to_string((uint64_t)this) + ")"));
+            }
 
             if (_role == Role::PRODUCER) {
-                int return_val = std::remove(_paths.stream_path.c_str());
+                return_val = std::remove(_paths.stream_path.c_str());
                 if (return_val != 0) {
+                    has_errors |= true;
                     std::stringstream ss;
                     ss << "Unable to delete stream file \"" << _paths.stream_path << "\" with error: " << return_val;
-                    Utils::Logger::get_logger().error(ss.str());
+                    Utils::Logger::get_logger().warning(ss.str());
                 }
             }
         }
 
-        if (_role == PRODUCER) {
-            Utils::Logger::get_logger().info(std::string("Destroyed Producer Stream (" + std::to_string((uint64_t)this) + ")"));
+        std::stringstream ss;
+        ss << "Destroyed " << (_role == PRODUCER ? "Producer" : "Consumer") << " Stream (" << std::to_string((uint64_t)this) << ")";
+
+        if (has_errors) {
+            ss << " [POSSIBLE MEMORY LEAK DETECTED!]";
+            Utils::Logger::get_logger().warning(ss.str());
         } else {
-            Utils::Logger::get_logger().info(std::string("Destroyed Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().debug(ss.str());
         }
     }
 

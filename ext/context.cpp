@@ -19,11 +19,11 @@
 namespace MomentumX {
 
     Context::Context(const std::string& context_path) : _context_path(context_path), _buffer_manager(), _stream_manager(this, &_buffer_manager) {
-        Utils::Logger::get_logger().info(std::string("Created Context (" + std::to_string((uint64_t)this) + ")"));
+        Utils::Logger::get_logger().debug(std::string("Created Context (" + std::to_string((uint64_t)this) + ")"));
     };
 
     Context::~Context() {
-        Utils::Logger::get_logger().info(std::string("Destroyed Context (" + std::to_string((uint64_t)this) + ")"));
+        Utils::Logger::get_logger().debug(std::string("Destroyed Context (" + std::to_string((uint64_t)this) + ")"));
     }
 
     Stream* Context::stream(std::string stream_name, size_t buffer_size, size_t buffer_count, bool sync) {
