@@ -38,30 +38,54 @@ namespace MomentumX {
         resize_remap(size);
 
         if (_is_create) {
-            Utils::Logger::get_logger().info(std::string("Created Producer Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().debug(std::string("Created Producer Buffer (" + std::to_string((uint64_t)this) + ")"));
         } else {
-            Utils::Logger::get_logger().info(std::string("Created Consumer Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().debug(std::string("Created Consumer Buffer (" + std::to_string((uint64_t)this) + ")"));
         }
     };
 
     Buffer::~Buffer() {
+        bool has_errors = false;
+        int return_val;
+        if (_address != MAP_FAILED) {
+            return_val = munmap(_address, _size);
+            if (return_val != 0) {
+                has_errors |= true;
+                Utils::Logger::get_logger().warning(std::string("Buffer Unmap Failed (" + std::to_string((uint64_t)this) + ")"));
+            } else {
+                Utils::Logger::get_logger().debug(std::string("Buffer Unmapped (" + std::to_string((uint64_t)this) + ")"));
+            }
+        }
+
         if (_fd > -1) {
-            close(_fd);
+            return_val = ::close(_fd);
+
+            if (return_val != 0) {
+                has_errors |= true;
+                Utils::Logger::get_logger().warning(std::string("Buffer Close Failed (" + std::to_string((uint64_t)this) + ")"));
+            } else {
+                Utils::Logger::get_logger().debug(std::string("Buffer Closed (" + std::to_string((uint64_t)this) + ")"));
+            }
 
             if (_is_create) {
-                int return_val = std::remove(_backing_filepath.c_str());
+                return_val = std::remove(_backing_filepath.c_str());
                 if (return_val != 0) {
+                    has_errors |= true;
                     std::stringstream ss;
                     ss << "Unable to delete buffer file \"" << _backing_filepath << "\" with error: " << return_val;
-                    Utils::Logger::get_logger().error(ss.str());
+                    Utils::Logger::get_logger().warning(ss.str());
                 }
             }
         }
 
-        if (_is_create) {
-            Utils::Logger::get_logger().info(std::string("Destroyed Producer Buffer (" + std::to_string((uint64_t)this) + ")"));
+        std::stringstream ss;
+        ss << "Destroyed " << (_is_create ? "Producer" : "Consumer") << " Buffer (" << std::to_string((uint64_t)this) << ")";
+
+        if (has_errors) {
+            ss << " [POSSIBLE MEMORY LEAK DETECTED!]";
+            Utils::Logger::get_logger().warning(ss.str());
         } else {
-            Utils::Logger::get_logger().info(std::string("Destroyed Consumer Buffer (" + std::to_string((uint64_t)this) + ")"));
+            Utils::Logger::get_logger().debug(ss.str());
         }
     }
 
