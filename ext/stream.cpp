@@ -294,6 +294,10 @@ namespace MomentumX {
                                   size_t buffer_count,
                                   bool sync,
                                   Stream::Role role) {
+        if (!sync && buffer_count < 3) {
+            buffer_count = 3;
+            Utils::Logger::get_logger().warning("Non-sync mode requires atleast 3 buffers. Increasing buffer count to 3.");
+        }
         const Utils::PathConfig paths(_context->context_path(), name);
 
         Stream* stream = new Stream(paths, buffer_size, buffer_count, sync, role);
@@ -463,7 +467,9 @@ namespace MomentumX {
 
             // search sorted buffers for smallest iteration that is greater than (or equal to) expected
             const auto it = std::find_if(sorted_bufs.begin(), sorted_bufs.end(),
-                                         [&](const auto* lbstate) { return next_expected_iteration <= lbstate->buffer_state.iteration; });
+                                         [&](const auto* lbstate) { 
+                return next_expected_iteration <= lbstate->buffer_state.iteration && abs(last_sent_idx - lbstate->buffer_state.buffer_id) > 1; 
+            });
 
             if (it == sorted_bufs.end()) {
                 throw std::logic_error("Unable to find buffer with expected iteration");

@@ -715,6 +715,8 @@ def test_grab_oldest()->None:
         assert b4[0] == 20
 
         del b4
+        del b5
+        push(100)
         push(100)
         b_last = consumer.receive()
         assert b_last.buffer_id == 4
@@ -855,7 +857,7 @@ def test_slow_consumer_streaming()->None:
 
         for v in ('4', '5', '6'):
             producer.send_string(v)
-        assert consumer.receive_string() == '4'
+        assert consumer.receive_string() == '5'
 
 
 def test_increment_streaming()->None:
@@ -874,7 +876,7 @@ def test_increment_streaming()->None:
         for v in range(10, 20):
             producer.send_string(str(v))
 
-        for v in range(11, 21):
+        for v in range(12, 21):
             buffer = consumer.receive()
             assert buffer.iteration == v
 
