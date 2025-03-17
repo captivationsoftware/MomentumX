@@ -454,6 +454,9 @@ namespace MomentumX {
         const bool next_idx_matches_next_iteration = b.get().buffer_state.iteration == next_expected_iteration;
         if (next_idx_matches_next_iteration) {
             // nothing to do, next is correct
+        } else if (last_sent_iteration == next_expected_iteration) {
+            // Last sent buffer is correct
+            b = std::ref(stream->_control->buffers.at(last_sent_idx));
         } else {
             if (stream->_sync) {
                 throw std::runtime_error("Streaming search routine triggered in sync case");
@@ -466,9 +469,9 @@ namespace MomentumX {
                       [](const auto* lhs, const auto* rhs) { return lhs->buffer_state.iteration < rhs->buffer_state.iteration; });
 
             // search sorted buffers for smallest iteration that is greater than (or equal to) expected
-            const auto it = std::find_if(sorted_bufs.begin(), sorted_bufs.end(),
-                                         [&](const auto* lbstate) { 
-                return next_expected_iteration <= lbstate->buffer_state.iteration && abs(last_sent_idx - lbstate->buffer_state.buffer_id) > 1; 
+            const auto it = std::find_if(sorted_bufs.begin(), sorted_bufs.end(), [&](const auto* lbstate) {
+                return next_expected_iteration <= lbstate->buffer_state.iteration &&
+                       ((lbstate->buffer_state.buffer_id - last_sent_idx) % lbstate->buffer_state.buffer_count) > 1;
             });
 
             if (it == sorted_bufs.end()) {
