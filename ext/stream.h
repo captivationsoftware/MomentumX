@@ -57,6 +57,8 @@ namespace MomentumX {
 
         void end(const Utils::OmniWriteLock& control_lock);
 
+        size_t last_sent_iteration(const Utils::OmniWriteLock& control_lock);
+
         void unsubscribe();
 
         Lock get_control_lock();

@@ -299,6 +299,8 @@ struct StreamShim {
     bool is_ended() { return stream->is_ended(stream->get_control_lock()); }
     bool has_next() { return this->ctx->can_receive(stream.get()); }
     void end() { stream->end(stream->get_control_lock()); }
+    size_t last_sent_iteration() { return stream->last_sent_iteration(stream->get_control_lock()); }
+
 
     auto next_to_send(bool blocking) -> std::shared_ptr<WriteBufferShim> {
         py::gil_scoped_release nogil;
@@ -530,7 +532,8 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("fd", &ProducerStreamShim::fd)
         .def_property_readonly("is_sync", &ProducerStreamShim::sync)
         .def_property_readonly("is_ended", &ProducerStreamShim::is_ended)
-        .def_property_readonly("name", &ProducerStreamShim::name);
+        .def_property_readonly("name", &ProducerStreamShim::name)
+        .def_property_readonly("last_sent_iteration", &ProducerStreamShim::last_sent_iteration);
 
     py::class_<ConsumerStreamShim>(m, "Consumer")
         .def(py::init(&consumer_stream), "stream_name"_a, "cancel_event"_a = std::optional<py::object>(), "polling_interval"_a = 0.010,
@@ -543,7 +546,8 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("is_ended", &ConsumerStreamShim::is_ended)
         .def_property_readonly("has_next", &ConsumerStreamShim::has_next)
         .def_property_readonly("name", &ConsumerStreamShim::name)
-        .def_property_readonly("fd", &ConsumerStreamShim::fd);
+        .def_property_readonly("fd", &ConsumerStreamShim::fd)
+        .def_property_readonly("last_sent_iteration", &ConsumerStreamShim::last_sent_iteration);
 
     // TODO: nest within `inspect` or `debug` submodule maybe. Shouldn't be part of public API, probably.
     py::class_<MomentumX::ControlBlockHandle>(m, "Control")  // TODO: put in submodule

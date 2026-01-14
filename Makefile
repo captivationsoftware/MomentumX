@@ -37,8 +37,8 @@ publish:
 
 .PHONY: install
 install: 
-	@python3 -m pip uninstall --yes momentumx || echo "Nothing to remove"
-	@(python3 -m pip install .[test] --use-feature=in-tree-build --no-build-isolation -v) || (python3 -m pip install .[test] --no-build-isolation -v)
+	@python3 -m pip uninstall --yes momentumx --break-system-packages || echo "Nothing to remove"
+	@(python3 -m pip install .[test] --use-feature=in-tree-build --no-build-isolation -v --break-system-packages) || (python3 -m pip install .[test] --no-build-isolation -v --break-system-packages)
 	@cp -uv _skbuild/linux-x86_64*/cmake-install/src/momentumx/_mx.pyi src/momentumx/_mx.pyi
 
 .PHONY: test

@@ -202,6 +202,10 @@ namespace MomentumX {
         _control->is_ended = true;
     }
 
+    size_t Stream::last_sent_iteration(const Utils::OmniWriteLock& control_lock) {
+        return _control->last_sent_iteration();
+    }
+
     void Stream::unsubscribe() {
         auto control_lock = get_control_lock();
         if (_role == Role::PRODUCER) {

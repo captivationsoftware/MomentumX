@@ -663,6 +663,8 @@ def test_grab_oldest()->None:
         push(0)
         assert consumer.receive().buffer_id == 1
         assert consumer.receive().buffer_id == 2
+        assert consumer.last_sent_iteration == 2
+        assert producer.last_sent_iteration == 2
 
         # Consume 4 buffers and verify wrap-around
         push(10)
@@ -876,6 +878,9 @@ def test_increment_streaming()->None:
         for v in range(10, 20):
             producer.send_string(str(v))
 
+        assert consumer.last_sent_iteration == 20
+        assert producer.last_sent_iteration == 20
+        
         for v in range(12, 21):
             buffer = consumer.receive()
             assert buffer.iteration == v
