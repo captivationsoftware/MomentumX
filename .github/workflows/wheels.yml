@@ -63,6 +63,9 @@ jobs:
     name: Upload if release
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
+    permissions:
+      # IMPORTANT: this permission is mandatory for Trusted Publishing
+      id-token: write
     if: github.event_name == 'release' && github.event.action == 'published'
 
     steps:
@@ -76,6 +79,3 @@ jobs:
         path: dist
         merge-multiple: true
     - uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        user: __token__
-        password: ${{ secrets.pypi_password }}
