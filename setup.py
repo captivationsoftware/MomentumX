@@ -1,13 +1,13 @@
 from setuptools import find_packages
 from skbuild import setup
 
-__version__ = "2.7.3"
+__version__ = "2.8.1"
 
 from pathlib import Path
 long_description = (Path(__file__).parent / "README.md").read_text()
 
 setup(
-    name="MomentumX",
+    name="momentumx",
     version=__version__,
     description="Zero-copy shared memory IPC library for building complex streaming data pipelines capable of processing large datasets",
     long_description=long_description,
