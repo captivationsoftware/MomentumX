@@ -1,0 +1,22 @@
+[package]
+name = "momentumx"
+version = "0.1.0"
+edition = "2021"
+description = "Rust bindings for the MomentumX shared-memory IPC library"
+license = "GPL-3.0-only"
+repository = "https://github.com/captivationsoftware/MomentumX"
+readme = "../README.md"
+keywords = ["shm", "shared-memory", "ipc", "zero-copy", "pubsub"]
+categories = ["os::unix-apis", "concurrency"]
+links = "momentumx_static"
+include = [
+    "src/**/*",
+    "cpp/**/*",
+    "build.rs",
+    "Cargo.toml",
+]
+
+[dependencies]
+
+[build-dependencies]
+cmake = "0.1"

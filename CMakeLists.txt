@@ -56,6 +56,14 @@ target_link_libraries(_mx PRIVATE rt nlohmann_json::nlohmann_json)
 
 install(TARGETS _mx DESTINATION .)
 
+# Static library exposing the C API — used by the Rust bindings
+add_library(momentumx_static STATIC ${SRCS} ext/mx_c_api.cpp)
+target_include_directories(momentumx_static SYSTEM PRIVATE ${boost_SOURCE_DIR})
+target_include_directories(momentumx_static PRIVATE ext)
+target_link_libraries(momentumx_static PRIVATE rt nlohmann_json::nlohmann_json)
+install(TARGETS momentumx_static DESTINATION lib)
+install(FILES ext/mx_c_api.h DESTINATION include)
+
 add_custom_command(
     TARGET _mx
     POST_BUILD

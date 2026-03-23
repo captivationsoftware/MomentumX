@@ -1,0 +1,7 @@
+target/
+
+# C++ source files staged here before `cargo publish`.
+# Populated by the GitHub Actions workflow; not stored in the repo.
+# rust/cpp/CMakeLists.txt IS committed — only the source files are excluded.
+cpp/*.cpp
+cpp/*.h

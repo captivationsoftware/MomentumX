@@ -4,7 +4,8 @@
     <img src="https://github.com/captivationsoftware/MomentumX/blob/main/Logo.png?raw=true" title="MomentumX Logo" />
     <br/>
     <span>
-        <strong>MomentumX</strong> is a <strong>zero-copy shared memory IPC</strong> library for building complex <strong>streaming data pipelines</strong> capable of processing <strong>large datasets</strong> using <strong>Python</strong>. 
+        <strong>MomentumX</strong> is a <strong>zero-copy shared memory IPC</strong> library for building complex <strong>streaming data pipelines</strong> capable of processing <strong>large datasets</strong>.
+        Bindings are available for <strong>Python</strong>, <strong>Rust</strong>, and <strong>C</strong>, and streams are fully interoperable across languages.
     </span>
 </p>
 
@@ -12,15 +13,22 @@
 
 ### Key Features:
 - High-Throughput, Low Latency
-- Supports **streaming and synchronous** modes for use within a wide variety of use cases. 
+- **Multi-language**: Python, Rust, and C bindings share the same wire format — a Rust producer and a Python consumer work out of the box.
+- Supports **streaming and synchronous** modes for use within a wide variety of use cases.
 - Bring your own encoding, or use **raw binary** data.
-- Sane **data protections** to ensure **reliability of data** in a cooperative computing environment. 
+- Sane **data protections** to ensure **reliability of data** in a cooperative computing environment.
 - Pairs with other high-performance libraries, such as **numpy** and **scipy**, to support parallel processing of memory-intensive scientific data.
 - Works on most modern versions of **Linux** using shared memory (via `/dev/shm`).
-- Seamlessly integrates into a **Docker** environment with minimal configuration, and readily enables lightweight container-to-container data sharing. 
+- Seamlessly integrates into a **Docker** environment with minimal configuration, and readily enables lightweight container-to-container data sharing.
 
-### Examples:
-Below are some simplified use cases for common MomentumX workflows. Consult the examples in the `examples/` directory for additional details and implementation guidance.
+---
+
+## Python Bindings
+
+Install from PyPI:
+```sh
+pip install momentumx
+```
 
 #### Stream Mode
 ```python
@@ -32,10 +40,10 @@ stream = mx.Producer('my_stream', buffer_size=int(1e6), buffer_count=10, sync=Fa
 
 # Obtain the next available buffer for writing
 buffer = stream.next_to_send()
-buffer.write(b'1') 
+buffer.write(b'1')
 
 buffer.send()
-# NOTE: buffer.send() can also be passed an explicit number of bytes as well. 
+# NOTE: buffer.send() can also be passed an explicit number of bytes.
 # Otherwise an internally managed cursor will be used.
 ```
 
@@ -45,19 +53,19 @@ import momentumx as mx
 
 stream = mx.Consumer('my_stream')
 
-# Receive from my_stream as long as the stream has not ended OR there are unread buffers 
+# Receive from my_stream as long as the stream has not ended OR there are unread buffers
 while stream.has_next:
 
-    # Block while waiting to receive buffer 
+    # Block while waiting to receive buffer
     # NOTE: Non-blocking receive is possible using blocking=False keyword argument
     buffer = stream.receive()
-    
+
     # If we are here, either the stream ended OR we have a buffer, so check...
     if buffer is not None:
 
         # We have buffer containing data, so print the entire contents
         print(buffer.read(buffer.data_size))
-    
+
         # See also "Implicit versus Explicit Buffer Release" section below.
 ```
 
@@ -73,11 +81,11 @@ signal.signal(signal.SIGINT, (lambda _sig, _frm: cancel_event.set()))
 
 # Create a stream with a total capacity of 10MB
 stream = mx.Producer(
-    'my_stream', 
-    buffer_size=int(1e6), 
-    buffer_count=10, 
-    sync=True
-) # NOTE: sync set to True
+    'my_stream',
+    buffer_size=int(1e6),
+    buffer_count=10,
+    sync=True  # NOTE: sync set to True
+)
 
 min_subscribers = 1
 
@@ -88,7 +96,7 @@ while stream.subscriber_count < min_subscribers:
 
 print("All expected subscribers are ready")
 
-# Write the series 0-999 to a consumer 
+# Write the series 0-999 to consumers
 for n in range(0, 1000):
     if stream.subscriber_count == 0:
         cancel_event.wait(0.5)
@@ -96,7 +104,6 @@ for n in range(0, 1000):
     # Note: sending strings directly is possible via the send_string call
     elif stream.send_string(str(n)):
         print(f"Sent: {n}")
-
 ```
 
 ```python
@@ -106,76 +113,56 @@ import momentumx as mx
 stream = mx.Consumer('my_stream')
 
 while stream.has_next:
-    data = stream.receive_string() 
+    data = stream.receive_string()
 
-    if data is not None: 
-        # Note: receiving strings is possible as well via the receive_string call
+    if data is not None:
         print(f"Received: {data}")
-
 ```
 
 #### Iterator Syntax
-Working with buffers is even easier using `iter()` builtin:
 ```python
-import momentumx as mx
+import momentumx as mx
 
-stream = mx.Consumer(STREAM)
+stream = mx.Consumer(STREAM)
 
-# Iterate over buffers in the stream until stream.receive() returns None
-for buffer in iter(stream.receive, None):     
-    # Now, buffer is guaranteed to be valid, so no check required -  
-    # go ahead and print all the contents again, this time using 
-    # the index and slice operators!
+# Iterate over buffers until stream.receive() returns None
+for buffer in iter(stream.receive, None):
     print(buffer[0])                    # print first byte
     print(buffer[1:buffer.data_size])   # print remaining bytes
-
 ```
-
 
 #### Numpy Integration
 ```python
 import momentumx as mx
 import numpy as np
 
-# Create a stream
 stream = mx.Consumer('numpy_stream')
-
-# Receive the next buffer (or if a producer, obtain the next_to_send buffer)
 buffer = stream.receive()
 
 # Create a numpy array directly from the memory without any copying
-np_buff = np.frombuffer(buffer, dtype=uint8)
+np_buff = np.frombuffer(buffer, dtype=np.uint8)
 ```
 
 #### Implicit versus Explicit Buffer Release
-MomentumX Consumers will, by default, automatically release a buffer under the covers once all references are destroyed. This promotes both usability and data integrity. However, there may be cases where the developer wants to utilize a different strategy and explicity control when buffers are released to the pool of available buffers.
+MomentumX Consumers automatically release a buffer once all references are destroyed. To control release explicitly:
 
 ```python
 stream = mx.Consumer('my_stream')
-
 buffer = stream.receive()
 
 # Access to buffer is safe!
 buffer.read(10)
 
-# Buffer is being returned back to available buffer pool. 
+# Buffer is returned back to the available buffer pool.
 # Be sure you are truly done with your data!
-buffer.release() 
+buffer.release()
 
-# DANGER: DO NOT DO THIS! 
-# All operations on a buffer after calling `release` are considered unsafe! 
-# All safeguards have been removed and the memory is volatile!
-buffer.read(10) 
-
-
+# DANGER: DO NOT DO THIS!
+# All operations on a buffer after calling `release` are unsafe!
+buffer.read(10)
 ```
 
-
 #### Isolated Contexts
-MomentumX allows for the usage of streams outside of `/dev/shm` (the default location). Pass the `context` kwarg pointing to a directory on the filesystem for both the `Producer` and all `Consumer` instances to create isolated contexts.
-
-This option is useful if access to `/dev/shm` is unsuitable.
-
 ```python
 import momentumx as mx
 
@@ -183,10 +170,160 @@ import momentumx as mx
 stream = mx.Producer('my_stream', ..., context='/my/path/')
 ...
 
-# Create Consumer elsewhere attached to the same context of /my/path
+# Create Consumer elsewhere attached to the same context
 stream = mx.Consumer('my_stream', context='/my/path/')
-
 ```
+
+---
+
+## Rust Bindings
+
+Add to `Cargo.toml`:
+```toml
+[dependencies]
+momentumx = "0.1"
+```
+
+The crate bundles the C++ source and builds it automatically via cmake — no manual steps required.
+
+#### Producer
+```rust
+use momentumx::{Context, LogLevel};
+use std::time::Duration;
+
+let ctx = Context::new("/dev/shm").expect("failed to create context");
+ctx.set_log_level(LogLevel::Warning);
+
+let stream = ctx
+    .producer("my_stream", 1024 * 1024, 10, false)
+    .expect("failed to create producer stream");
+
+// Wait for at least one subscriber
+while stream.subscriber_count() == 0 {
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+if let Some(mut buf) = stream.next() {
+    let len = {
+        let data = buf.data_mut().unwrap();
+        data[..5].copy_from_slice(b"hello");
+        5
+    };
+    buf.send(len).unwrap();
+}
+
+stream.end();
+```
+
+#### Consumer
+```rust
+use momentumx::Context;
+
+let ctx = Context::new("/dev/shm").expect("failed to create context");
+let stream = ctx.subscribe("my_stream").expect("failed to subscribe");
+
+while stream.has_next() {
+    if let Some(buf) = stream.receive(1) {
+        let data = buf.data().unwrap();
+        println!("received {} bytes: {:?}", data.len(), data);
+        // buf.release() is called automatically on drop
+    }
+}
+```
+
+#### Sync mode with multiple consumers
+```rust
+// sync=true — producer blocks on each send until all subscribers acknowledge
+let stream = ctx
+    .producer("my_stream", 1024 * 1024, 4, true)
+    .expect("create stream");
+
+while stream.subscriber_count() < 2 {
+    std::thread::sleep(Duration::from_millis(50));
+}
+
+for i in 0..10u8 {
+    if let Some(mut buf) = stream.next() {
+        buf.data_mut().unwrap()[0] = i;
+        buf.send(1).unwrap();
+    }
+}
+stream.end();
+```
+
+---
+
+## C API
+
+The C API (`ext/mx_c_api.h`) exposes the full MomentumX feature set for use from C or any language with a C FFI.
+
+```c
+#include "mx_c_api.h"
+
+// --- Producer ---
+MxContext* ctx = mx_context_create("/dev/shm");
+MxStream*  stream = mx_stream_create(ctx, "my_stream", 1024*1024, 10, false);
+
+while (mx_subscriber_count(ctx, stream) == 0) { /* wait */ }
+
+MxBufferState state;
+if (mx_next(ctx, stream, &state) == 1) {
+    uint8_t* data = mx_data_address(ctx, stream, state.buffer_id);
+    memcpy(data, "hello", 5);
+    state.data_size = 5;
+    mx_send(ctx, stream, &state);
+}
+mx_end(ctx, stream);
+mx_stream_unsubscribe(ctx, stream);
+mx_context_destroy(ctx);
+
+// --- Consumer ---
+MxContext* ctx = mx_context_create("/dev/shm");
+MxStream*  stream = mx_stream_subscribe(ctx, "my_stream");
+
+MxBufferState state;
+while (mx_receive(ctx, stream, 1, &state) >= 0) {
+    uint8_t* data = mx_data_address(ctx, stream, state.buffer_id);
+    // process data[0..state.data_size]
+    mx_release(ctx, stream, &state);
+    if (mx_is_ended(ctx, stream)) break;
+}
+mx_stream_unsubscribe(ctx, stream);
+mx_context_destroy(ctx);
+```
+
+Key rules:
+- Each producer and consumer should use its own `MxContext`.
+- Always call `mx_release` after consuming a buffer (or use the Rust/Python wrappers which do this automatically).
+- `mx_stream_unsubscribe` frees the `MxStream` handle; do not use it afterwards.
+- Stream names are limited to **32 characters**.
+
+---
+
+## Cross-Language Interoperability
+
+All three bindings share the same shared-memory wire format. A Python producer can feed Rust consumers, a Rust producer can feed Python consumers, and so on:
+
+```python
+# Python producer
+import momentumx as mx
+producer = mx.Producer('shared', buffer_size=256, buffer_count=4, sync=True)
+```
+
+```rust
+// Rust consumer — reads from the same stream
+let ctx = Context::new("/dev/shm").unwrap();
+let stream = ctx.subscribe("shared").unwrap();
+while stream.has_next() {
+    if let Some(buf) = stream.receive(1) {
+        println!("{:?}", buf.data().unwrap());
+    }
+}
+```
+
+Cross-language streams also work across **Docker containers** — use `ipc: shareable` on the producer container and `ipc: service:<producer>` on consumer containers to share `/dev/shm` between them.
+
+---
 
 ### License
 Captivation Software, LLC offers **MomentumX** under an **Unlimited Use License to the United States Government**, with **all other parties subject to the GPL-3.0 License**.
@@ -196,5 +333,5 @@ All inquiries and requests may be sent to <a href="mailto:opensource@captivation
 
 
 <sub><sup>
-    Copyright &copy; 2022-2023 - <a href="https://captivation.us" target="_blank">Captivation Software, LLC</a>.
+    Copyright &copy; 2022-2025 - <a href="https://captivation.us" target="_blank">Captivation Software, LLC</a>.
 </sup></sub>
