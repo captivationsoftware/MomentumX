@@ -23,7 +23,7 @@ while stream.has_next:
             trial = int(string)
             assert trial == prev_val + 1, f"Counter error: {trial} != {prev_val+1}"
             prev_val = trial
-        print("Received:", string)
+        print("Received:", string, f" (Missed: {stream.dropped_count})")
     else:
         if cancel.wait(0.5):
             break

@@ -261,6 +261,12 @@ struct BufferShim {
 };
 
 struct ReadBufferShim : BufferShim {
+    /// Iterations skipped to reach this buffer, from this consumer's point of
+    /// view. Computed entirely at the binding layer (see StreamShim::receive())
+    /// from information already exposed via BufferState::iteration -- no core
+    /// C++ classes or shared-memory layout involved.
+    uint64_t dropped_count{0};
+
     ReadBufferShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const std::shared_ptr<BufferState>& buffer_state)
         : BufferShim(ctx, stream, buffer_state) {}
 
@@ -285,6 +291,12 @@ struct StreamShim {
     std::shared_ptr<Stream> stream;
     ThreadingEventWrapper evt;
     float polling_interval;
+
+    /// Tracks this consumer's view of the iteration sequence, purely at the
+    /// binding layer, using only what's already exposed via BufferState::iteration.
+    /// Not involved for producers (next_to_send never touches these).
+    uint64_t last_seen_iteration{0};
+    uint64_t total_dropped_count{0};
 
     StreamShim(const std::shared_ptr<Context>& ctx, const std::shared_ptr<Stream>& stream, const ThreadingEventWrapper& evt, double polling_interval)
         : ctx(ctx), stream(stream), evt(evt), polling_interval(polling_interval) {}
@@ -352,9 +364,17 @@ struct StreamShim {
                     return {};
                 }
             } else {
+                const uint64_t iteration = buffer_info->iteration;
+                const uint64_t expected = last_seen_iteration + 1;
+                const uint64_t dropped = (iteration > expected) ? (iteration - expected) : 0;
+                total_dropped_count += dropped;
+                last_seen_iteration = iteration;
+
+                auto* rbs = new ReadBufferShim(ctx, stream, buffer_info);
+                rbs->dropped_count = dropped;
                 return std::shared_ptr<ReadBufferShim>(
                     // instance
-                    new ReadBufferShim(ctx, stream, buffer_info),
+                    rbs,
                     // deleter
                     [](ReadBufferShim* rbs) {
                         rbs->release();
@@ -499,7 +519,8 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("buffer_count", &ReadBufferShim::buffer_count)
         .def_property_readonly("data_size", &ReadBufferShim::data_size)
         .def_property_readonly("data_timestamp", &ReadBufferShim::data_timestamp)
-        .def_property_readonly("iteration", &ReadBufferShim::iteration);
+        .def_property_readonly("iteration", &ReadBufferShim::iteration)
+        .def_readonly("dropped_count", &ReadBufferShim::dropped_count);
 
     py::class_<WriteBufferShim, std::shared_ptr<WriteBufferShim>>(m, "WriteBuffer", py::buffer_protocol())
         .def_buffer(&WriteBufferShim::write_buffer_info)
@@ -550,7 +571,8 @@ PYBIND11_MODULE(_mx, m) {
         .def_property_readonly("has_next", &ConsumerStreamShim::has_next)
         .def_property_readonly("name", &ConsumerStreamShim::name)
         .def_property_readonly("fd", &ConsumerStreamShim::fd)
-        .def_property_readonly("last_sent_iteration", &ConsumerStreamShim::last_sent_iteration);
+        .def_property_readonly("last_sent_iteration", &ConsumerStreamShim::last_sent_iteration)
+        .def_readonly("dropped_count", &ConsumerStreamShim::total_dropped_count);
 
     // TODO: nest within `inspect` or `debug` submodule maybe. Shouldn't be part of public API, probably.
     py::class_<MomentumX::ControlBlockHandle>(m, "Control")  // TODO: put in submodule

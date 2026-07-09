@@ -11,7 +11,6 @@ ts_old = round(time.time())
 now = time.time()
 bytes_received = 0
 messages_received = 0
-last_iteration = 0
 skip_count = 0
 
 stream = mx.Consumer(STREAM)
@@ -23,11 +22,11 @@ while stream.has_next:
         messages_received += 1
         bytes_received += buffer.data_size
 
-        step = buffer.iteration - last_iteration
-        if last_iteration > 0 and step > 1:
-            skip_count = skip_count + step
-
-        last_iteration = buffer.iteration
+        # buffer.dropped_count is how many iterations were skipped to reach
+        # *this* buffer (nonzero if we fell behind and the producer overwrote
+        # buffers before we could read them). No manual iteration-diffing needed
+        # -- previously this required tracking last_iteration by hand.
+        skip_count += buffer.dropped_count
 
         ts_new = round(time.time())
         if ts_new != ts_old:
@@ -36,11 +35,13 @@ while stream.has_next:
             print("Received {:.2f} msgs/sec".format(messages_received / elapsed))
             print("Received {:.2f} GB/sec".format(bytes_received / elapsed / 1.0e9))
             print(f"Missed: {skip_count}")
-            
+            # stream.dropped_count is the running cumulative total across this
+            # consumer's whole lifetime, if you'd rather not track it yourself:
+            print(f"Missed (cumulative): {stream.dropped_count}")
+
             now = time.time()
             bytes_received = 0
             messages_received = 0
-            last_iteration = 0
             skip_count = 0
 
         buffer.release()

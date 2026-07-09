@@ -959,5 +959,41 @@ def test_producer_recovers_after_consumer_is_killed() -> None:
     assert producer_can_still_send
 
 
+def test_dropped_count_reflects_skipped_iterations_in_streaming_mode() -> None:
+    import momentumx as mx
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 3, False, event)
+        consumer = mx.Consumer(_STREAM_NAME)
+
+        for v in ('1', '2', '3'):
+            producer.send_string(v)
+        buffer = consumer.receive()
+        assert buffer.iteration == 1
+        assert buffer.dropped_count == 0
+        assert consumer.dropped_count == 0
+        buffer.release()
+
+        for v in ('4', '5', '6'):
+            producer.send_string(v)
+        buffer = consumer.receive()
+        assert buffer.iteration == 5  # matches test_slow_consumer_streaming
+        assert buffer.dropped_count == 3  # skipped iterations 2, 3, 4
+        assert consumer.dropped_count == 3
+
+
+def test_dropped_count_stays_zero_in_sync_mode() -> None:
+    import momentumx as mx
+    with timeout_event() as event:
+        producer = mx.Producer(_STREAM_NAME, 20, 3, True, event)
+        consumer = mx.Consumer(_STREAM_NAME)
+
+        for v in ('1', '2', '3'):
+            producer.send_string(v)
+            buffer = consumer.receive()
+            assert buffer.dropped_count == 0
+            buffer.release()
+        assert consumer.dropped_count == 0
+
+
 if __name__ == "__main__":
     test_increment_streaming()
