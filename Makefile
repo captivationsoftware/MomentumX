@@ -21,7 +21,7 @@ package_wheel_%:
 
 
 .PHONY: package_wheels
-package_wheels: package_wheel_cp38-cp38 package_wheel_cp39-cp39 package_wheel_cp310-cp310 package_wheel_cp311-cp311 package_wheel_cp312-cp312 package_wheel_cp313-cp313
+package_wheels: package_wheel_cp39-cp39 package_wheel_cp310-cp310 package_wheel_cp311-cp311 package_wheel_cp312-cp312 package_wheel_cp313-cp313 package_wheel_cp314-cp314 package_wheel_cp315-cp315
 
 .PHONY: package
 package: test clean package_wheels
