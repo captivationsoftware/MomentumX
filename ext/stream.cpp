@@ -86,6 +86,7 @@ namespace MomentumX {
                 }
             }
             _subscribed = true;
+            _control->register_subscriber(getpid(), reinterpret_cast<uint64_t>(this), _last_iteration);
 
             Utils::Logger::get_logger().debug(std::string("Created Consumer Stream (" + std::to_string((uint64_t)this) + ")"));
         }
@@ -120,6 +121,8 @@ namespace MomentumX {
                             }
                         }
                     }
+
+                    _control->unregister_subscriber(getpid(), reinterpret_cast<uint64_t>(this));
                 }
             }
         }
@@ -222,6 +225,8 @@ namespace MomentumX {
                     b.buffer_sync.dec_required(control_lock);
                 }
             }
+
+            _control->unregister_subscriber(getpid(), reinterpret_cast<uint64_t>(this));
         }
     }
 
@@ -260,7 +265,8 @@ namespace MomentumX {
         }
     }
 
-    size_t Stream::subscriber_count(const Utils::OmniWriteLock& control_lock) {
+    size_t Stream::subscriber_count(Utils::OmniWriteLock& control_lock) {
+        _control->reap_dead_subscribers(control_lock);
         return _control->subscriber_count;
     }
 
@@ -360,7 +366,16 @@ namespace MomentumX {
 
             auto& b = stream->_control->buffers.at(idx);
             auto& bs = b.buffer_state;
-            const bool has_buffer = b.buffer_sync.checkout_write(control_lock, std::chrono::milliseconds(200));
+            bool has_buffer = b.buffer_sync.checkout_write(control_lock, std::chrono::milliseconds(200));
+
+            if (!has_buffer) {
+                // Only pay for a liveness sweep once we've actually stalled --
+                // not on every send. If a required reader turns out to be dead,
+                // this frees it up immediately rather than waiting on another
+                // full 200ms cycle.
+                stream->_control->reap_dead_subscribers(control_lock);
+                has_buffer = b.buffer_sync.checkout_write(control_lock, std::chrono::seconds(0));
+            }
 
             if (has_buffer) {
                 auto ptr = new Stream::BufferState(bs.buffer_id, bs.buffer_size, bs.buffer_count, 0, 0, iteration);
@@ -374,6 +389,8 @@ namespace MomentumX {
                 return std::shared_ptr<Stream::BufferState>(ptr, del);
             }
         } else {
+            // Stream (non-sync) mode never sets required_readers above 0, so a
+            // dead subscriber can never block a send here -- no reaping needed.
             const size_t beg = inc(stream->_control->last_sent_index);
             size_t idx = beg;
             do {
@@ -493,10 +510,12 @@ namespace MomentumX {
         stream->_last_iteration = b.get().buffer_state.iteration;
 
         const auto buffer_id = b.get().buffer_state.buffer_id;
+        const auto buffer_iteration = b.get().buffer_state.iteration;
         const auto ptr = new Stream::BufferState(b.get().buffer_state);
-        const auto del = [stream, buffer_id](Stream::BufferState* state) {
+        const auto del = [stream, buffer_id, buffer_iteration](Stream::BufferState* state) {
             auto control_lock = stream->get_control_lock();
             stream->_control->buffers.at(buffer_id).buffer_sync.checkin_read(control_lock);
+            stream->_control->record_subscriber_ack(getpid(), reinterpret_cast<uint64_t>(stream), buffer_iteration);
             delete state;
         };
 

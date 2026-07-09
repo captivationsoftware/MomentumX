@@ -51,7 +51,7 @@ namespace MomentumX {
 
         void update_buffer_state(const Utils::OmniWriteLock& control_lock, const Stream::BufferState& buffer_state);
 
-        size_t subscriber_count(const Utils::OmniWriteLock& control_lock);
+        size_t subscriber_count(Utils::OmniWriteLock& control_lock);
 
         bool is_ended(const Utils::OmniWriteLock& control_lock);
 

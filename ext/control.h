@@ -2,13 +2,16 @@
 #define MOMENTUMX_CONTROL_H
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <ios>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <ostream>
+#include <signal.h>
 #include <sstream>
 #include <string>
+#include <sys/types.h>
 #include "buffer.h"
 #include "utils.h"
 
@@ -293,8 +296,20 @@ namespace MomentumX {
         }
     };
 
+    /// Tracks one subscribed Consumer for crash-liveness purposes. Keyed on
+    /// (pid, local_id) rather than pid alone, since multiple Consumer objects
+    /// can exist within a single process (same pid) -- local_id disambiguates
+    /// them (see Stream's use of reinterpret_cast<uint64_t>(this)).
+    struct SubscriberSlot {
+        bool active{false};
+        pid_t pid{0};
+        uint64_t local_id{0};
+        uint64_t last_acked_iteration{0};
+    };
+
     struct ControlBlock {
         static constexpr size_t MAX_BUFFERS = 512;
+        static constexpr size_t MAX_SUBSCRIBERS = 256;
 
         bool sync{};
         bool is_ended{};
@@ -304,6 +319,79 @@ namespace MomentumX {
         size_t last_sent_index{};  // DELME (?)
         mutable Utils::OmniMutex control_mutex{};
         Utils::StaticVector<LockableBufferState, MAX_BUFFERS> buffers{};
+        SubscriberSlot subscriber_slots[MAX_SUBSCRIBERS]{};
+
+        /// Registers a newly-subscribed consumer for liveness tracking. Must be
+        /// called while holding control_mutex. Fails soft (logs and returns) if
+        /// MAX_SUBSCRIBERS is exceeded, rather than throwing -- liveness tracking
+        /// for that subscriber is simply unavailable, subscribing itself still
+        /// succeeds exactly as it always has.
+        inline void register_subscriber(pid_t pid, uint64_t local_id, uint64_t starting_iteration) {
+            for (auto& slot : subscriber_slots) {
+                if (!slot.active) {
+                    slot.active = true;
+                    slot.pid = pid;
+                    slot.local_id = local_id;
+                    slot.last_acked_iteration = starting_iteration;
+                    return;
+                }
+            }
+            Utils::Logger::get_logger().warning("Exceeded MAX_SUBSCRIBERS liveness-tracking slots; crash detection unavailable for this subscriber");
+        }
+
+        /// Records a subscriber's highest fully-acknowledged iteration. Must be
+        /// called while holding control_mutex.
+        inline void record_subscriber_ack(pid_t pid, uint64_t local_id, uint64_t iteration) {
+            for (auto& slot : subscriber_slots) {
+                if (slot.active && slot.pid == pid && slot.local_id == local_id) {
+                    if (iteration > slot.last_acked_iteration) {
+                        slot.last_acked_iteration = iteration;
+                    }
+                    return;
+                }
+            }
+        }
+
+        /// Clears a subscriber's liveness-tracking slot on clean disconnect
+        /// (normal unsubscribe()/~Stream() path). Does not touch subscriber_count
+        /// or pending acknowledgements -- those are already handled by the
+        /// existing clean-disconnect logic at each call site. Must be called
+        /// while holding control_mutex.
+        inline void unregister_subscriber(pid_t pid, uint64_t local_id) {
+            for (auto& slot : subscriber_slots) {
+                if (slot.active && slot.pid == pid && slot.local_id == local_id) {
+                    slot = SubscriberSlot{};
+                    return;
+                }
+            }
+        }
+
+        /// Checks every tracked subscriber's liveness via kill(pid, 0) and reaps
+        /// any whose process no longer exists: releases its pending acknowledgement
+        /// requirement on buffers newer than what it had read, and decrements
+        /// subscriber_count. Cheap to call opportunistically. Must be called
+        /// while holding control_mutex.
+        inline void reap_dead_subscribers(Utils::OmniWriteLock& control_lock) {
+            for (auto& slot : subscriber_slots) {
+                if (!slot.active) {
+                    continue;
+                }
+                const bool dead = (kill(slot.pid, 0) == -1) && (errno == ESRCH);
+                if (!dead) {
+                    continue;
+                }
+                for (auto& b : buffers) {
+                    if (b.buffer_state.iteration > slot.last_acked_iteration) {
+                        b.buffer_sync.dec_required(control_lock);
+                    }
+                }
+                if (subscriber_count > 0) {
+                    --subscriber_count;
+                }
+                Utils::Logger::get_logger().warning("Reaped subscriber (pid: " + std::to_string(slot.pid) + ") that no longer exists");
+                slot = SubscriberSlot{};
+            }
+        }
 
         inline bool is_ready() const {
             const bool has_some = buffers.size() != 0;
