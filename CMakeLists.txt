@@ -18,15 +18,9 @@ if(SKBUILD)
   list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 endif()
 
-set(BOOST_ENABLE_CMAKE ON)
-include(FetchContent)
-FetchContent_Declare(
-  boost
-  URL      https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.gz  # link from https://www.boost.org/users/download/
-  URL_HASH SHA256=205666dea9f6a7cfed87c7a6dfbeb52a2c1b9de55712c9c1a87735d7181452b6               # latest as of 25 Feb, 2023
-)
-FetchContent_MakeAvailable(boost)
+find_package(Threads REQUIRED)
 
+include(FetchContent)
 FetchContent_Declare(
   json
   URL      https://github.com/nlohmann/json/releases/download/v3.11.2/json.tar.xz
@@ -50,9 +44,8 @@ set(SRCS
 )
 
 pybind11_add_module(_mx MODULE ${SRCS} ext/binding.cpp)
-target_include_directories(_mx SYSTEM PRIVATE ${boost_SOURCE_DIR})
 target_include_directories(_mx PRIVATE ext)
-target_link_libraries(_mx PRIVATE rt nlohmann_json::nlohmann_json)
+target_link_libraries(_mx PRIVATE rt Threads::Threads nlohmann_json::nlohmann_json)
 
 install(TARGETS _mx DESTINATION .)
 

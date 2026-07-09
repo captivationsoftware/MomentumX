@@ -1,8 +1,6 @@
 #ifndef MOMENTUMX_INSPECTOR_H
 #define MOMENTUMX_INSPECTOR_H
 
-#include <boost/date_time/posix_time/posix_time_duration.hpp>
-#include <boost/date_time/posix_time/posix_time_types.hpp>
 #include <iomanip>
 #include <ios>
 #include <limits>
@@ -40,10 +38,15 @@ namespace MomentumX {
         std::string control_snapshot(float timeout_seconds = 0.5) const {
             const auto control_block_handle = view_control_block();
 
-            Utils::OmniWriteLock control_lock(control_block_handle->control_block->control_mutex, bip::defer_lock);
-            const auto now = boost::posix_time::microsec_clock::universal_time();
-            const auto offs = boost::posix_time::microseconds(static_cast<int64_t>(timeout_seconds * 1e6));
-            const auto ptimeout = now + offs;
+            Utils::OmniWriteLock control_lock(control_block_handle->control_block->control_mutex, Utils::defer_lock);
+            struct timespec ptimeout = Utils::timespec_now();
+            const int64_t offset_nsec = static_cast<int64_t>(timeout_seconds * 1e9);
+            ptimeout.tv_sec += offset_nsec / 1000000000;
+            ptimeout.tv_nsec += offset_nsec % 1000000000;
+            if (ptimeout.tv_nsec >= 1000000000) {
+                ptimeout.tv_sec += 1;
+                ptimeout.tv_nsec -= 1000000000;
+            }
             if (!control_lock.timed_lock(ptimeout)) {
                 return "error: unable to lock control block";
             }

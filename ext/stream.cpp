@@ -6,7 +6,6 @@
 #include <sys/stat.h>
 
 #include <algorithm>
-#include <boost/interprocess/creation_tags.hpp>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>

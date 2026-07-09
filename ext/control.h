@@ -2,12 +2,6 @@
 #define MOMENTUMX_CONTROL_H
 
 #include <algorithm>
-#include <boost/container/static_vector.hpp>
-#include <boost/date_time/posix_time/posix_time_duration.hpp>
-#include <boost/date_time/posix_time/posix_time_types.hpp>
-#include <boost/interprocess/interprocess_fwd.hpp>
-#include <boost/interprocess/sync/interprocess_condition.hpp>
-#include <boost/interprocess/sync/interprocess_sharable_mutex.hpp>
 #include <chrono>
 #include <ios>
 #include <nlohmann/json_fwd.hpp>
@@ -258,10 +252,12 @@ namespace MomentumX {
             }
         }
 
-        inline static boost::posix_time::ptime ptimeout(const std::chrono::microseconds& timeout) {
-            const auto now = boost::posix_time::microsec_clock::universal_time();
-            const auto offs = boost::posix_time::microseconds(timeout.count());
-            return now + offs;
+        inline static struct timespec ptimeout(const std::chrono::microseconds& timeout) {
+            struct timespec ts = Utils::timespec_now();
+            const long added_nsec = ts.tv_nsec + (timeout.count() % 1000000) * 1000;
+            ts.tv_sec += timeout.count() / 1000000 + added_nsec / 1000000000;
+            ts.tv_nsec = added_nsec % 1000000000;
+            return ts;
         }
 
         Utils::OmniCondition _checkin_cond{};  ///< Conditional for awaiting buffer availability (in non-polling case)
