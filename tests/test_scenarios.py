@@ -1,6 +1,8 @@
 import concurrent.futures as cf
 import random
 import os
+import signal
+import time
 import threading
 from typing import Iterator
 import contextlib
@@ -884,6 +886,77 @@ def test_increment_streaming()->None:
         for v in range(12, 21):
             buffer = consumer.receive()
             assert buffer.iteration == v
+
+
+def _killed_consumer_scenario() -> tuple:
+    """Kills one subscriber uncleanly and returns
+    (subscriber_count_after, producer_can_still_send)."""
+    import momentumx as mx
+
+    stream_name = f"mx://test_killed_consumer_{os.getpid()}".encode()
+    producer = mx.Producer(stream_name, 64, 2, True)
+    good_consumer = mx.Consumer(stream_name)
+
+    ready_r, ready_w = os.pipe()
+    victim_pid = os.fork()
+    if victim_pid == 0:
+        os.close(ready_r)
+        import momentumx as mx  # re-import in forked child
+        victim_consumer = mx.Consumer(stream_name)
+        os.write(ready_w, b"1")
+        while True:
+            time.sleep(0.05)
+        os._exit(0)  # unreachable
+
+    os.close(ready_w)
+    assert os.read(ready_r, 1) == b"1", "victim consumer never subscribed"
+    os.close(ready_r)
+
+    deadline = time.time() + 2
+    while producer.subscriber_count < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert producer.subscriber_count == 2
+
+    os.kill(victim_pid, signal.SIGKILL)
+    _, status = os.waitpid(victim_pid, 0)
+    assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL
+
+    assert producer.send_string("1")
+    assert good_consumer.receive_string() == "1"
+    assert producer.send_string("2")
+    assert good_consumer.receive_string() == "2"
+
+    grace_period = 10.0
+    deadline = time.time() + grace_period
+    while producer.subscriber_count == 2 and time.time() < deadline:
+        time.sleep(0.1)
+    subscriber_count_after = producer.subscriber_count
+
+    deadline = time.time() + grace_period
+    producer_can_still_send = False
+    while time.time() < deadline:
+        if producer.send_string("3", blocking=False):
+            producer_can_still_send = True
+            break
+        time.sleep(0.1)
+
+    return subscriber_count_after, producer_can_still_send
+
+
+def test_killed_consumer_is_removed_from_subscriber_count() -> None:
+    with cf.ProcessPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_killed_consumer_scenario)
+        subscriber_count_after, _ = future.result(timeout=25)
+
+    assert subscriber_count_after == 1
+
+
+def test_producer_recovers_after_consumer_is_killed() -> None:
+    with cf.ProcessPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_killed_consumer_scenario)
+        _, producer_can_still_send = future.result(timeout=25)
+
+    assert producer_can_still_send
 
 
 if __name__ == "__main__":
